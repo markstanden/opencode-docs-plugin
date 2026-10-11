@@ -1,0 +1,94 @@
+name: "Defined Gate"
+
+# Managed gate workflow: installed by `comply` into .github/workflows/ and
+# checked byte-identical by `verify` (standards/workflows/ is the single source
+# of truth). It carries no gate version — the image tag is read at runtime from
+# the repo's committed .defined.json, the same pin the local `defined` launcher
+# reads — so local green = merge green by construction, with no SHA to keep in
+# sync (decision #36).
+#
+# An omitted `version` (or no .defined.json) rides the current published default
+# image; a written pin must be an immutable tag, never "latest". The verb is
+# always read-only `verify`: `comply` is the local/agent loop, never CI.
+#
+# Triggers are owned here, not by a caller, so they are name-agnostic: gate every
+# pull request and every push, on any branch name.
+
+on:
+    pull_request:
+    push:
+
+concurrency:
+    group: defined-gate-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    defined-gate:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+        steps:
+            # This repo is the gate's source: the containerised gate would
+            # compare the image's baked standards against a working tree
+            # mid-change and false-fail on drift until release, so the gate
+            # steps are skipped on it — `.github/workflows/defined--test.yml`
+            # covers the source instead. The job still runs, so GitHub parses
+            # and exercises the managed workflow for real and the run reports
+            # success rather than a by-design `skipped`.
+            - name: Host repo — managed workflow live validation
+              if: github.repository == 'markstanden/defined'
+              shell: bash
+              run: |
+                  echo "::notice::markstanden/defined is the gate's source repo. GitHub accepts"
+                  echo "and runs this managed workflow; the gate itself is verified from source"
+                  echo "by defined--test.yml, not by the containerised steps below."
+
+            - name: Checkout
+              if: github.repository != 'markstanden/defined'
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+              with:
+                  # zizmor (artipacked): leave no credentials in .git/config.
+                  persist-credentials: false
+
+            - name: Read image tag
+              if: github.repository != 'markstanden/defined'
+              id: pin
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  # Omitted version (or no file) = current published default.
+                  if [[ -f .defined.json ]]; then
+                    PIN="$(jq -r '.version // empty' .defined.json)"
+                  else
+                    PIN=""
+                  fi
+                  if [[ -z "${PIN}" ]]; then
+                    echo "pin=latest" >> "$GITHUB_OUTPUT"
+                    exit 0
+                  fi
+                  if [[ "${PIN}" == "latest" ]]; then
+                    echo "::error::.defined.json must pin an immutable tag, not 'latest' — omit 'version' to default"
+                    exit 1
+                  fi
+                  if [[ ! "${PIN}" =~ ^[0-9a-f]{7,40}$ ]]; then
+                    echo "::error::.defined.json has an invalid pin '${PIN}' — expected a hex tag"
+                    exit 1
+                  fi
+                  echo "pin=${PIN}" >> "$GITHUB_OUTPUT"
+
+            - name: Run defined gate
+              if: github.repository != 'markstanden/defined'
+              env:
+                  IMAGE: ghcr.io/markstanden/defined:${{ steps.pin.outputs.pin }}
+              shell: bash
+              run: |
+                  set -euo pipefail
+
+                  REPO_ROOT="$(git -C "${GITHUB_WORKSPACE}" rev-parse --show-toplevel)"
+
+                  docker run --rm \
+                    --user "$(id -u):$(id -g)" \
+                    -v "${REPO_ROOT}:/repo:ro" \
+                    -e "NUGET_PACKAGES=/home/node/.nuget/packages" \
+                    --workdir /repo \
+                    "${IMAGE}" verify

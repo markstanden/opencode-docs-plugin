@@ -1,0 +1,122 @@
+[
+    {
+        "path": "docs/guides/widget-install.md",
+        "area": "guides",
+        "date": "",
+        "title": "Widget install",
+        "summary": "Installing the widget tool.",
+        "superseded": false,
+        "keywords": ["widget", "install", "setup"],
+        "identifiers": ["Install steps", "widget --version", "postinstall"]
+    },
+    {
+        "path": "docs/guides/widget-setup.md",
+        "area": "guides",
+        "date": "",
+        "title": "Widget setup",
+        "summary": "A second way to install the widget.",
+        "superseded": false,
+        "keywords": ["widget", "install"],
+        "identifiers": ["Reinstall", "widget reset"]
+    },
+    {
+        "path": "docs/guides/widget-config.md",
+        "area": "guides",
+        "date": "",
+        "title": "Widget configuration",
+        "summary": "Configuring the widget tool.",
+        "superseded": false,
+        "keywords": ["widget", "config", "settings"],
+        "identifiers": ["Config file", "widget.toml"]
+    },
+    {
+        "path": "docs/guides/widget-deploy.md",
+        "area": "guides",
+        "date": "",
+        "title": "Widget deployment",
+        "summary": "Deploying the widget tool.",
+        "superseded": false,
+        "keywords": ["widget", "deploy", "release"],
+        "identifiers": ["Rollout", "widget ship"]
+    },
+    {
+        "path": "docs/notes/alpha-note.md",
+        "area": "notes",
+        "date": "",
+        "title": "Alpha note",
+        "summary": "A memo on alpha.",
+        "superseded": false,
+        "keywords": ["alpha", "memo"],
+        "identifiers": ["Alpha memo"]
+    },
+    {
+        "path": "docs/notes/beta-note.md",
+        "area": "notes",
+        "date": "",
+        "title": "Beta note",
+        "summary": "A memo on beta.",
+        "superseded": false,
+        "keywords": ["beta", "memo"],
+        "identifiers": ["Beta memo"]
+    },
+    {
+        "path": "docs/notes/gamma-note.md",
+        "area": "notes",
+        "date": "",
+        "title": "Gamma note",
+        "summary": "A memo on gamma.",
+        "superseded": false,
+        "keywords": ["gamma", "memo"],
+        "identifiers": ["Gamma memo"]
+    },
+    {
+        "path": "docs/legacy/old-widget.md",
+        "area": "legacy",
+        "date": "",
+        "title": "Old widget",
+        "summary": "The retired widget.",
+        "superseded": false,
+        "keywords": ["widget", "legacy"],
+        "identifiers": ["Deprecated"]
+    },
+    {
+        "path": "docs/meta/naming.md",
+        "area": "meta",
+        "date": "",
+        "title": "Naming rules",
+        "summary": "House naming rules.",
+        "superseded": false,
+        "keywords": ["naming", "convention"],
+        "identifiers": ["kebab-case", "camelCase"]
+    },
+    {
+        "path": "docs/meta/glossary.md",
+        "area": "meta",
+        "date": "",
+        "title": "Glossary",
+        "summary": "Terms used in this project.",
+        "superseded": false,
+        "keywords": ["terms", "glossary"],
+        "identifiers": ["A–Z"]
+    },
+    {
+        "path": "docs/ops/backup.md",
+        "area": "ops",
+        "date": "",
+        "title": "Backup runbook",
+        "summary": "Backing up and restoring the fleet.",
+        "superseded": false,
+        "keywords": ["backup", "restore"],
+        "identifiers": ["Snapshot", "restore drill"]
+    },
+    {
+        "path": "docs/ops/monitoring.md",
+        "area": "ops",
+        "date": "",
+        "title": "Monitoring",
+        "summary": "Watching the fleet.",
+        "superseded": false,
+        "keywords": ["monitor", "alerts"],
+        "identifiers": ["Dashboards", "alert rules"]
+    }
+]

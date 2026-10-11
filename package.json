@@ -1,0 +1,41 @@
+{
+    "name": "@markstanden/opencode-docs-plugin",
+    "version": "0.1.0",
+    "type": "module",
+    "description": "OpenCode V2 plugin: a `docs` tool and `/docs` command over a repository's knowledge tree, with the writing convention it owns",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/markstanden/opencode-docs-plugin.git"
+    },
+    "exports": {
+        ".": "./src/index.ts"
+    },
+    "files": [
+        "src",
+        "CONVENTION.md",
+        "README.md",
+        "LICENSE"
+    ],
+    "engines": {
+        "node": ">=26"
+    },
+    "scripts": {
+        "test": "node --test 'tests/**/*.test.ts'",
+        "test:watch": "node --test --watch 'tests/**/*.test.ts'",
+        "typecheck": "tsc --noEmit",
+        "lint": "eslint ."
+    },
+    "dependencies": {
+        "@opencode/plugin": "2.0.23",
+        "@opencode/schema": "2.0.23",
+        "effect": "4.0.0-rc.112"
+    },
+    "devDependencies": {
+        "@types/node": "^26.6.4",
+        "eslint": "^10.12.0",
+        "eslint-config-prettier": "^10.1.8",
+        "typescript": "^6.0.3",
+        "typescript-eslint": "^8.71.0"
+    },
+    "license": "MIT"
+}

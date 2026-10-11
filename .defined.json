@@ -1,0 +1,31 @@
+{
+    "version": "1a1c032544c8",
+    "coverage": {
+        "node": {
+            "command": "mkdir -p coverage && node --test --experimental-test-coverage --test-coverage-include='src/**/*.ts' --test-coverage-exclude='**/*.test.ts' --test-reporter=lcov --test-reporter-destination=coverage/lcov.info 'tests/**/*.test.ts'",
+            "minimums": {
+                "line": 95,
+                "branch": 90,
+                "function": 95
+            }
+        }
+    },
+    "node": {
+        "packages": [
+            {
+                "dir": ".",
+                "checks": [
+                    {
+                        "name": "lint",
+                        "command": "eslint .",
+                        "fix": "eslint --fix ."
+                    },
+                    {
+                        "name": "typecheck",
+                        "command": "tsc --noEmit"
+                    }
+                ]
+            }
+        ]
+    }
+}
