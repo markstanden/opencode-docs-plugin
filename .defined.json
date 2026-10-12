@@ -1,5 +1,5 @@
 {
-    "version": "1a1c032544c8",
+    "version": "2c83451ade1f",
     "coverage": {
         "node": {
             "command": "mkdir -p coverage && node --test --experimental-test-coverage --test-coverage-include='src/**/*.ts' --test-coverage-exclude='**/*.test.ts' --test-reporter=lcov --test-reporter-destination=coverage/lcov.info 'tests/**/*.test.ts'",

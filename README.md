@@ -1,8 +1,9 @@
 # opencode-docs-plugin
 
 An [OpenCode](https://opencode.ai) V2 plugin that gives an agent a knowledge
-tree it can actually use: a `docs` tool and a `/docs` command over a
-repository's `docs/**/*.md`, plus the writing convention those docs follow.
+tree it can actually use: a `docs` tool and a `/docs` command over the
+configured docs root's `*.md` files (the `root` plugin option; default
+`<location>/docs`), plus the writing convention those docs follow.
 
 - `docs` (tool) — blank search lists the 10 most recently changed docs
   (`path — Area — date — Summary`); a search ranks docs over their

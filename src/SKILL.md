@@ -1,6 +1,7 @@
 # Docs
 
-The repository's durable knowledge lives under `docs/`. This skill covers both
+Durable knowledge lives under the configured docs root (the plugin's `root`
+option; default `<location>/docs`). This skill covers both
 halves of the loop: **find** (discover with the `docs` tool, read the match) and
 **record** (write or update a doc for the current task).
 
@@ -19,8 +20,7 @@ Call the `docs` tool:
   the closest matches under a `Closest matches` header rather than a dead end.
   A term must appear as a **substring** to match — a typo returns nothing, by
   design. Terms shorter than `MIN_TERM_LENGTH` (3) are ignored unless they are
-  the whole query, so filler words cannot drag in the catalogue. The shared
-  `docs/` path prefix itself is not searched; real path segments still are.
+  the whole query, so filler words cannot drag in the catalogue.
 - **every call** caps at `MAX_RESULTS` (10), preferring the best matches and
   then the most recent edits, and ends with `… and N more not shown.` when
   anything was cut.
@@ -31,7 +31,7 @@ Then open the match with the built-in `read` tool. The tool only discovers; it
 never returns a doc's body. `/docs [search]` runs the same search into the
 session (`/docs search <text>` is the explicit form).
 
-Every `docs/**/*.md` is covered except the excluded areas — scratch (`plans/`)
+Every `*.md` under the root is covered except the excluded areas — scratch (`plans/`)
 and vendored mirrors (`requirements/`, `wiki/`). `Area` comes from the path,
 `date` from git. A doc marked `Status: superseded` carries a `(superseded)`
 marker in results and ranks below an active doc on a tie.
@@ -44,14 +44,15 @@ marker in results and ranks below an active doc on a tie.
 
 ## Record it
 
-Write durable findings and task documentation to `docs/<area>/<title>.md` so the
+Write durable findings and task documentation to `<area>/<title>.md` under the
+root so the
 next human or agent skips the rediscovery. The convention is this plugin's
 `CONVENTION.md`, restated here.
 
 Before writing:
 
-1. **Read first, never duplicate.** List `docs/**` with the `docs` tool and read
-   the docs relevant to the task: the same `docs/<area>/` neighbourhood, keyword
+1. **Read first, never duplicate.** List the tree with the `docs` tool and read
+   the docs relevant to the task: the same `<area>/` neighbourhood, keyword
    hits on the task's entities (service names, file paths, error strings, class
    names), or links from touched docs.
 2. **Reconcile, then add.** Edit before add; merge near-twins; split a bloated
@@ -62,12 +63,12 @@ Then record through the `docs` tool's typed `add`: metadata (`Area`, `Keywords`
 as a list, `Summary`; optionally `Status`/`Supersedes`) plus a body carrying an
 `H1` and the claim sections (`Facts`, `Inferred`, `Tested`, `Open questions`).
 The tool serialises the front-matter — never copy it — and derives
-the target (`docs/<Area>/<slug>.md`) when `path` is omitted; pass `path` to
+the target (`<Area>/<slug>.md`) when `path` is omitted; pass `path` to
 update an existing doc, replacing its body wholesale. Its guardrails refuse
 blank metadata, path traversal, a body without an `H1`, and a same-area
 near-twin (returning the candidates to reconcile against). A plan for an
-in-flight effort is scratch, not a doc — `docs/plans/PLAN_<effort>.md`,
-gitignored and deleted when the work lands. `/docs add <text>` runs this record
+in-flight effort is scratch, not a doc — a `plans/` area, excluded from the
+index and deleted when the work lands. `/docs add <text>` runs this record
 loop for a fact supplied inline.
 
 ## Check it

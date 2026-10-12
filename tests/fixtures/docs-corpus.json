@@ -1,6 +1,6 @@
 [
     {
-        "path": "docs/guides/widget-install.md",
+        "path": "guides/widget-install.md",
         "area": "guides",
         "date": "",
         "title": "Widget install",
@@ -10,7 +10,7 @@
         "identifiers": ["Install steps", "widget --version", "postinstall"]
     },
     {
-        "path": "docs/guides/widget-setup.md",
+        "path": "guides/widget-setup.md",
         "area": "guides",
         "date": "",
         "title": "Widget setup",
@@ -20,7 +20,7 @@
         "identifiers": ["Reinstall", "widget reset"]
     },
     {
-        "path": "docs/guides/widget-config.md",
+        "path": "guides/widget-config.md",
         "area": "guides",
         "date": "",
         "title": "Widget configuration",
@@ -30,7 +30,7 @@
         "identifiers": ["Config file", "widget.toml"]
     },
     {
-        "path": "docs/guides/widget-deploy.md",
+        "path": "guides/widget-deploy.md",
         "area": "guides",
         "date": "",
         "title": "Widget deployment",
@@ -40,7 +40,7 @@
         "identifiers": ["Rollout", "widget ship"]
     },
     {
-        "path": "docs/notes/alpha-note.md",
+        "path": "notes/alpha-note.md",
         "area": "notes",
         "date": "",
         "title": "Alpha note",
@@ -50,7 +50,7 @@
         "identifiers": ["Alpha memo"]
     },
     {
-        "path": "docs/notes/beta-note.md",
+        "path": "notes/beta-note.md",
         "area": "notes",
         "date": "",
         "title": "Beta note",
@@ -60,7 +60,7 @@
         "identifiers": ["Beta memo"]
     },
     {
-        "path": "docs/notes/gamma-note.md",
+        "path": "notes/gamma-note.md",
         "area": "notes",
         "date": "",
         "title": "Gamma note",
@@ -70,7 +70,7 @@
         "identifiers": ["Gamma memo"]
     },
     {
-        "path": "docs/legacy/old-widget.md",
+        "path": "legacy/old-widget.md",
         "area": "legacy",
         "date": "",
         "title": "Old widget",
@@ -80,7 +80,7 @@
         "identifiers": ["Deprecated"]
     },
     {
-        "path": "docs/meta/naming.md",
+        "path": "meta/naming.md",
         "area": "meta",
         "date": "",
         "title": "Naming rules",
@@ -90,7 +90,7 @@
         "identifiers": ["kebab-case", "camelCase"]
     },
     {
-        "path": "docs/meta/glossary.md",
+        "path": "meta/glossary.md",
         "area": "meta",
         "date": "",
         "title": "Glossary",
@@ -100,7 +100,7 @@
         "identifiers": ["A–Z"]
     },
     {
-        "path": "docs/ops/backup.md",
+        "path": "ops/backup.md",
         "area": "ops",
         "date": "",
         "title": "Backup runbook",
@@ -110,7 +110,7 @@
         "identifiers": ["Snapshot", "restore drill"]
     },
     {
-        "path": "docs/ops/monitoring.md",
+        "path": "ops/monitoring.md",
         "area": "ops",
         "date": "",
         "title": "Monitoring",

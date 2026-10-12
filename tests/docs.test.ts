@@ -8,7 +8,7 @@ import {
     rmSync,
     writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import * as docs from "../src/index.ts";
 
@@ -37,11 +37,13 @@ const {
     render,
     reconcileQuery,
     resolveRequest,
+    resolveRoot,
     score,
     serializeDoc,
     slugify,
     titleOf,
     toEntry,
+    unversionedNote,
     validateDoc,
 } = docs;
 
@@ -51,7 +53,7 @@ type DocEntry = ReturnType<(typeof docs)["toEntry"]>;
 /** A doc entry with sensible defaults, overridable per test. */
 function entry(overrides: Partial<DocEntry> = {}): DocEntry {
     return {
-        path: "docs/decisions/x.md",
+        path: "decisions/x.md",
         area: "decisions",
         date: "2026-01-02",
         title: "X",
@@ -149,26 +151,26 @@ describe("parseFrontMatter", () => {
 describe("titleOf", () => {
     it("uses the first heading", () => {
         assert.equal(
-            titleOf("docs/a.md", "# Real Title\n\n# Later\n"),
+            titleOf("a.md", "# Real Title\n\n# Later\n"),
             "Real Title",
         );
     });
 
     it("falls back to the file name", () => {
-        assert.equal(titleOf("docs/deep/a-doc.md", "no heading\n"), "a-doc");
+        assert.equal(titleOf("deep/a-doc.md", "no heading\n"), "a-doc");
     });
 });
 
 describe("toEntry", () => {
     it("prefers front-matter fields and splits keywords", () => {
         const result = toEntry(
-            "docs/decisions/a.md",
+            "decisions/a.md",
             "---\nArea: runtime\nSummary: S\nKeywords: one, two ,\n---\n# T\n",
             "2026-01-01",
         );
 
         assert.deepEqual(result, {
-            path: "docs/decisions/a.md",
+            path: "decisions/a.md",
             area: "runtime",
             date: "2026-01-01",
             title: "T",
@@ -181,7 +183,7 @@ describe("toEntry", () => {
 
     it("ignores a hand-maintained front-matter Date", () => {
         const result = toEntry(
-            "docs/runtime/a.md",
+            "runtime/a.md",
             "---\nDate: 2020-01-01\nSummary: S\n---\n# T\n",
             "2026-07-01",
         );
@@ -190,20 +192,20 @@ describe("toEntry", () => {
     });
 
     it("infers the area from the path and uses the fallback date", () => {
-        const result = toEntry("docs/runtime/a.md", "# T\n", "2026-01-01");
+        const result = toEntry("runtime/a.md", "# T\n", "2026-01-01");
 
         assert.equal(result.area, "runtime");
         assert.equal(result.date, "2026-01-01");
         assert.equal(result.summary, "");
     });
 
-    it("leaves the area blank for a doc directly under docs/", () => {
-        assert.equal(toEntry("docs/README.md", "# T\n", "").area, "");
+    it("leaves the area blank for a doc directly under the root", () => {
+        assert.equal(toEntry("README.md", "# T\n", "").area, "");
     });
 
     it("marks a superseded doc from its front-matter Status", () => {
         const result = toEntry(
-            "docs/aa/a.md",
+            "aa/a.md",
             "---\nStatus: superseded\nSummary: S\n---\n# T\n",
             "2026-01-01",
         );
@@ -212,9 +214,9 @@ describe("toEntry", () => {
     });
 
     it("treats a missing or active Status as not superseded", () => {
-        const missing = toEntry("docs/aa/a.md", "# T\n", "");
+        const missing = toEntry("aa/a.md", "# T\n", "");
         const active = toEntry(
-            "docs/aa/a.md",
+            "aa/a.md",
             "---\nStatus: active\n---\n# T\n",
             "",
         );
@@ -228,7 +230,7 @@ describe("identifiers", () => {
     /** An entry built from a doc whose body is `body`. */
     function fromBody(body: string): DocEntry {
         return toEntry(
-            "docs/aa/a.md",
+            "aa/a.md",
             `---\nArea: aa\nSummary: words\n---\n${body}`,
             "2026-01-01",
         );
@@ -268,7 +270,7 @@ describe("identifiers", () => {
         assert.equal(result.closest, false);
         assert.deepEqual(
             result.entries.map((item) => item.path),
-            ["docs/aa/a.md"],
+            ["aa/a.md"],
         );
     });
 
@@ -277,7 +279,7 @@ describe("identifiers", () => {
 
         assert.deepEqual(
             result.entries.map((item) => item.path),
-            ["docs/aa/a.md"],
+            ["aa/a.md"],
         );
     });
 
@@ -289,13 +291,13 @@ describe("identifiers", () => {
 
         assert.deepEqual(
             result.entries.map((item) => item.path),
-            ["docs/aa/a.md"],
+            ["aa/a.md"],
         );
     });
 
     it("full-matches a query split across a keyword and an identifier", () => {
         const doc = toEntry(
-            "docs/aa/a.md",
+            "aa/a.md",
             "---\nArea: aa\nSummary: words\nKeywords: alpha\n---\n# T\n\nUse `beta`.\n",
             "2026-01-01",
         );
@@ -305,13 +307,13 @@ describe("identifiers", () => {
         assert.equal(result.closest, false);
         assert.deepEqual(
             result.entries.map((item) => item.path),
-            ["docs/aa/a.md"],
+            ["aa/a.md"],
         );
     });
 
     it("finds a term that only a code span carries", () => {
         const doc = toEntry(
-            "docs/README.md",
+            "README.md",
             "---\nArea: root\nSummary: The project brief.\n---\n# Project brief\n\n## Traps\n\n- `erasableSyntaxOnly` catches it.\n",
             "2026-10-10",
         );
@@ -321,7 +323,7 @@ describe("identifiers", () => {
         assert.equal(result.closest, false);
         assert.deepEqual(
             result.entries.map((item) => item.path),
-            ["docs/README.md"],
+            ["README.md"],
         );
     });
 });
@@ -332,8 +334,8 @@ describe("minimum term length", () => {
 
     it("ignores a term below the floor when a longer term is present", () => {
         const docs = [
-            entry({ path: "docs/below.md", title: below }),
-            entry({ path: "docs/long.md", title: "kqx7" }),
+            entry({ path: "below.md", title: below }),
+            entry({ path: "long.md", title: "kqx7" }),
         ];
 
         const result = rankDocs(docs, `${below} kqx7 zzz9`);
@@ -341,33 +343,33 @@ describe("minimum term length", () => {
         assert.equal(result.closest, true);
         assert.deepEqual(
             result.entries.map((item) => item.path),
-            ["docs/long.md"],
+            ["long.md"],
         );
     });
 
     it("keeps a term exactly at the floor", () => {
         const result = rankDocs(
-            [entry({ path: "docs/at.md", title: atFloor })],
+            [entry({ path: "at.md", title: atFloor })],
             `${atFloor} zzz9`,
         );
 
         assert.equal(result.closest, true);
         assert.deepEqual(
             result.entries.map((item) => item.path),
-            ["docs/at.md"],
+            ["at.md"],
         );
     });
 
     it("still searches when every term is below the floor", () => {
         const result = rankDocs(
-            [entry({ path: "docs/below.md", title: below })],
+            [entry({ path: "below.md", title: below })],
             below,
         );
 
         assert.equal(result.closest, false);
         assert.deepEqual(
             result.entries.map((item) => item.path),
-            ["docs/below.md"],
+            ["below.md"],
         );
     });
 });
@@ -403,32 +405,6 @@ describe("matches", () => {
     });
 });
 
-describe("docs prefix noise", () => {
-    it("does not match on the docs/ prefix alone", () => {
-        // Arrange – a doc whose only "docs" text is its path prefix.
-        const doc = entry({ path: "docs/a.md" });
-
-        // Act / Assert – the shared folder name is not a hit.
-        assert.equal(matches(doc, "docs"), false);
-    });
-
-    it("still matches a real path segment", () => {
-        // Arrange – "decisions" is a real segment, not folder scaffolding.
-        const doc = entry({ path: "docs/decisions/x.md" });
-
-        // Act / Assert
-        assert.equal(matches(doc, "decisions"), true);
-    });
-
-    it("scores zero for a term only in the docs/ prefix", () => {
-        // Arrange – nothing but the prefix carries the term.
-        const doc = entry({ path: "docs/a.md" });
-
-        // Act / Assert – today this scores 15 via the path prefix.
-        assert.equal(score(doc, ["docs"]), 0);
-    });
-});
-
 describe("render", () => {
     it("reports when nothing matched", () => {
         assert.equal(render([]), "No knowledge docs matched.");
@@ -437,73 +413,71 @@ describe("render", () => {
     it("formats the path, area, date and summary", () => {
         const text = render([
             entry({
-                path: "docs/a.md",
+                path: "a.md",
                 area: "a",
                 date: "2026-02-02",
                 summary: "S",
             }),
         ]);
 
-        assert.equal(text, "docs/a.md — a — 2026-02-02\n  S");
+        assert.equal(text, "a.md — a — 2026-02-02\n  S");
     });
 
     it("omits empty area and date", () => {
         assert.equal(
-            render([
-                entry({ path: "docs/a.md", area: "", date: "", summary: "" }),
-            ]),
-            "docs/a.md",
+            render([entry({ path: "a.md", area: "", date: "", summary: "" })]),
+            "a.md",
         );
     });
 
     it("labels a closest-match fallback", () => {
         const text = render(
-            [entry({ path: "docs/a.md", area: "", date: "", summary: "" })],
+            [entry({ path: "a.md", area: "", date: "", summary: "" })],
             { closest: true },
         );
 
         assert.match(text, /Closest matches/);
-        assert.match(text, /docs\/a\.md/);
+        assert.match(text, /\ba\.md/);
     });
 });
 
 describe("superseded docs", () => {
     it("ranks the active doc above a superseded one at equal score", () => {
         const retired = entry({
-            path: "docs/b.md",
+            path: "b.md",
             title: "Serena",
             superseded: true,
         });
-        const active = entry({ path: "docs/a.md", title: "Serena" });
+        const active = entry({ path: "a.md", title: "Serena" });
 
         const { entries } = rankDocs([retired, active], "serena");
 
         assert.deepEqual(
             entries.map((doc) => doc.path),
-            ["docs/a.md", "docs/b.md"],
+            ["a.md", "b.md"],
         );
     });
 
     it("keeps the active doc above a same-date superseded one in the catalogue", () => {
         const retired = entry({
-            path: "docs/b.md",
+            path: "b.md",
             date: "2026-02-02",
             superseded: true,
         });
-        const active = entry({ path: "docs/a.md", date: "2026-02-02" });
+        const active = entry({ path: "a.md", date: "2026-02-02" });
 
         const { entries } = rankDocs([retired, active], "");
 
         assert.deepEqual(
             entries.map((doc) => doc.path),
-            ["docs/a.md", "docs/b.md"],
+            ["a.md", "b.md"],
         );
     });
 
     it("marks a superseded doc in the rendered line", () => {
         const text = render([
             entry({
-                path: "docs/a.md",
+                path: "a.md",
                 area: "aa",
                 date: "2026-01-01",
                 superseded: true,
@@ -516,12 +490,12 @@ describe("superseded docs", () => {
     it("flags a Supersedes that names no doc", () => {
         const raw =
             "---\nArea: aa\nKeywords: alpha\nSummary: S.\n" +
-            "Supersedes: docs/aa/gone.md\n---\n# Alpha doc\n\n### Facts\n\n- x.\n";
-        const entries = [entry({ path: "docs/aa/a.md", title: "Alpha doc" })];
+            "Supersedes: aa/gone.md\n---\n# Alpha doc\n\n### Facts\n\n- x.\n";
+        const entries = [entry({ path: "aa/a.md", title: "Alpha doc" })];
 
         const report = checkDocs(entries, () => raw);
 
-        assert.match(report, /Supersedes names no doc: docs\/aa\/gone\.md/);
+        assert.match(report, /Supersedes names no doc: aa\/gone\.md/);
     });
 
     it("accepts a Supersedes that names a doc in the tree", () => {
@@ -530,12 +504,12 @@ describe("superseded docs", () => {
             (supersedes === undefined ? "" : `Supersedes: ${supersedes}\n`) +
             `---\n# ${title}\n\n### Facts\n\n- x.\n`;
         const raws: Record<string, string> = {
-            "docs/aa/a.md": parts("Alpha doc", "docs/aa/b.md"),
-            "docs/aa/b.md": parts("Beta doc"),
+            "aa/a.md": parts("Alpha doc", "aa/b.md"),
+            "aa/b.md": parts("Beta doc"),
         };
         const entries = [
-            entry({ path: "docs/aa/a.md", title: "Alpha doc" }),
-            entry({ path: "docs/aa/b.md", title: "Beta doc" }),
+            entry({ path: "aa/a.md", title: "Alpha doc" }),
+            entry({ path: "aa/b.md", title: "Beta doc" }),
         ];
 
         const report = checkDocs(entries, (path) => raws[path] ?? "");
@@ -547,15 +521,15 @@ describe("superseded docs", () => {
 describe("collectDocs", () => {
     it("skips scratch and mirrors, orders by path, and uses the injected date", () => {
         const root = tempDir();
-        mkdirSync(join(root, "docs", "decisions"), { recursive: true });
-        mkdirSync(join(root, "docs", "plans"), { recursive: true });
-        mkdirSync(join(root, "docs", "requirements"), { recursive: true });
+        mkdirSync(join(root, "decisions"), { recursive: true });
+        mkdirSync(join(root, "plans"), { recursive: true });
+        mkdirSync(join(root, "requirements"), { recursive: true });
         writeFileSync(
-            join(root, "docs", "decisions", "a.md"),
+            join(root, "decisions", "a.md"),
             "---\nArea: decisions\nSummary: A doc\nKeywords: one, two\n---\n# A\n",
         );
-        writeFileSync(join(root, "docs", "plans", "p.md"), "# Plan\n");
-        writeFileSync(join(root, "docs", "requirements", "r.md"), "# Mirror\n");
+        writeFileSync(join(root, "plans", "p.md"), "# Plan\n");
+        writeFileSync(join(root, "requirements", "r.md"), "# Mirror\n");
 
         const entries = collectDocs(
             root,
@@ -564,7 +538,7 @@ describe("collectDocs", () => {
 
         assert.deepEqual(
             entries.map((item) => item.path),
-            ["docs/decisions/a.md"],
+            ["decisions/a.md"],
         );
         const first = entries[0];
         assert.ok(first);
@@ -575,7 +549,7 @@ describe("collectDocs", () => {
         assert.equal(first.title, "A");
     });
 
-    it("returns nothing when docs/ is absent", () => {
+    it("returns nothing when the root is absent", () => {
         assert.deepEqual(
             collectDocs(tempDir(), () => new Map()),
             [],
@@ -600,9 +574,8 @@ describe("batched dates", () => {
     it("resolves every date in one call over all doc paths", () => {
         // Arrange – two docs on disk, a resolver that records its calls.
         const root = tempDir();
-        mkdirSync(join(root, "docs"), { recursive: true });
-        writeFileSync(join(root, "docs", "a.md"), "# A\n");
-        writeFileSync(join(root, "docs", "b.md"), "# B\n");
+        writeFileSync(join(root, "a.md"), "# A\n");
+        writeFileSync(join(root, "b.md"), "# B\n");
         const calls: string[][] = [];
 
         // Act
@@ -663,12 +636,64 @@ describe("batched dates", () => {
     });
 });
 
+describe("resolveRoot", () => {
+    const location = join(tempDir(), "wherever");
+
+    it("defaults to the location's docs directory", () => {
+        assert.equal(resolveRoot(undefined, location), join(location, "docs"));
+    });
+
+    it("expands ~ and ~/… against the home directory", () => {
+        assert.equal(resolveRoot("~", location), homedir());
+        assert.equal(
+            resolveRoot("~/notes/lake", location),
+            join(homedir(), "notes/lake"),
+        );
+    });
+
+    it("passes an absolute path through unchanged", () => {
+        assert.equal(resolveRoot("/srv/knowledge", location), "/srv/knowledge");
+    });
+
+    it("resolves a relative path against the location", () => {
+        assert.equal(
+            resolveRoot("knowledge", location),
+            join(location, "knowledge"),
+        );
+    });
+
+    it("throws on a blank or non-string root", () => {
+        for (const bad of ["   ", "", 42, {}, true]) {
+            assert.throws(
+                () => resolveRoot(bad, location),
+                /root/,
+                String(bad),
+            );
+        }
+    });
+});
+
+describe("unversionedNote", () => {
+    it("notes a root outside any git work tree", () => {
+        const [note] = unversionedNote(tempDir());
+
+        assert.match(note ?? "", /not inside a git work tree/);
+    });
+
+    it("stays quiet for a version-controlled root", () => {
+        const root = tempDir();
+        git(root, ["init", "-q"]);
+
+        assert.deepEqual(unversionedNote(root), []);
+    });
+});
+
 describe("score", () => {
     it("weights a title hit above a path, keyword, area or summary hit", () => {
         const term = ["serena"];
         const hit = "about serena";
         const title = score(entry({ title: hit }), term);
-        const path = score(entry({ path: `docs/${hit}.md` }), term);
+        const path = score(entry({ path: `${hit}.md` }), term);
         const keyword = score(entry({ keywords: [hit] }), term);
         const identifiers = score(entry({ identifiers: [hit] }), term);
         const area = score(entry({ area: hit }), term);
@@ -720,8 +745,8 @@ describe("score", () => {
 
 describe("rankDocs", () => {
     const entries = [
-        entry({ path: "docs/a.md", keywords: ["serena"] }),
-        entry({ path: "docs/b.md" }),
+        entry({ path: "a.md", keywords: ["serena"] }),
+        entry({ path: "b.md" }),
     ];
 
     it("returns the catalogue unchanged for a blank query", () => {
@@ -729,7 +754,7 @@ describe("rankDocs", () => {
 
         assert.deepEqual(
             result.entries.map((item) => item.path),
-            ["docs/a.md", "docs/b.md"],
+            ["a.md", "b.md"],
         );
         assert.equal(result.closest, false);
     });
@@ -737,11 +762,11 @@ describe("rankDocs", () => {
     it("ranks full matches by field weight", () => {
         const docs = [
             entry({
-                path: "docs/summary.md",
+                path: "summary.md",
                 title: "Z",
                 summary: "serena notes",
             }),
-            entry({ path: "docs/title.md", title: "Serena", summary: "x" }),
+            entry({ path: "title.md", title: "Serena", summary: "x" }),
         ];
 
         const result = rankDocs(docs, "serena");
@@ -749,15 +774,15 @@ describe("rankDocs", () => {
         assert.equal(result.closest, false);
         assert.deepEqual(
             result.entries.map((item) => item.path),
-            ["docs/title.md", "docs/summary.md"],
+            ["title.md", "summary.md"],
         );
     });
 
     it("falls back to the closest matches when no doc has every term", () => {
         const docs = [
-            entry({ path: "docs/a.md", title: "Serena", summary: "" }),
+            entry({ path: "a.md", title: "Serena", summary: "" }),
             entry({
-                path: "docs/b.md",
+                path: "b.md",
                 title: "Other",
                 summary: "missing bits",
             }),
@@ -768,26 +793,26 @@ describe("rankDocs", () => {
         assert.equal(result.closest, true);
         assert.deepEqual(
             result.entries.map((item) => item.path),
-            ["docs/a.md", "docs/b.md"],
+            ["a.md", "b.md"],
         );
     });
 
     it("breaks ties on the path", () => {
         const docs = [
-            entry({ path: "docs/b.md", keywords: ["serena"] }),
-            entry({ path: "docs/a.md", keywords: ["serena"] }),
+            entry({ path: "b.md", keywords: ["serena"] }),
+            entry({ path: "a.md", keywords: ["serena"] }),
         ];
 
         assert.deepEqual(
             rankDocs(docs, "serena").entries.map((item) => item.path),
-            ["docs/a.md", "docs/b.md"],
+            ["a.md", "b.md"],
         );
     });
 
     it("does not qualify a doc whose only hit is a subsequence", () => {
         const docs = [
             entry({
-                path: "docs/sub.md",
+                path: "sub.md",
                 title: "Z",
                 summary: "some quiet brown fox",
             }),
@@ -800,7 +825,7 @@ describe("rankDocs", () => {
     });
 
     it("reports an honest no-match for a typo only a subsequence would catch", () => {
-        const docs = [entry({ path: "docs/serena.md", title: "Serena MCP" })];
+        const docs = [entry({ path: "serena.md", title: "Serena MCP" })];
 
         const result = rankDocs(docs, "srena");
 
@@ -812,18 +837,18 @@ describe("rankDocs", () => {
     it("returns only the substring-qualified docs from the fallback", () => {
         const docs = [
             entry({
-                path: "docs/sub.md",
+                path: "sub.md",
                 title: "Z",
                 summary: "some quiet brown fox",
             }),
-            entry({ path: "docs/hit.md", title: "qbf notes", area: "aa" }),
+            entry({ path: "hit.md", title: "qbf notes", area: "aa" }),
         ];
 
         const result = rankDocs(docs, "qbf zzz9");
 
         assert.deepEqual(
             result.entries.map((item) => item.path),
-            ["docs/hit.md"],
+            ["hit.md"],
         );
         assert.equal(result.closest, true);
     });
@@ -833,19 +858,16 @@ describe("rankDocs", () => {
         const cases = [
             [
                 "title",
-                entry({ ...clean, path: "docs/z.md", title: "uses kqx7 here" }),
+                entry({ ...clean, path: "z.md", title: "uses kqx7 here" }),
             ],
-            ["path", entry({ ...clean, path: "docs/kqx7-file.md" })],
-            [
-                "keywords",
-                entry({ ...clean, path: "docs/z.md", keywords: ["kqx7"] }),
-            ],
-            ["area", entry({ ...clean, path: "docs/z.md", area: "kqx7" })],
+            ["path", entry({ ...clean, path: "kqx7-file.md" })],
+            ["keywords", entry({ ...clean, path: "z.md", keywords: ["kqx7"] })],
+            ["area", entry({ ...clean, path: "z.md", area: "kqx7" })],
             [
                 "summary",
                 entry({
                     ...clean,
-                    path: "docs/z.md",
+                    path: "z.md",
                     summary: "mentions kqx7 once",
                 }),
             ],
@@ -853,7 +875,7 @@ describe("rankDocs", () => {
 
         for (const [field, doc] of cases) {
             const result = rankDocs(
-                [doc, entry({ ...clean, path: "docs/decoy.md" })],
+                [doc, entry({ ...clean, path: "decoy.md" })],
                 "kqx7 zzz9",
             );
 
@@ -868,8 +890,8 @@ describe("rankDocs", () => {
 
     it("splits a multi-term query across docs, ranked", () => {
         const docs = [
-            entry({ path: "docs/b.md", title: "Z", summary: "beta notes" }),
-            entry({ path: "docs/a.md", title: "alpha", summary: "words" }),
+            entry({ path: "b.md", title: "Z", summary: "beta notes" }),
+            entry({ path: "a.md", title: "alpha", summary: "words" }),
         ];
 
         const result = rankDocs(docs, "alpha beta");
@@ -877,19 +899,19 @@ describe("rankDocs", () => {
         assert.equal(result.closest, true);
         assert.deepEqual(
             result.entries.map((item) => item.path),
-            ["docs/a.md", "docs/b.md"],
+            ["a.md", "b.md"],
         );
     });
 
     it("treats query case as irrelevant", () => {
-        const docs = [entry({ path: "docs/a.md", title: "Serena" })];
+        const docs = [entry({ path: "a.md", title: "Serena" })];
 
         const result = rankDocs(docs, "SERENA");
 
         assert.equal(result.closest, false);
         assert.deepEqual(
             result.entries.map((item) => item.path),
-            ["docs/a.md"],
+            ["a.md"],
         );
     });
 
@@ -964,7 +986,7 @@ describe("result cap", () => {
     it("caps a closest-match fallback at MAX_RESULTS and reports the rest", async () => {
         // Arrange – two docs too many, all partial matches.
         const docs = Array.from({ length: MAX_RESULTS + 2 }, (_, i) =>
-            entry({ path: `docs/n${i}.md`, summary: "serena note" }),
+            entry({ path: `n${i}.md`, summary: "serena note" }),
         );
 
         // Act
@@ -980,14 +1002,14 @@ describe("result cap", () => {
         // Arrange – a full cap of strong old docs, two weak brand-new ones.
         const strong = Array.from({ length: MAX_RESULTS }, (_, i) =>
             entry({
-                path: `docs/s${i}.md`,
+                path: `s${i}.md`,
                 date: "2026-01-01",
                 title: "Serena",
             }),
         );
         const weak = Array.from({ length: 2 }, (_, i) =>
             entry({
-                path: `docs/w${i}.md`,
+                path: `w${i}.md`,
                 date: "2026-09-09",
                 summary: "serena note",
             }),
@@ -1006,12 +1028,12 @@ describe("result cap", () => {
         // Arrange – equal scores; the older doc also sorts first by path.
         const docs = [
             entry({
-                path: "docs/a.md",
+                path: "a.md",
                 date: "2026-01-01",
                 summary: "serena note",
             }),
             entry({
-                path: "docs/z.md",
+                path: "z.md",
                 date: "2026-03-03",
                 summary: "serena note",
             }),
@@ -1023,18 +1045,18 @@ describe("result cap", () => {
         // Assert – newer edit first.
         assert.deepEqual(
             entries.map((doc) => doc.path),
-            ["docs/z.md", "docs/a.md"],
+            ["z.md", "a.md"],
         );
     });
 
     it("caps the blank catalogue to the most recently changed", async () => {
         // Arrange – more docs than the cap; the oldest two must be the cut.
         const docs = Array.from({ length: MAX_RESULTS }, (_, i) =>
-            entry({ path: `docs/new${i}.md`, date: "2026-06-01" }),
+            entry({ path: `new${i}.md`, date: "2026-06-01" }),
         );
         docs.push(
-            entry({ path: "docs/old0.md", date: "2026-01-01" }),
-            entry({ path: "docs/old1.md", date: "2026-02-02" }),
+            entry({ path: "old0.md", date: "2026-01-01" }),
+            entry({ path: "old1.md", date: "2026-02-02" }),
         );
 
         // Act
@@ -1050,8 +1072,8 @@ describe("result cap", () => {
     it("orders the blank catalogue most-recent-first", () => {
         // Arrange – path order opposes date order.
         const docs = [
-            entry({ path: "docs/a.md", date: "2026-01-01" }),
-            entry({ path: "docs/z.md", date: "2026-05-05" }),
+            entry({ path: "a.md", date: "2026-01-01" }),
+            entry({ path: "z.md", date: "2026-05-05" }),
         ];
 
         // Act
@@ -1060,13 +1082,13 @@ describe("result cap", () => {
         // Assert – newest edit first, even though "a" sorts first by path.
         assert.deepEqual(
             entries.map((doc) => doc.path),
-            ["docs/z.md", "docs/a.md"],
+            ["z.md", "a.md"],
         );
     });
 
     it("notes omitted docs under the fallback header", () => {
         // Arrange – one shown doc, five cut by the cap.
-        const docs = [entry({ path: "docs/a.md", summary: "serena note" })];
+        const docs = [entry({ path: "a.md", summary: "serena note" })];
 
         // Act
         const text = render(docs, { closest: true, omitted: 5 });
@@ -1079,7 +1101,7 @@ describe("result cap", () => {
     it("carries the cap note through the tool", async () => {
         // Arrange – a tool whose fallback overflows the cap.
         const docs = Array.from({ length: MAX_RESULTS + 2 }, (_, i) =>
-            entry({ path: `docs/t${i}.md`, summary: "serena note" }),
+            entry({ path: `t${i}.md`, summary: "serena note" }),
         );
         const tool = toolOf(docs);
 
@@ -1096,8 +1118,8 @@ describe("result cap", () => {
 
 describe("createDocsTool", () => {
     const docs = [
-        entry({ path: "docs/decisions/serena.md", keywords: ["serena"] }),
-        entry({ path: "docs/runtime/other.md", summary: "unrelated" }),
+        entry({ path: "decisions/serena.md", keywords: ["serena"] }),
+        entry({ path: "runtime/other.md", summary: "unrelated" }),
     ];
 
     it("names the tool docs and searches the catalogue", async () => {
@@ -1107,7 +1129,7 @@ describe("createDocsTool", () => {
 
         assert.equal(tool.name, "docs");
         assert.equal(result.metadata?.count, 1);
-        assert.match(String(result.content), /docs\/decisions\/serena\.md/);
+        assert.match(String(result.content), /\bdecisions\/serena\.md/);
     });
 
     it("lists every doc on a blank query", async () => {
@@ -1121,7 +1143,7 @@ describe("createDocsTool", () => {
     it("renders the fallback header and count from the tool itself", async () => {
         const tool = toolOf([
             entry({
-                path: "docs/a.md",
+                path: "a.md",
                 area: "",
                 date: "",
                 title: "kqx7",
@@ -1144,8 +1166,8 @@ describe("createDocsTool", () => {
 
 describe("createDocsCommand", () => {
     const docs = [
-        entry({ path: "docs/decisions/serena.md", keywords: ["serena"] }),
-        entry({ path: "docs/runtime/other.md", summary: "unrelated" }),
+        entry({ path: "decisions/serena.md", keywords: ["serena"] }),
+        entry({ path: "runtime/other.md", summary: "unrelated" }),
     ];
 
     /** A command wired to capture what it sends to the session. */
@@ -1174,7 +1196,7 @@ describe("createDocsCommand", () => {
 
         assert.equal(command.name, "docs");
         assert.equal(sent.length, 1);
-        assert.match(sent[0] ?? "", /docs\/decisions\/serena\.md/);
+        assert.match(sent[0] ?? "", /\bdecisions\/serena\.md/);
     });
 
     it("lists every doc when the query is blank", async () => {
@@ -1185,7 +1207,7 @@ describe("createDocsCommand", () => {
             prompt: { text: "   " },
         } as never);
 
-        assert.match(sent[0] ?? "", /docs\/runtime\/other\.md/);
+        assert.match(sent[0] ?? "", /\bruntime\/other\.md/);
     });
 
     it("searches the text after the `search` verb", async () => {
@@ -1196,8 +1218,8 @@ describe("createDocsCommand", () => {
             prompt: { text: "search serena" },
         } as never);
 
-        assert.match(sent[0] ?? "", /docs\/decisions\/serena\.md/);
-        assert.doesNotMatch(sent[0] ?? "", /docs\/runtime\/other\.md/);
+        assert.match(sent[0] ?? "", /\bdecisions\/serena\.md/);
+        assert.doesNotMatch(sent[0] ?? "", /\bruntime\/other\.md/);
     });
 
     it("labels the closest matches when no doc has every term", async () => {
@@ -1222,7 +1244,7 @@ describe("createDocsCommand", () => {
         assert.equal(sent.length, 1);
         assert.match(sent[0] ?? "", /this important bit of information/);
         assert.match(sent[0] ?? "", /`add`/);
-        assert.doesNotMatch(sent[0] ?? "", /docs\/decisions\/serena\.md/);
+        assert.doesNotMatch(sent[0] ?? "", /\bdecisions\/serena\.md/);
     });
 
     it("asks for text when `add` carries none", async () => {
@@ -1281,8 +1303,8 @@ describe("ranking stability", () => {
     it("ranks identically on repeated queries", () => {
         // Arrange – equal scores, so the tie-breaks do the ordering.
         const docs = [
-            entry({ path: "docs/a.md", summary: "serena note" }),
-            entry({ path: "docs/z.md", summary: "serena note" }),
+            entry({ path: "a.md", summary: "serena note" }),
+            entry({ path: "z.md", summary: "serena note" }),
         ];
 
         // Act
@@ -1366,13 +1388,13 @@ describe("serializeDoc", () => {
                 Keywords: ["one"],
                 Summary: "S",
                 Status: "superseded",
-                Supersedes: "docs/aa/old.md",
+                Supersedes: "aa/old.md",
             },
             "# T\n",
         );
 
         assert.match(raw, /\nStatus: superseded\n/);
-        assert.match(raw, /\nSupersedes: docs\/aa\/old\.md\n/);
+        assert.match(raw, /\nSupersedes: aa\/old\.md\n/);
     });
 
     it("round-trips through parseFrontMatter", async () => {
@@ -1398,8 +1420,8 @@ describe("slugify", () => {
 
     it("strips punctuation and trims dashes", async () => {
         assert.equal(
-            slugify("  -- Traps: `docs/` & gates! --  "),
-            "traps-docs-gates",
+            slugify("  -- Traps: `lake/` & gates! --  "),
+            "traps-lake-gates",
         );
     });
 
@@ -1451,8 +1473,8 @@ describe("prepareAdd guardrails", () => {
         assert.match(String(outcome.reason), /H1/);
     });
 
-    it("refuses a path that escapes docs/", async () => {
-        const cases = ["docs/../secrets.md", "../outside.md", "/etc/notes.md"];
+    it("refuses a path that escapes the docs root", async () => {
+        const cases = ["aa/../../secrets.md", "../outside.md", "/etc/notes.md"];
 
         for (const path of cases) {
             const outcome = prepareAdd(addRequest({ path }), []);
@@ -1462,10 +1484,7 @@ describe("prepareAdd guardrails", () => {
     });
 
     it("refuses a target that is not .md", async () => {
-        const outcome = prepareAdd(
-            addRequest({ path: "docs/aa/notes.txt" }),
-            [],
-        );
+        const outcome = prepareAdd(addRequest({ path: "aa/notes.txt" }), []);
 
         assert.equal(outcome.action, "refuse");
         assert.match(String(outcome.reason), /\.md/);
@@ -1496,11 +1515,11 @@ describe("prepareAdd guardrails", () => {
 });
 
 describe("prepareAdd paths", () => {
-    it("derives docs/<Area>/<slug>.md when path is omitted", async () => {
+    it("derives <Area>/<slug>.md when path is omitted", async () => {
         const outcome = prepareAdd(addRequest(), []);
 
         assert.equal(outcome.action, "write");
-        assert.equal(outcome.path, "docs/aa/fresh.md");
+        assert.equal(outcome.path, "aa/fresh.md");
     });
 
     it("serialises the written contents from the DTO", async () => {
@@ -1513,11 +1532,18 @@ describe("prepareAdd paths", () => {
         assert.match(String(outcome.contents), /# Fresh/);
     });
 
-    it("normalises a target given without the docs/ prefix", async () => {
+    it("trims whitespace from an explicit target", async () => {
         const outcome = prepareAdd(addRequest({ path: " aa/other.md " }), []);
 
         assert.equal(outcome.action, "write");
-        assert.equal(outcome.path, "docs/aa/other.md");
+        assert.equal(outcome.path, "aa/other.md");
+    });
+
+    it("treats a leading docs/ as a literal area, not scaffolding", async () => {
+        const outcome = prepareAdd(addRequest({ path: "x.md" }), []);
+
+        assert.equal(outcome.action, "write");
+        assert.equal(outcome.path, "x.md");
     });
 });
 
@@ -1525,7 +1551,7 @@ describe("prepareAdd reconcile", () => {
     it("refuses a same-area near-twin when path is omitted", async () => {
         const entries = [
             entry({
-                path: "docs/aa/fresh.md",
+                path: "aa/fresh.md",
                 area: "aa",
                 keywords: ["alpha"],
             }),
@@ -1534,17 +1560,17 @@ describe("prepareAdd reconcile", () => {
         const outcome = prepareAdd(addRequest(), entries);
 
         assert.equal(outcome.action, "refuse");
-        assert.match(String(outcome.reason), /docs\/aa\/fresh\.md/);
+        assert.match(String(outcome.reason), /\baa\/fresh\.md/);
         assert.deepEqual(
             outcome.candidates.map((candidate) => candidate.path),
-            ["docs/aa/fresh.md"],
+            ["aa/fresh.md"],
         );
     });
 
     it("does not let a different-area match block the write", async () => {
         const entries = [
             entry({
-                path: "docs/zz/fresh.md",
+                path: "zz/fresh.md",
                 area: "zz",
                 keywords: ["alpha"],
             }),
@@ -1558,14 +1584,14 @@ describe("prepareAdd reconcile", () => {
     it("skips reconcile when an explicit path is given", async () => {
         const entries = [
             entry({
-                path: "docs/aa/target.md",
+                path: "aa/target.md",
                 area: "aa",
                 keywords: ["alpha"],
             }),
         ];
 
         const outcome = prepareAdd(
-            addRequest({ path: "docs/aa/target.md" }),
+            addRequest({ path: "aa/target.md" }),
             entries,
         );
 
@@ -1575,7 +1601,7 @@ describe("prepareAdd reconcile", () => {
     it("reports same-area neighbours with the write", async () => {
         const entries = [
             entry({
-                path: "docs/aa/old.md",
+                path: "aa/old.md",
                 area: "aa",
                 keywords: [],
                 summary: "Something else entirely.",
@@ -1587,7 +1613,7 @@ describe("prepareAdd reconcile", () => {
         assert.equal(outcome.action, "write");
         assert.deepEqual(
             outcome.neighbours.map((neighbour) => neighbour.path),
-            ["docs/aa/old.md"],
+            ["aa/old.md"],
         );
     });
 });
@@ -1625,14 +1651,14 @@ describe("tool add", () => {
             {} as never,
         );
 
-        assert.match(String(result.content), /docs\/aa\/fresh\.md — created/);
+        assert.match(String(result.content), /\baa\/fresh\.md — created/);
         assert.equal(written.length, 1);
         assert.match(String(written[0]?.contents), /^---\nArea: aa\n/);
         assert.equal(result.metadata?.written, true);
     });
 
     it("reports updated when the target exists", async () => {
-        const { seam, written } = memoryFs(["docs/aa/fresh.md"]);
+        const { seam, written } = memoryFs(["aa/fresh.md"]);
         const tool = createDocsTool({ collect: () => [], ...seam });
 
         const result = await tool.execute(
@@ -1640,7 +1666,7 @@ describe("tool add", () => {
             {} as never,
         );
 
-        assert.match(String(result.content), /docs\/aa\/fresh\.md — updated/);
+        assert.match(String(result.content), /\baa\/fresh\.md — updated/);
         assert.equal(written.length, 1);
     });
 
@@ -1648,7 +1674,7 @@ describe("tool add", () => {
         const { seam, written } = memoryFs();
         const entries = [
             entry({
-                path: "docs/aa/fresh.md",
+                path: "aa/fresh.md",
                 area: "aa",
                 keywords: ["alpha"],
             }),
@@ -1662,14 +1688,14 @@ describe("tool add", () => {
 
         assert.equal(written.length, 0);
         assert.equal(result.metadata?.written, false);
-        assert.match(String(result.content), /docs\/aa\/fresh\.md/);
+        assert.match(String(result.content), /\baa\/fresh\.md/);
     });
 
     it("lists same-area neighbours with a successful write", async () => {
         const { seam } = memoryFs();
         const entries = [
             entry({
-                path: "docs/aa/old.md",
+                path: "aa/old.md",
                 area: "aa",
                 keywords: [],
                 summary: "Something else entirely.",
@@ -1682,7 +1708,7 @@ describe("tool add", () => {
             {} as never,
         );
 
-        assert.match(String(result.content), /docs\/aa\/old\.md/);
+        assert.match(String(result.content), /\baa\/old\.md/);
     });
 });
 
@@ -1701,7 +1727,7 @@ function rawWithClaim(section: string): string {
 
 describe("validateDoc", () => {
     it("passes a well-formed doc with no findings", () => {
-        const findings = validateDoc("docs/aa/good.md", goodRaw);
+        const findings = validateDoc("aa/good.md", goodRaw);
 
         assert.deepEqual(findings, []);
     });
@@ -1709,7 +1735,7 @@ describe("validateDoc", () => {
     it("flags a body with no H1", () => {
         const raw = goodRaw.replace("# Title\n\n", "");
 
-        const findings = validateDoc("docs/aa/x.md", raw);
+        const findings = validateDoc("aa/x.md", raw);
 
         assert.equal(findings.length, 1);
         assert.match(String(findings[0]), /H1/);
@@ -1723,7 +1749,7 @@ describe("validateDoc", () => {
         ] as const;
 
         for (const [field, raw] of cases) {
-            const findings = validateDoc("docs/aa/x.md", raw);
+            const findings = validateDoc("aa/x.md", raw);
 
             assert.equal(findings.length, 1, field);
             assert.match(String(findings[0]), new RegExp(field), field);
@@ -1733,7 +1759,7 @@ describe("validateDoc", () => {
     it("flags a hand-maintained Date", () => {
         const raw = goodRaw.replace("---\n", "---\nDate: 2020-01-01\n");
 
-        const findings = validateDoc("docs/aa/x.md", raw);
+        const findings = validateDoc("aa/x.md", raw);
 
         assert.equal(findings.length, 1);
         assert.match(String(findings[0]), /Date/);
@@ -1744,7 +1770,7 @@ describe("validateDoc", () => {
             "---\nArea: aa\nKeywords: alpha\nSummary: S.\n---\n" +
             "# Title\n\nJust prose.\n";
 
-        const findings = validateDoc("docs/aa/x.md", raw);
+        const findings = validateDoc("aa/x.md", raw);
 
         assert.equal(findings.length, 1);
         assert.match(String(findings[0]), /Facts/);
@@ -1760,13 +1786,13 @@ describe("validateDoc", () => {
 
         for (const section of cases) {
             assert.deepEqual(
-                validateDoc("docs/aa/x.md", rawWithClaim(section)),
+                validateDoc("aa/x.md", rawWithClaim(section)),
                 [],
                 section,
             );
             assert.deepEqual(
                 validateDoc(
-                    "docs/aa/x.md",
+                    "aa/x.md",
                     rawWithClaim(section).replace("###", "##"),
                 ),
                 [],
@@ -1780,7 +1806,7 @@ describe("validateDoc", () => {
             "---\nArea: aa\nKeywords: go\nSummary: S.\n---\n" +
             "# Go\n\n### Facts\n\n- Something.\n";
 
-        const findings = validateDoc("docs/aa/x.md", raw);
+        const findings = validateDoc("aa/x.md", raw);
 
         assert.equal(findings.length, 1);
         assert.match(String(findings[0]), /MIN_TERM_LENGTH/);
@@ -1792,7 +1818,7 @@ describe("validateDoc", () => {
             "Keywords: , ,\n",
         );
 
-        const findings = validateDoc("docs/aa/x.md", raw);
+        const findings = validateDoc("aa/x.md", raw);
 
         assert.equal(findings.length, 1);
         assert.match(String(findings[0]), /Keywords/);
@@ -1803,7 +1829,7 @@ describe("validateDoc", () => {
             "---\nArea: aa\nKeywords: alpha\nSummary: S.\n---\n" +
             "# Title\n\nMentions `Facts` inline.\n";
 
-        const findings = validateDoc("docs/aa/x.md", raw);
+        const findings = validateDoc("aa/x.md", raw);
 
         assert.equal(findings.length, 1);
         assert.match(String(findings[0]), /claim section/);
@@ -1814,14 +1840,14 @@ describe("validateDoc", () => {
             "---\nArea: aa\nKeywords: alpha\nSummary: S.\n---\n" +
             "# Title\n\n```\n### Facts\n```\n";
 
-        const findings = validateDoc("docs/aa/x.md", raw);
+        const findings = validateDoc("aa/x.md", raw);
 
         assert.equal(findings.length, 1);
         assert.match(String(findings[0]), /claim section/);
     });
 
     it("reports every finding for an empty doc", () => {
-        const findings = validateDoc("docs/x.md", "");
+        const findings = validateDoc("x.md", "");
 
         assert.deepEqual(findings, [
             "no H1 (`# Title`).",
@@ -1837,7 +1863,7 @@ describe("validateDoc", () => {
 describe("nearTwins", () => {
     it("returns same-area docs matching every identity term", () => {
         const twin = entry({
-            path: "docs/aa/fresh.md",
+            path: "aa/fresh.md",
             area: "aa",
             keywords: ["alpha"],
         });
@@ -1846,13 +1872,13 @@ describe("nearTwins", () => {
 
         assert.deepEqual(
             twins.map((candidate) => candidate.path),
-            ["docs/aa/fresh.md"],
+            ["aa/fresh.md"],
         );
     });
 
     it("ignores docs outside the area", () => {
         const other = entry({
-            path: "docs/zz/fresh.md",
+            path: "zz/fresh.md",
             area: "zz",
             keywords: ["alpha"],
         });
@@ -1865,13 +1891,13 @@ describe("checkDocs", () => {
     /** A read seam over a raw-doc map, with the good doc preloaded. */
     function rawsOf(extra: Record<string, string> = {}) {
         return new Map<string, string>([
-            ["docs/aa/good.md", goodRaw],
+            ["aa/good.md", goodRaw],
             ...Object.entries(extra),
         ]);
     }
 
     it("reports compliance when nothing is found", () => {
-        const entries = [toEntry("docs/aa/good.md", goodRaw, "2026-01-01")];
+        const entries = [toEntry("aa/good.md", goodRaw, "2026-01-01")];
 
         const report = checkDocs(entries, (path) => rawsOf().get(path) ?? "");
 
@@ -1888,27 +1914,27 @@ describe("checkDocs", () => {
     it("reports per-doc findings with the doc's path", () => {
         const bad =
             "---\nArea: aa\nKeywords: alpha\nSummary: S.\n---\nJust prose.\n";
-        const entries = [toEntry("docs/aa/bad.md", bad, "2026-01-01")];
+        const entries = [toEntry("aa/bad.md", bad, "2026-01-01")];
 
         const report = checkDocs(
             entries,
-            (path) => rawsOf({ "docs/aa/bad.md": bad }).get(path) ?? "",
+            (path) => rawsOf({ "aa/bad.md": bad }).get(path) ?? "",
         );
 
-        assert.match(report, /docs\/aa\/bad\.md/);
+        assert.match(report, /\baa\/bad\.md/);
         assert.match(report, /H1/);
     });
 
     it("reports a near-twin pair once, naming both docs", () => {
         const entries = [
             entry({
-                path: "docs/aa/a.md",
+                path: "aa/a.md",
                 area: "aa",
                 title: "Alpha page",
                 keywords: ["alpha"],
             }),
             entry({
-                path: "docs/aa/b.md",
+                path: "aa/b.md",
                 area: "aa",
                 title: "Alpha page",
                 keywords: ["alpha"],
@@ -1917,21 +1943,21 @@ describe("checkDocs", () => {
 
         const report = checkDocs(entries, (path) => rawsOf().get(path) ?? "");
 
-        assert.match(report, /docs\/aa\/a\.md/);
-        assert.match(report, /docs\/aa\/b\.md/);
+        assert.match(report, /\baa\/a\.md/);
+        assert.match(report, /\baa\/b\.md/);
         assert.equal(report.match(/near-twin/g)?.length, 1);
     });
 
     it("reports a pair that only one direction of the rule fires on", () => {
         const entries = [
             entry({
-                path: "docs/aa/wide.md",
+                path: "aa/wide.md",
                 area: "aa",
                 title: "Alpha page",
                 keywords: ["alpha"],
             }),
             entry({
-                path: "docs/aa/narrow.md",
+                path: "aa/narrow.md",
                 area: "aa",
                 title: "Alpha",
                 keywords: [],
@@ -1940,9 +1966,27 @@ describe("checkDocs", () => {
 
         const report = checkDocs(entries, (path) => rawsOf().get(path) ?? "");
 
-        assert.match(report, /docs\/aa\/wide\.md/);
-        assert.match(report, /docs\/aa\/narrow\.md/);
+        assert.match(report, /\baa\/wide\.md/);
+        assert.match(report, /\baa\/narrow\.md/);
         assert.equal(report.match(/near-twin/g)?.length, 1);
+    });
+
+    it("appends environment notes to the report", () => {
+        const entries = [toEntry("aa/good.md", goodRaw, "2026-01-01")];
+
+        const report = checkDocs(entries, (path) => rawsOf().get(path) ?? "", [
+            "note: unversioned root",
+        ]);
+
+        assert.match(report, /note: unversioned root/);
+        assert.doesNotMatch(report, /comply/);
+    });
+
+    it("reports a note even for an empty tree", () => {
+        assert.equal(
+            checkDocs([], () => "", ["note: only"]),
+            "note: only",
+        );
     });
 });
 
@@ -1964,9 +2008,9 @@ describe("resolveRequest check", () => {
 
 describe("tool check", () => {
     it("serves the check report and the checked count", async () => {
-        const raws = new Map([["docs/aa/good.md", goodRaw]]);
+        const raws = new Map([["aa/good.md", goodRaw]]);
         const tool = createDocsTool({
-            collect: () => [toEntry("docs/aa/good.md", goodRaw, "2026-01-01")],
+            collect: () => [toEntry("aa/good.md", goodRaw, "2026-01-01")],
             exists: () => false,
             write: () => {},
             read: (path) => raws.get(path) ?? "",
@@ -1977,14 +2021,28 @@ describe("tool check", () => {
         assert.match(String(result.content), /comply/);
         assert.equal(result.metadata?.checked, 1);
     });
+
+    it("carries the environment notes through the tool's check", async () => {
+        const tool = createDocsTool({
+            collect: () => [],
+            exists: () => false,
+            write: () => {},
+            read: () => "",
+            notes: ["note: unversioned root"],
+        });
+
+        const result = await tool.execute({ check: true }, {} as never);
+
+        assert.match(String(result.content), /note: unversioned root/);
+    });
 });
 
 describe("command check", () => {
     it("prompts the check report for the check verb", async () => {
         const sent: string[] = [];
-        const raws = new Map([["docs/aa/good.md", goodRaw]]);
+        const raws = new Map([["aa/good.md", goodRaw]]);
         const command = createDocsCommand({
-            collect: () => [toEntry("docs/aa/good.md", goodRaw, "2026-01-01")],
+            collect: () => [toEntry("aa/good.md", goodRaw, "2026-01-01")],
             read: (path) => raws.get(path) ?? "",
             prompt: async (_sessionID, text) => {
                 sent.push(text);
@@ -2110,8 +2168,8 @@ describe("reconcile harness (fixture corpus)", () => {
                 title: "Widget install",
             }),
             expect: "refuse",
-            candidate: "docs/guides/widget-setup.md",
-            topCandidate: "docs/guides/widget-install.md",
+            candidate: "guides/widget-setup.md",
+            topCandidate: "guides/widget-install.md",
         },
         {
             name: "a keyword twin in another area refuses with its floor doc first",
@@ -2122,8 +2180,8 @@ describe("reconcile harness (fixture corpus)", () => {
                 title: "Naming rules",
             }),
             expect: "refuse",
-            candidate: "docs/meta/naming.md",
-            topCandidate: "docs/meta/naming.md",
+            candidate: "meta/naming.md",
+            topCandidate: "meta/naming.md",
         },
         {
             name: "a brand-new area always writes",
@@ -2140,7 +2198,7 @@ describe("reconcile harness (fixture corpus)", () => {
                 Keywords: ["widget"],
                 Summary: "The widget install guide.",
                 title: "Widget install",
-                path: "docs/guides/widget-install.md",
+                path: "guides/widget-install.md",
             }),
             expect: "write",
         },
@@ -2216,7 +2274,7 @@ describe("reconcile harness (fixture corpus)", () => {
                 }
             }
             if (outcome.action === "write") {
-                assert.match(outcome.path, /^docs\/[^/].*\.md$/);
+                assert.match(outcome.path, /^[^/]+\/[^/]+\.md$/);
             }
         });
     }
@@ -2224,11 +2282,11 @@ describe("reconcile harness (fixture corpus)", () => {
 
 describe("search harness (fixture corpus)", () => {
     const pins: ReadonlyArray<readonly [query: string, expected: string]> = [
-        ["widget install", "docs/guides/widget-install.md"],
-        ["alpha memo", "docs/notes/alpha-note.md"],
-        ["naming rules", "docs/meta/naming.md"],
-        ["backup restore", "docs/ops/backup.md"],
-        ["monitoring alerts", "docs/ops/monitoring.md"],
+        ["widget install", "guides/widget-install.md"],
+        ["alpha memo", "notes/alpha-note.md"],
+        ["naming rules", "meta/naming.md"],
+        ["backup restore", "ops/backup.md"],
+        ["monitoring alerts", "ops/monitoring.md"],
     ];
 
     for (const [query, expected] of pins) {
@@ -2248,7 +2306,7 @@ describe("search harness (fixture corpus)", () => {
             entries
                 .slice(0, 3)
                 .map((top) => top.path)
-                .includes("docs/guides/widget-setup.md"),
+                .includes("guides/widget-setup.md"),
             entries.map((top) => top.path).join("\n"),
         );
     });

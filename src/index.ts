@@ -14,15 +14,17 @@ import {
     statSync,
     writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Schema } from "effect";
 
 /**
  * V2 docs plugin.
  *
- * Registers a model-callable `docs` tool so the agent can discover the repo's
- * knowledge tree mid-task: a blank search returns the most recently changed
+ * Registers a model-callable `docs` tool so the agent can discover the
+ * knowledge tree mid-task — the docs root is configurable (`root` option,
+ * default `<location>/docs`): a blank search returns the most recently changed
  * docs (`path — Area — date — Summary`), a search ranks the docs by
  * how well their front-matter, path and body identifiers match, falling back
  * to the closest matches rather than a dead end. `add` writes knowledge,
@@ -35,9 +37,9 @@ import { Schema } from "effect";
 
 /** One knowledge doc, as the tool sees it. */
 export interface DocEntry {
-    /** Repo-relative path, e.g. `docs/decisions/choose-a-queue.md`. */
+    /** Root-relative path, e.g. `decisions/choose-a-queue.md`. */
     path: string;
-    /** Front-matter `Area`, else the first path segment under `docs/`. */
+    /** Front-matter `Area`, else the first path segment under the root. */
     area: string;
     /** Resolved at read time: last git commit, else file mtime. Never front-matter. */
     date: string;
@@ -70,7 +72,7 @@ export const DOCS_INPUT = Schema.Struct({
             path: Schema.optional(
                 Schema.String.annotate({
                     description:
-                        "Update target, e.g. `docs/guides/getting-started.md`. Omit to create `docs/<Area>/<slug>.md` from the H1.",
+                        "Update target, e.g. `guides/getting-started.md` (relative to the docs root). Omit to create `<Area>/<slug>.md` from the H1.",
                 }),
             ),
             metadata: Schema.Struct({
@@ -100,7 +102,7 @@ export const DOCS_INPUT = Schema.Struct({
     check: Schema.optional(
         Schema.Boolean.annotate({
             description:
-                "Validate every doc under docs/ against the convention: required front-matter, an H1, claim sections, no hand-maintained Date, a distinctive H1+Keywords identity, a Supersedes naming a doc in the tree, and same-area near-twins. An empty report means compliant.",
+                "Validate every doc under the docs root against the convention: required front-matter, an H1, claim sections, no hand-maintained Date, a distinctive H1+Keywords identity, a Supersedes naming a doc in the tree, and same-area near-twins. An empty report means compliant.",
         }),
     ),
 });
@@ -122,7 +124,7 @@ export type DocsAdd = NonNullable<DocsInput["add"]>;
 /** The typed metadata of a knowledge doc, serialised to front-matter. */
 export type DocMetadata = DocsAdd["metadata"];
 
-/** Directories under `docs/` the tool ignores: scratch and vendored mirrors. */
+/** Top-level directories under the root the tool ignores: scratch and mirrors. */
 export const EXCLUDED_AREAS = ["plans", "requirements", "wiki"] as const;
 
 /**
@@ -306,7 +308,7 @@ export function identifiersOf(body: string): string[] {
 export function toEntry(path: string, raw: string, date: string): DocEntry {
     const { meta, body } = parseFrontMatter(raw);
     const segments = path.split("/");
-    const area = meta.Area ?? (segments.length > 2 ? (segments[1] ?? "") : "");
+    const area = meta.Area ?? (segments.length > 1 ? (segments[0] ?? "") : "");
     return {
         path,
         area,
@@ -348,18 +350,6 @@ function termsOf(query: string): string[] {
 }
 
 /**
- * The searchable part of a doc's path: the shared `docs/` prefix is folder
- * scaffolding, not content, so it is dropped — otherwise the literal term
- * `docs` matches every doc through the path field alone. Display keeps the
- * full path; a real segment (`docs/docs.md`, `docs/decisions/…`) still hits.
- * @param path Repo-relative doc path.
- * @returns The path with its leading `docs/` segment removed.
- */
-function indexablePath(path: string): string {
-    return path.startsWith("docs/") ? path.slice("docs/".length) : path;
-}
-
-/**
  * Whether a doc matches the query. A blank query matches everything; otherwise
  * every kept term (see {@link MIN_TERM_LENGTH}) must appear
  * case-insensitively in the doc's searchable text.
@@ -373,7 +363,7 @@ export function matches(entry: DocEntry, query: string): boolean {
         return true;
     }
     const haystack = [
-        indexablePath(entry.path),
+        entry.path,
         entry.area,
         entry.title,
         entry.summary,
@@ -405,7 +395,7 @@ const FIELDS: ReadonlyArray<
     readonly [weight: number, values: (entry: DocEntry) => readonly string[]]
 > = [
     [FIELD_WEIGHTS.title, (entry) => [entry.title]],
-    [FIELD_WEIGHTS.path, (entry) => [indexablePath(entry.path)]],
+    [FIELD_WEIGHTS.path, (entry) => [entry.path]],
     [FIELD_WEIGHTS.keywords, (entry) => entry.keywords],
     [FIELD_WEIGHTS.identifiers, (entry) => entry.identifiers],
     [FIELD_WEIGHTS.area, (entry) => [entry.area]],
@@ -604,7 +594,7 @@ export function explainRanking(): string {
         "How docs search ranks:",
         `- Fields weighted: title ${FIELD_WEIGHTS.title} > path ${FIELD_WEIGHTS.path} > keywords ${FIELD_WEIGHTS.keywords} > identifiers ${FIELD_WEIGHTS.identifiers} > area ${FIELD_WEIGHTS.area} > summary ${FIELD_WEIGHTS.summary}.`,
         `- Each term scores its best field as weight × quality; quality is exact > prefix > substring.`,
-        `- Terms shorter than MIN_TERM_LENGTH (${MIN_TERM_LENGTH}) are ignored unless they are the whole query; the shared \`docs/\` path prefix itself is not searched.`,
+        `- Terms shorter than MIN_TERM_LENGTH (${MIN_TERM_LENGTH}) are ignored unless they are the whole query.`,
         `- Every call returns at most MAX_RESULTS (${MAX_RESULTS}), best matches first, then the most recently edited; anything cut is counted as "… and N more not shown."`,
         '- Outcomes: a blank query lists the most recently changed docs; a doc carrying every term ranks the full matches; otherwise the docs matching any term as a substring are listed under "Closest matches"; nothing hits is "No knowledge docs matched."',
     ].join("\n");
@@ -644,8 +634,9 @@ export function resolveRequest(input: DocsInput): DocsRequest {
  * The newest commit date per path, in one `git log` pass over all paths.
  * `git log` lists commits newest first, so the first date seen for a path is
  * its latest edit; paths absent from history are absent from the map.
- * @param cwd Repository root.
- * @param paths Repo-relative paths.
+ * @param cwd Directory inside the docs root's work tree; git resolves the
+ * work-tree root itself.
+ * @param paths Root-relative paths.
  * @returns A `YYYY-MM-DD` per known path.
  */
 export function gitDates(
@@ -684,8 +675,8 @@ export function gitDates(
 /**
  * A date per path in one batch: git's newest commit date, else the file
  * mtime, else "". One git pass for the whole tree, however many docs.
- * @param cwd Repository root.
- * @param paths Repo-relative paths.
+ * @param cwd Directory inside the docs root's work tree.
+ * @param paths Root-relative paths.
  * @returns A date per path.
  */
 export function fallbackDates(
@@ -710,10 +701,11 @@ export function fallbackDates(
 }
 
 /**
- * Collect every knowledge doc under `docs/`, skipping scratch and mirrors.
- * @param root Repository root.
+ * Collect every knowledge doc under the docs root, skipping scratch and
+ * mirrors.
+ * @param root Docs root — the directory that is the knowledge tree.
  * @param resolve Resolves every doc path's date in one batched call.
- * @returns Entries ordered by path, or none when `docs/` is absent.
+ * @returns Entries ordered by path, or none when the root is absent.
  */
 export function collectDocs(
     root: string,
@@ -721,7 +713,7 @@ export function collectDocs(
 ): DocEntry[] {
     let files: string[];
     try {
-        files = readdirSync(join(root, "docs"), {
+        files = readdirSync(root, {
             recursive: true,
             encoding: "utf8",
         });
@@ -735,8 +727,7 @@ export function collectDocs(
             (relativePath) =>
                 !excluded.includes(relativePath.split("/")[0] ?? ""),
         )
-        .sort()
-        .map((relativePath) => `docs/${relativePath}`);
+        .sort();
     const dates = resolve(paths);
     return paths.map((path) =>
         toEntry(
@@ -764,7 +755,7 @@ export function slugify(text: string): string {
 export type AddOutcome =
     | {
           action: "write";
-          /** Repo-relative target, always under `docs/`. */
+          /** Root-relative target. */
           path: string;
           /** The serialised file contents. */
           contents: string;
@@ -801,10 +792,10 @@ function blankRequiredField(metadata: DocMetadata): string | null {
 }
 
 /**
- * Validate an explicit `add` path: relative, inside `docs/`, naming a `.md`
- * file. A leading `docs/` is accepted and normalised away.
+ * Validate an explicit `add` path: relative, inside the docs root, naming a
+ * `.md` file.
  * @param given The trimmed, non-empty `path` the caller supplied.
- * @returns The repo-relative target path, or the refusal reason.
+ * @returns The root-relative target path, or the refusal reason.
  */
 function explicitTarget(given: string): { path: string } | { reason: string } {
     if (
@@ -813,23 +804,24 @@ function explicitTarget(given: string): { path: string } | { reason: string } {
         given.includes("\\") ||
         given.includes(":")
     ) {
-        return { reason: "path must be relative and stay inside docs/." };
+        return {
+            reason: "path must be relative and stay inside the docs root.",
+        };
     }
     if (!given.endsWith(".md")) {
         return { reason: "path must end in .md." };
     }
-    const withoutPrefix = given.replace(/^docs\//, "");
-    const stem = withoutPrefix.slice(0, -".md".length);
+    const stem = given.slice(0, -".md".length);
     if (stem === "" || stem.endsWith("/")) {
-        return { reason: "path must name a .md file under docs/." };
+        return { reason: "path must name a .md file under the docs root." };
     }
-    return { path: `docs/${withoutPrefix}` };
+    return { path: given };
 }
 
 /**
- * The repo-relative target path for an `add`, or the reason it is refused.
- * An explicit path must stay inside `docs/` and name a `.md` file; an omitted
- * path derives `docs/<Area>/<slug>.md` from the H1.
+ * The root-relative target path for an `add`, or the reason it is refused.
+ * An explicit path must stay inside the docs root and name a `.md` file; an
+ * omitted path derives `<Area>/<slug>.md` from the H1.
  * @param add The typed request.
  * @returns The target path, or the refusal reason.
  */
@@ -842,7 +834,7 @@ function targetOf(add: DocsAdd): { path: string } | { reason: string } {
     if (slug === "") {
         return { reason: "The H1 does not yield a usable file name." };
     }
-    return { path: `docs/${add.metadata.Area}/${slug}.md` };
+    return { path: `${add.metadata.Area}/${slug}.md` };
 }
 
 /**
@@ -909,9 +901,9 @@ export function nearTwins(
  * Validate an `add` request and prepare it for writing — pure, no fs.
  *
  * Trust boundary: the caller is a model. Blank required metadata, a body
- * without an H1, a path or `Area` escaping `docs/`, a non-`.md` target and a
- * title that yields no slug are all refused. With `path` omitted the target is
- * `docs/<Area>/<slug>.md` and a same-area near-twin — a doc matching every
+ * without an H1, a path or `Area` escaping the docs root, a non-`.md` target
+ * and a title that yields no slug are all refused. With `path` omitted the
+ * target is `<Area>/<slug>.md` and a same-area near-twin — a doc matching every
  * reconcile query term ({@link reconcileQuery}) — refuses the write with the
  * candidates attached; an explicit `path` is the update contract (wholesale
  * replacement) and skips reconcile.
@@ -934,7 +926,7 @@ export function prepareAdd(
         return refuse(`${blank} is required and must not be blank.`);
     }
     if (/[/\\]|\.\./.test(add.metadata.Area)) {
-        return refuse("Area must be a single folder name under docs/.");
+        return refuse("Area must be a single folder name under the docs root.");
     }
     if (h1Of(add.body) === undefined) {
         return refuse("The body must carry an H1 (`# Title`).");
@@ -1081,13 +1073,16 @@ function nearTwinPairs(
  * `Supersedes` that names no doc, then the {@link nearTwinPairs}. An empty
  * report means compliant.
  * @param entries The docs to check.
- * @param read Resolves a repo-relative doc path to its raw contents;
+ * @param read Resolves a root-relative doc path to its raw contents;
  * injected so the check is testable.
+ * @param notes Environment notes (e.g. an unversioned root) appended to the
+ * report; findings they describe are still reported per doc.
  * @returns The report text.
  */
 export function checkDocs(
     entries: readonly DocEntry[],
     read: (path: string) => string,
+    notes: readonly string[] = [],
 ): string {
     const paths = new Set(entries.map((entry) => entry.path));
     const lines = entries.flatMap((entry) => {
@@ -1105,6 +1100,7 @@ export function checkDocs(
                 "(merge, or repoint one).",
         );
     }
+    lines.push(...notes);
     return lines.length === 0
         ? `All ${entries.length} docs comply.`
         : lines.join("\n");
@@ -1113,12 +1109,14 @@ export function checkDocs(
 export interface DocsToolDeps {
     /** Collects the docs to serve; injected so the tool is testable. */
     collect: () => DocEntry[];
-    /** Whether a repo-relative doc path exists; injected so writes are testable. */
+    /** Whether a root-relative doc path exists; injected so writes are testable. */
     exists: (path: string) => boolean;
-    /** Writes a repo-relative doc path; injected so writes are testable. */
+    /** Writes a root-relative doc path; injected so writes are testable. */
     write: (path: string, contents: string) => void;
-    /** Reads a repo-relative doc path's raw contents; injected so `check` is testable. */
+    /** Reads a root-relative doc path's raw contents; injected so `check` is testable. */
     read: (path: string) => string;
+    /** Environment notes appended to the `check` report; injected for testability. */
+    notes?: readonly string[];
 }
 
 /** Delivers a rendered result to a session. */
@@ -1130,8 +1128,10 @@ export type PromptSender = (
 export interface DocsCommandDeps {
     /** Collects the docs to serve; injected so the command is testable. */
     collect: () => DocEntry[];
-    /** Reads a repo-relative doc path's raw contents; injected so `check` is testable. */
+    /** Reads a root-relative doc path's raw contents; injected so `check` is testable. */
     read: (path: string) => string;
+    /** Environment notes appended to the `check` report; injected for testability. */
+    notes?: readonly string[];
     /** Delivers the rendered result to the session. */
     prompt: PromptSender;
 }
@@ -1169,11 +1169,12 @@ export function createDocsTool(deps: DocsToolDeps): Info<typeof DOCS_INPUT> {
     return {
         name: "docs",
         description:
-            "Discover the repository's knowledge docs under docs/. A blank search lists the " +
+            "Discover the knowledge docs under the configured docs root " +
+            "(default: the location's `docs/` directory). A blank search lists the " +
             MAX_RESULTS +
             " most recently changed docs (path — Area — date — Summary); a search ranks docs over title, path, keywords, body headings and code spans, area and summary, falling back to the closest matches. Every call returns at most " +
             MAX_RESULTS +
-            " results and counts the rest. Search exactly `help` explains the ranking. `add` writes a new knowledge doc (or wholesale-replaces the doc at `path`) from a typed DTO — metadata becomes front-matter, the body must start with an H1; blank required fields, path traversal, non-.md targets and same-area near-twins are refused. `check` validates every doc against the convention (required front-matter, H1, claim sections, no hand-maintained Date, distinctive H1+Keywords, a Supersedes naming a doc in the tree, near-twins) and reports findings; an empty report means compliant. The shared `docs/` path prefix itself is not searched. Read a matched file with the read tool.",
+            " results and counts the rest. Search exactly `help` explains the ranking. `add` writes a new knowledge doc (or wholesale-replaces the doc at `path`) from a typed DTO — metadata becomes front-matter, the body must start with an H1; blank required fields, path traversal, non-.md targets and same-area near-twins are refused. `check` validates every doc against the convention (required front-matter, H1, claim sections, no hand-maintained Date, distinctive H1+Keywords, a Supersedes naming a doc in the tree, near-twins) and reports findings; an empty report means compliant. Read a matched file with the read tool.",
         input: DOCS_INPUT,
         options: { codemode: false },
         async execute(input) {
@@ -1184,7 +1185,7 @@ export function createDocsTool(deps: DocsToolDeps): Info<typeof DOCS_INPUT> {
             if (request.verb === "check") {
                 const entries = deps.collect();
                 return {
-                    content: checkDocs(entries, deps.read),
+                    content: checkDocs(entries, deps.read, deps.notes ?? []),
                     metadata: { checked: entries.length },
                 };
             }
@@ -1223,8 +1224,8 @@ function addPrompt(subject: string): string {
         return "`/docs add` needs the text to record: `/docs add <fact>`.";
     }
     return (
-        "Record this as durable knowledge under docs/: call the `docs` tool's " +
-        "`add` with a typed DTO (metadata Area/Keywords/Summary, body starting " +
+        "Record this as durable knowledge in the docs root: call the `docs` " +
+        "tool's `add` with a typed DTO (metadata Area/Keywords/Summary, body starting " +
         "with an H1) for:\n\n" +
         subject
     );
@@ -1242,7 +1243,7 @@ export function createDocsCommand(deps: DocsCommandDeps): CommandDefinition {
     return {
         name: "docs",
         description:
-            "Search the repository's knowledge docs (docs/**/*.md), ranked; `add <text>` records new knowledge through the tool's typed `add`; `check` validates the convention; a blank search lists the " +
+            "Search the knowledge docs under the configured docs root, ranked; `add <text>` records new knowledge through the tool's typed `add`; `check` validates the convention; a blank search lists the " +
             MAX_RESULTS +
             " most recently changed.",
         async execute({ sessionID, prompt }) {
@@ -1260,7 +1261,7 @@ export function createDocsCommand(deps: DocsCommandDeps): CommandDefinition {
             if (lower === CHECK_VERB) {
                 await deps.prompt(
                     sessionID,
-                    checkDocs(deps.collect(), deps.read),
+                    checkDocs(deps.collect(), deps.read, deps.notes ?? []),
                 );
                 return;
             }
@@ -1274,10 +1275,65 @@ export function createDocsCommand(deps: DocsCommandDeps): CommandDefinition {
     };
 }
 
+/**
+ * Resolve the plugin's docs root from its `root` option. Unset → the
+ * location's `docs/` directory; `~` or `~/…` expands against the home
+ * directory; absolute paths pass through; anything else resolves against the
+ * plugin location. The resolved value is the knowledge tree itself — no
+ * segment is appended. A non-string or blank value throws: a mistyped option
+ * must fail loudly, not silently fall back to the wrong tree.
+ * @param configured The raw option value as the host delivers it.
+ * @param locationDirectory The directory the plugin instance loaded in.
+ * @returns The docs root.
+ */
+export function resolveRoot(
+    configured: unknown,
+    locationDirectory: string,
+): string {
+    if (configured === undefined) {
+        return join(locationDirectory, "docs");
+    }
+    if (typeof configured !== "string" || configured.trim() === "") {
+        throw new Error(
+            `docs plugin option 'root' must be a non-empty string path, ` +
+                `got ${JSON.stringify(configured)}.`,
+        );
+    }
+    const given = configured.trim();
+    const expanded =
+        given === "~" || given.startsWith("~/")
+            ? join(homedir(), given.slice(1))
+            : given;
+    return isAbsolute(expanded) ? expanded : join(locationDirectory, expanded);
+}
+
+/**
+ * Probe whether the docs root sits inside a git work tree, as `check`-report
+ * notes. An unversioned root still works — dates fall back to file mtimes and
+ * the knowledge has no history — so it is surfaced, not refused.
+ * @param root The docs root to probe.
+ * @returns The note lines; empty when the root is version-controlled.
+ */
+export function unversionedNote(root: string): readonly string[] {
+    const probe = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+        cwd: root,
+    });
+    if (probe.status === 0) {
+        return [];
+    }
+    return [
+        "note: the docs root is not inside a git work tree — dates fall " +
+            "back to file mtimes and the knowledge has no history. Put the " +
+            "root under version control to fix both.",
+    ];
+}
+
 export default Plugin.define({
     id: "docs",
     async setup(ctx) {
-        const root = ctx.location.directory;
+        const options = ctx.options as { root?: unknown } | undefined;
+        const root = resolveRoot(options?.root, ctx.location.directory);
+        const notes = unversionedNote(root);
         const collect = () =>
             collectDocs(root, (paths) => fallbackDates(root, paths));
         const read = (path: string) => readFileSync(join(root, path), "utf8");
@@ -1292,6 +1348,7 @@ export default Plugin.define({
                         writeFileSync(target, contents);
                     },
                     read,
+                    notes,
                 }),
             );
         });
@@ -1300,6 +1357,7 @@ export default Plugin.define({
                 createDocsCommand({
                     collect,
                     read,
+                    notes,
                     prompt: (sessionID, text) =>
                         ctx.session.prompt({ sessionID, text }),
                 }),
@@ -1316,12 +1374,12 @@ export default Plugin.define({
                 id: Skill.ID.make("docs"),
                 name: Skill.Name.make("Docs"),
                 description:
-                    "The entry point to the repository's durable knowledge " +
-                    "under docs/: find the right file with the docs tool, read " +
-                    "it, and record plans and task documentation for the next " +
-                    "human or agent. Use at the start of unfamiliar work, when " +
-                    "hunting for prior decisions or traps, and when closing out " +
-                    "a session.",
+                    "The entry point to the knowledge docs under the " +
+                    "configured docs root: find the right file with the docs " +
+                    "tool, read it, and record plans and task documentation " +
+                    "for the next human or agent. Use at the start of " +
+                    "unfamiliar work, when hunting for prior decisions or " +
+                    "traps, and when closing out a session.",
                 path: AbsolutePath.make(fileURLToPath(skillURL)),
                 content: skill,
             });
