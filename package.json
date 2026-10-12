@@ -1,6 +1,6 @@
 {
     "name": "@markstanden/opencode-docs-plugin",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "type": "module",
     "description": "OpenCode V2 plugin: a `docs` tool and `/docs` command over a repository's knowledge tree, with the writing convention it owns",
     "repository": {
