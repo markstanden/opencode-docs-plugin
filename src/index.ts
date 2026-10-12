@@ -188,7 +188,7 @@ export function serializeDoc(metadata: DocMetadata, body: string): string {
         const text = Array.isArray(value) ? value.join(", ") : value;
         return [`${name}: ${text}`];
     });
-    return `---\n${lines.join("\n")}\n---\n\n${body.replace(/\n+$/, "")}\n`;
+    return `---\n${lines.join("\n")}\n---\n\n${body.replace(/(?<!\n)\n+$/, "")}\n`;
 }
 
 /**
@@ -232,7 +232,7 @@ function isFence(line: string): boolean {
 
 /** Drop an ATX heading's trailing `#` decoration (and any trailing spaces). */
 function stripTrailingHashes(text: string): string {
-    return text.replace(/[ #]+$/, "");
+    return text.replace(/(?<![ #])[ #]+$/, "");
 }
 
 /** The body's indexable pieces, from one fence-aware walk of the source. */
@@ -748,7 +748,7 @@ export function slugify(text: string): string {
     return text
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-+|-+$/g, "");
+        .replace(/^-+|(?<!-)-+$/g, "");
 }
 
 /** The outcome of preparing an `add`: either a write or a refusal. */
@@ -1328,10 +1328,20 @@ export function unversionedNote(root: string): readonly string[] {
     ];
 }
 
+/**
+ * The docs plugin's options, as the host delivers them. The framework types
+ * `ctx.options` as `Readonly<Record<string, any>>`, so the shape the plugin
+ * reads is declared here.
+ */
+interface DocsPluginOptions {
+    /** The docs root override; defaults to `docs` beside the plugin. */
+    root?: unknown;
+}
+
 export default Plugin.define({
     id: "docs",
     async setup(ctx) {
-        const options = ctx.options as { root?: unknown } | undefined;
+        const options = ctx.options as DocsPluginOptions | undefined;
         const root = resolveRoot(options?.root, ctx.location.directory);
         const notes = unversionedNote(root);
         const collect = () =>

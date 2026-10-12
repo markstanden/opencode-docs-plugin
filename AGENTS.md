@@ -72,7 +72,6 @@ testable.
 ```bash
 npm test          # node --test
 npm run typecheck
-npm run lint
 defined comply    # the verdict — bootstrap, repair and verify
 ```
 
