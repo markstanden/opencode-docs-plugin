@@ -27,7 +27,6 @@ Standalone extract of the docs tooling, under active development.
 npm install
 npm test          # node --test
 npm run typecheck
-npm run lint
 defined comply    # the gate: bootstrap, repair and verify
 ```
 

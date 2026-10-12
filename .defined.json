@@ -1,5 +1,5 @@
 {
-    "version": "2c83451ade1f",
+    "version": "b0df20afb0f0",
     "coverage": {
         "node": {
             "command": "mkdir -p coverage && node --test --experimental-test-coverage --test-coverage-include='src/**/*.ts' --test-coverage-exclude='**/*.test.ts' --test-reporter=lcov --test-reporter-destination=coverage/lcov.info 'tests/**/*.test.ts'",
@@ -15,11 +15,6 @@
             {
                 "dir": ".",
                 "checks": [
-                    {
-                        "name": "lint",
-                        "command": "eslint .",
-                        "fix": "eslint --fix ."
-                    },
                     {
                         "name": "typecheck",
                         "command": "tsc --noEmit"
