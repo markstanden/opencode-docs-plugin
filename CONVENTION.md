@@ -6,8 +6,9 @@ repository that adopts the plugin takes the convention with it.
 
 ## Where knowledge lives
 
-Durable knowledge is one Markdown file per topic under `docs/`, grouped by area:
-`docs/<area>/<name>.md`. The excluded areas — never scanned, never validated —
+Durable knowledge is one Markdown file per topic under the docs root, grouped by
+area: `<area>/<name>.md` (the root is the plugin's `root` option; default
+`<location>/docs`). The excluded areas — never scanned, never validated —
 are `plans/` (scratch, gitignored, deleted when the work lands),
 `requirements/` and `wiki/` (vendored mirrors).
 
@@ -17,7 +18,7 @@ Every doc opens with a `---` front-matter block. The fields, in canonical order:
 
 | Field        | Required | Meaning                                                                 |
 | ------------ | -------- | ----------------------------------------------------------------------- |
-| `Area`       | yes      | One path segment under `docs/`; the doc's group.                        |
+| `Area`       | yes      | One top-level path segment; the doc's group.                            |
 | `Keywords`   | yes      | Comma-separated search terms; the second half of the doc's identity.    |
 | `Summary`    | yes      | One self-contained sentence: enough to decide whether to open the file. |
 | `Status`     | no       | `active` (the default) or `superseded`.                                 |
@@ -55,5 +56,5 @@ tree.
 ## Adopting it
 
 Run `check` to audit an existing tree, and the gate's `defined comply` before
-proposing a commit. A missing `docs/` tree is not an error: the plugin scans
+proposing a commit. A missing docs root is not an error: the plugin scans
 what is there and reports per-doc findings for what is not.
