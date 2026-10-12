@@ -17,6 +17,49 @@ configured docs root's `*.md` files (the `root` plugin option; default
 
 Reading a matched doc stays OpenCode's built-in `read`.
 
+## Installation
+
+From npm:
+
+```sh
+opencode plugin add @markstanden/opencode-docs-plugin
+```
+
+or as a `plugins` entry in `opencode.json(c)` (global, project or `.opencode/`):
+
+```jsonc
+{
+    "$schema": "https://opencode.ai/config.json",
+    "plugins": ["@markstanden/opencode-docs-plugin"],
+}
+```
+
+Unpinned entries update on the next server start or `opencode plugin update`;
+an exact version (e.g. `@0.2.0`) stays pinned.
+
+## Configuration
+
+The docs root defaults to `<location>/docs`. Set the `root` option with the
+object form — `~` expands against the home directory, so a global config can
+point every project at one shared tree:
+
+```jsonc
+{
+    "$schema": "https://opencode.ai/config.json",
+    "plugins": [
+        {
+            "package": "@markstanden/opencode-docs-plugin",
+            "options": {
+                "root": "~/doclake",
+            },
+        },
+    ],
+}
+```
+
+Relative paths resolve against the location's directory; absolute paths pass
+through. Restart OpenCode after editing the config — it isn't hot-reloaded.
+
 ## Status
 
 Standalone extract of the docs tooling, under active development.
