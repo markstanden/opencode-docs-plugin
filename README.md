@@ -58,7 +58,11 @@ point every project at one shared tree:
 ```
 
 Relative paths resolve against the location's directory; absolute paths pass
-through. Restart OpenCode after editing the config — it isn't hot-reloaded.
+through. A blank `root` value counts as unset and uses the default; a
+non-string value fails at startup. The root directory itself need not exist in
+advance — it is created on the first `add`, and a search or `check` over a
+still-empty tree simply reports nothing. Restart OpenCode after editing the
+config — it isn't hot-reloaded.
 
 ## Status
 

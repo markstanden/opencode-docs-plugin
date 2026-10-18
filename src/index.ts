@@ -1277,10 +1277,12 @@ export function createDocsCommand(deps: DocsCommandDeps): CommandDefinition {
 
 /**
  * Resolve the plugin's docs root from its `root` option. Unset → the
- * location's `docs/` directory; `~` or `~/…` expands against the home
+ * location's `docs/` directory — a blank string counts as unset, since it is
+ * almost always an empty environment variable or half-finished config rather
+ * than a deliberate path; `~` or `~/…` expands against the home
  * directory; absolute paths pass through; anything else resolves against the
  * plugin location. The resolved value is the knowledge tree itself — no
- * segment is appended. A non-string or blank value throws: a mistyped option
+ * segment is appended. A non-string value throws: a mistyped option
  * must fail loudly, not silently fall back to the wrong tree.
  * @param configured The raw option value as the host delivers it.
  * @param locationDirectory The directory the plugin instance loaded in.
@@ -1293,13 +1295,16 @@ export function resolveRoot(
     if (configured === undefined) {
         return join(locationDirectory, "docs");
     }
-    if (typeof configured !== "string" || configured.trim() === "") {
+    if (typeof configured !== "string") {
         throw new Error(
             `docs plugin option 'root' must be a non-empty string path, ` +
                 `got ${JSON.stringify(configured)}.`,
         );
     }
     const given = configured.trim();
+    if (given === "") {
+        return join(locationDirectory, "docs");
+    }
     const expanded =
         given === "~" || given.startsWith("~/")
             ? join(homedir(), given.slice(1))

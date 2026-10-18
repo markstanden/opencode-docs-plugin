@@ -662,8 +662,18 @@ describe("resolveRoot", () => {
         );
     });
 
-    it("throws on a blank or non-string root", () => {
-        for (const bad of ["   ", "", 42, {}, true]) {
+    it("treats a blank string like an unset root", () => {
+        for (const blank of ["", "   "]) {
+            assert.equal(
+                resolveRoot(blank, location),
+                join(location, "docs"),
+                JSON.stringify(blank),
+            );
+        }
+    });
+
+    it("throws on a non-string root", () => {
+        for (const bad of [42, {}, true]) {
             assert.throws(
                 () => resolveRoot(bad, location),
                 /root/,
