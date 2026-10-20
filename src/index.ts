@@ -1533,11 +1533,12 @@ export default Plugin.define({
                 name: Skill.Name.make("Docs"),
                 description:
                     "The entry point to the knowledge docs under the " +
-                    "configured docs root: find the right file with the docs " +
-                    "tool, read it, and record plans and task documentation " +
-                    "for the next human or agent. Use at the start of " +
-                    "unfamiliar work, when hunting for prior decisions or " +
-                    "traps, and when closing out a session.",
+                    "configured docs root, plus the project's nested " +
+                    "README.md files (search only): find the right file with " +
+                    "the docs tool, read it, and record plans and task " +
+                    "documentation for the next human or agent. Use at the " +
+                    "start of unfamiliar work, when hunting for prior " +
+                    "decisions or traps, and when closing out a session.",
                 path: AbsolutePath.make(fileURLToPath(skillURL)),
                 content: skill,
             });
