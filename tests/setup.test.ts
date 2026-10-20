@@ -192,4 +192,51 @@ describe("setup", () => {
         assert.match(written, /^---\nArea: aa\n/);
         assert.equal(existsSync(join(lake, "docs/aa/fresh.md")), false);
     });
+
+    it("searches nested READMEs from the project location", async () => {
+        // Arrange – a lake elsewhere, a README nested in the project.
+        const dir = tempDir();
+        const lake = tempDir();
+        mkdirSync(join(dir, "packages/api"), { recursive: true });
+        writeFileSync(
+            join(dir, "packages/api/README.md"),
+            "# Widget API\n\n## Endpoints\n\n- `widget.create`\n",
+        );
+        const added = await setup(dir, { root: lake });
+        const tool = added.tools[0] as {
+            execute: (
+                input: unknown,
+                context: unknown,
+            ) => Promise<{ content: unknown }>;
+        };
+
+        // Act
+        const result = await tool.execute({ search: "widget" }, {} as never);
+
+        // Assert
+        assert.match(String(result.content), /\bpackages\/api\/README\.md/);
+    });
+
+    it("keeps local READMEs out of the convention check", async () => {
+        // Arrange – a README that would fail the knowledge-doc convention.
+        const dir = tempDir();
+        mkdirSync(join(dir, "packages/api"), { recursive: true });
+        writeFileSync(
+            join(dir, "packages/api/README.md"),
+            "# Widget API\n\nJust prose, no front-matter.\n",
+        );
+        const added = await setup(dir, { root: tempDir() });
+        const command = added.commands[0] as {
+            execute: (input: unknown) => Promise<void>;
+        };
+
+        // Act
+        await command.execute({
+            sessionID: "ses_test",
+            prompt: { text: "check" },
+        } as never);
+
+        // Assert – the report is about the lake only, never the README.
+        assert.doesNotMatch(added.sent[0] ?? "", /README\.md/);
+    });
 });

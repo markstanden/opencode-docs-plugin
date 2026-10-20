@@ -36,6 +36,13 @@ and vendored mirrors (`requirements/`, `wiki/`). `Area` comes from the path,
 `date` from git. A doc marked `Status: superseded` carries a `(superseded)`
 marker in results and ranks below an active doc on a tie.
 
+Search also covers nested `README.md` files in the project tree — the map lives
+beside the code. They are indexed as they stand (H1 title, headings, code
+spans) and are **search-only**: `add` and `check` never touch them.
+`.gitignore` decides which directories are skipped; outside git, dependency and
+build directories are skipped by name. The lake root is skipped when it sits
+inside the project, since those READMEs are already knowledge docs.
+
 ## Read it
 
 - Consult matching docs before a broad grep: they are the curated knowledge.

@@ -12,6 +12,13 @@ area: `<area>/<name>.md` (the root is the plugin's `root` option; default
 are `plans/` (scratch, gitignored, deleted when the work lands),
 `requirements/` and `wiki/` (vendored mirrors).
 
+Search also covers `README.md` files nested in the project tree, so an agent
+finds the map beside the code. They are indexed as they stand (H1 title,
+headings and code spans) and are **search-only**: they are never written by
+`add`, validated by `check`, or eligible as near-twins. `.gitignore` decides
+which directories are skipped; outside git, dependency and build directories
+are skipped by name.
+
 ## Front-matter
 
 Every doc opens with a `---` front-matter block. The fields, in canonical order:

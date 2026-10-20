@@ -19,6 +19,7 @@ import * as docs from "../src/index.ts";
 const {
     checkDocs,
     collectDocs,
+    collectReadmes,
     createDocsCommand,
     createDocsTool,
     explainRanking,
@@ -34,6 +35,7 @@ const {
     prepareAdd,
     QUALITY,
     rankDocs,
+    README_EXCLUDED_DIRS,
     render,
     reconcileQuery,
     resolveRequest,
@@ -552,6 +554,190 @@ describe("collectDocs", () => {
     it("returns nothing when the root is absent", () => {
         assert.deepEqual(
             collectDocs(tempDir(), () => new Map()),
+            [],
+        );
+    });
+});
+
+describe("collectReadmes", () => {
+    /** Write a README carrying a distinct H1 at a project-relative path. */
+    function readme(root: string, path: string, title: string): void {
+        mkdirSync(join(root, path, ".."), { recursive: true });
+        writeFileSync(
+            join(root, path),
+            `# ${title}\n\n## Notes\n\n- \`${title}\`\n`,
+        );
+    }
+
+    it("finds nested READMEs and honours .gitignore", () => {
+        // Arrange – a work tree whose ignored and dependency dirs also hold READMEs.
+        const root = tempDir();
+        git(root, ["init", "-q"]);
+        writeFileSync(
+            join(root, ".gitignore"),
+            "ignored/\nnode_modules/\ndist/\n",
+        );
+        readme(root, "README.md", "Root");
+        readme(root, "packages/api/README.md", "API");
+        readme(root, "packages/api/readme.md", "Lower");
+        readme(root, "ignored/README.md", "Ignored");
+        readme(root, "node_modules/pkg/README.md", "Dependency");
+        readme(root, "dist/README.md", "Built");
+
+        // Act
+        const entries = collectReadmes(
+            root,
+            (paths) => new Map(paths.map((path) => [path, "2026-01-01"])),
+        );
+
+        // Assert – only the untracked, non-ignored READMEs, by path.
+        assert.deepEqual(
+            entries.map((item) => item.path),
+            ["README.md", "packages/api/README.md", "packages/api/readme.md"],
+        );
+        assert.equal(entries[0]?.title, "Root");
+        assert.equal(entries[0]?.date, "2026-01-01");
+        assert.deepEqual(entries[0]?.identifiers, ["Notes", "Root"]);
+    });
+
+    it("drops a tracked README deleted from disk", () => {
+        // Arrange – added to the index, then removed from the work tree.
+        const root = tempDir();
+        git(root, ["init", "-q"]);
+        writeFileSync(join(root, "README.md"), "# Gone\n");
+        git(root, ["add", "README.md"]);
+        rmSync(join(root, "README.md"));
+
+        // Act
+        const entries = collectReadmes(root, () => new Map());
+
+        // Assert
+        assert.deepEqual(entries, []);
+    });
+
+    it("walks outside git, skipping dependency, build and dot directories", () => {
+        // Arrange – no repository, so the fallback walk applies.
+        const root = tempDir();
+        readme(root, "modules/app/README.md", "App");
+        readme(root, "node_modules/pkg/README.md", "Dependency");
+        readme(root, "dist/README.md", "Built");
+        readme(root, ".cache/README.md", "Cache");
+
+        // Act
+        const entries = collectReadmes(root, () => new Map());
+
+        // Assert
+        assert.deepEqual(
+            entries.map((item) => item.path),
+            ["modules/app/README.md"],
+        );
+    });
+
+    it("skips the lake root, whose READMEs are already docs", () => {
+        // Arrange – a lake nested in the project.
+        const root = tempDir();
+        readme(root, "README.md", "Root");
+        readme(root, "docs/guides/README.md", "Guides");
+
+        // Act
+        const entries = collectReadmes(root, () => new Map(), [
+            join(root, "docs"),
+        ]);
+
+        // Assert
+        assert.deepEqual(
+            entries.map((item) => item.path),
+            ["README.md"],
+        );
+    });
+
+    it("skips every README when the lake root contains the project", () => {
+        // Arrange – the lake is a parent of the project, so it already
+        // collects the project's READMEs as lake docs.
+        const parent = tempDir();
+        const project = join(parent, "project");
+        readme(project, "README.md", "Root");
+        readme(project, "packages/api/README.md", "API");
+
+        // Act
+        const entries = collectReadmes(project, () => new Map(), [parent]);
+
+        // Assert
+        assert.deepEqual(entries, []);
+    });
+
+    it("keeps READMEs when the skip root is elsewhere", () => {
+        // Arrange – a skip root that is no relation of the project.
+        const root = tempDir();
+        readme(root, "README.md", "Root");
+
+        // Act
+        const entries = collectReadmes(root, () => new Map(), [
+            join(root, "elsewhere"),
+        ]);
+
+        // Assert
+        assert.deepEqual(
+            entries.map((item) => item.path),
+            ["README.md"],
+        );
+    });
+
+    it("treats a ..-named child of the skip root as under it", () => {
+        // Arrange – git lists dot-named directories, and a name like
+        // `..drafts` is a child of the root, not an escape from it.
+        const root = tempDir();
+        git(root, ["init", "-q"]);
+        readme(root, "README.md", "Project");
+        readme(root, "docs/..drafts/README.md", "Lake");
+
+        // Act
+        const entries = collectReadmes(root, () => new Map(), [
+            join(root, "docs"),
+        ]);
+
+        // Assert – the lake-side README is skipped, the project one kept.
+        assert.deepEqual(
+            entries.map((item) => item.path),
+            ["README.md"],
+        );
+    });
+
+    it("keeps a ..-named sibling of the skip root", () => {
+        // Arrange – a `..drafts` directory beside (not inside) the lake is
+        // project territory, however its name reads.
+        const root = tempDir();
+        git(root, ["init", "-q"]);
+        readme(root, "..drafts/README.md", "Project");
+
+        // Act
+        const entries = collectReadmes(root, () => new Map(), [
+            join(root, "docs"),
+        ]);
+
+        // Assert
+        assert.deepEqual(
+            entries.map((item) => item.path),
+            ["..drafts/README.md"],
+        );
+    });
+
+    it("skips every directory in README_EXCLUDED_DIRS during the fallback walk", () => {
+        // Arrange, Act, Assert – one directory per case; a README inside an
+        // excluded entry must never reach the fallback walk's results.
+        for (const dir of README_EXCLUDED_DIRS) {
+            const root = tempDir();
+            readme(root, join(dir, "pkg", "README.md"), "Excluded");
+
+            const entries = collectReadmes(root, () => new Map());
+
+            assert.deepEqual(entries, [], `${dir} was walked`);
+        }
+    });
+
+    it("returns nothing when the project is unreadable", () => {
+        assert.deepEqual(
+            collectReadmes(join(tempDir(), "missing"), () => new Map()),
             [],
         );
     });
@@ -1172,6 +1358,61 @@ describe("createDocsTool", () => {
 
         assert.equal(tool.options?.codemode, false);
     });
+
+    it("searches local READMEs but keeps add and check lake-only", async () => {
+        // Arrange – a lake doc and a project README with overlapping words.
+        const lake = entry({
+            path: "aa/lake.md",
+            area: "aa",
+            title: "Lake",
+            keywords: ["alpha"],
+        });
+        const local = entry({
+            path: "packages/api/README.md",
+            area: "packages",
+            title: "Widget",
+            keywords: ["widget"],
+        });
+        const tool = createDocsTool({
+            collect: () => [lake],
+            search: () => [lake, local],
+            exists: () => false,
+            write: () => {},
+            read: () =>
+                "---\nArea: aa\nKeywords: alpha\nSummary: S.\n---\n# Lake\n\n### Facts\n\n- x.\n",
+        });
+
+        // Act – the README is searchable.
+        const found = await tool.execute({ search: "widget" }, {} as never);
+
+        // Assert
+        assert.match(String(found.content), /packages\/api\/README\.md/);
+
+        // Act – check sees the lake only.
+        const checked = await tool.execute({ check: true }, {} as never);
+
+        // Assert
+        assert.doesNotMatch(String(checked.content), /README\.md/);
+        assert.equal(checked.metadata?.checked, 1);
+
+        // Act – a near-twin of the README is not refused.
+        const added = await tool.execute(
+            {
+                add: {
+                    metadata: {
+                        Area: "packages",
+                        Keywords: ["widget"],
+                        Summary: "A new widget doc.",
+                    },
+                    body: "# Widget\n\n### Facts\n\n- Something verified.\n",
+                },
+            },
+            {} as never,
+        );
+
+        // Assert
+        assert.equal(added.metadata?.written, true);
+    });
 });
 
 describe("createDocsCommand", () => {
@@ -1267,6 +1508,31 @@ describe("createDocsCommand", () => {
 
         assert.match(sent[0] ?? "", /needs the text/i);
     });
+
+    it("searches local READMEs through the search seam", async () => {
+        // Arrange
+        const sent: string[] = [];
+        const command = createDocsCommand({
+            collect: () => [entry({ path: "aa/lake.md" })],
+            search: () => [
+                entry({ path: "aa/lake.md" }),
+                entry({ path: "packages/api/README.md", keywords: ["widget"] }),
+            ],
+            read: () => "",
+            prompt: async (_sessionID, text) => {
+                sent.push(text);
+            },
+        });
+
+        // Act
+        await command.execute({
+            sessionID: "ses_test",
+            prompt: { text: "widget" },
+        } as never);
+
+        // Assert
+        assert.match(sent[0] ?? "", /packages\/api\/README\.md/);
+    });
 });
 
 describe("help", () => {
@@ -1274,6 +1540,7 @@ describe("help", () => {
         // Assert – weights and qualities, in words.
         assert.match(explainRanking(), /exact/);
         assert.match(explainRanking(), /substring/);
+        assert.match(explainRanking(), /README\.md/);
     });
 
     it("serves help from the tool", async () => {

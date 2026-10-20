@@ -7,6 +7,7 @@ import type {
 import type { Info } from "@opencode/plugin/promise/tool";
 import { spawnSync } from "node:child_process";
 import {
+    type Dirent,
     existsSync,
     mkdirSync,
     readFileSync,
@@ -15,7 +16,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Schema } from "effect";
 
@@ -595,6 +596,7 @@ export function explainRanking(): string {
         `- Fields weighted: title ${FIELD_WEIGHTS.title} > path ${FIELD_WEIGHTS.path} > keywords ${FIELD_WEIGHTS.keywords} > identifiers ${FIELD_WEIGHTS.identifiers} > area ${FIELD_WEIGHTS.area} > summary ${FIELD_WEIGHTS.summary}.`,
         `- Each term scores its best field as weight × quality; quality is exact > prefix > substring.`,
         `- Terms shorter than MIN_TERM_LENGTH (${MIN_TERM_LENGTH}) are ignored unless they are the whole query.`,
+        "- Search also covers nested `README.md` files in the project tree, honouring `.gitignore` (dependency and build directories are skipped when the project is not in git). They are searchable only: `add` and `check` ignore them.",
         `- Every call returns at most MAX_RESULTS (${MAX_RESULTS}), best matches first, then the most recently edited; anything cut is counted as "… and N more not shown."`,
         '- Outcomes: a blank query lists the most recently changed docs; a doc carrying every term ranks the full matches; otherwise the docs matching any term as a substring are listed under "Closest matches"; nothing hits is "No knowledge docs matched."',
     ].join("\n");
@@ -733,6 +735,132 @@ export function collectDocs(
         toEntry(
             path,
             readFileSync(join(root, path), "utf8"),
+            dates.get(path) ?? "",
+        ),
+    );
+}
+
+/**
+ * Directory names the fallback README walk never enters, for a project outside
+ * a git work tree (inside one, `.gitignore` decides; dot-directories are always
+ * skipped). Kept to dependencies and build output — the usual noise — rather
+ * than every convention going.
+ */
+export const README_EXCLUDED_DIRS = [
+    "node_modules",
+    "dist",
+    "build",
+    "coverage",
+    "target",
+    "vendor",
+    "__pycache__",
+] as const;
+
+/**
+ * Whether `path` is `root` itself or sits beneath it. Only an exact `..` path
+ * segment escapes the root — a `..`-prefixed name like `..drafts` does not.
+ */
+function isUnder(path: string, root: string): boolean {
+    const rest = relative(root, path);
+    return (
+        rest === "" ||
+        (rest !== ".." && !rest.startsWith(`..${sep}`) && !isAbsolute(rest))
+    );
+}
+
+/** Whether a file name is a README in any case (`README.md`, `readme.md`). */
+function isReadme(name: string): boolean {
+    return name.toLowerCase() === "readme.md";
+}
+
+/**
+ * The project's nested README paths, relative to `location`. Inside a git work
+ * tree git supplies the list — tracked plus untracked, honouring `.gitignore` —
+ * so dependency, build and scratch directories follow the project's own rules.
+ * Outside one, a walk skips {@link README_EXCLUDED_DIRS} and dot-directories.
+ * Paths under `skip` (the lake root) are dropped: they are already lake docs.
+ * A tracked file deleted from disk is dropped too — git still lists it.
+ * @param location The project directory the plugin loaded in.
+ * @param skip Absolute roots whose READMEs are collected elsewhere.
+ * @returns Project-relative README paths, ordered by path.
+ */
+export function readmePaths(
+    location: string,
+    skip: readonly string[] = [],
+): string[] {
+    const candidates = gitReadmePaths(location) ?? walkedReadmePaths(location);
+    return candidates
+        .filter((path) => existsSync(join(location, path)))
+        .filter(
+            (path) => !skip.some((root) => isUnder(join(location, path), root)),
+        )
+        .sort();
+}
+
+/**
+ * README paths from git's index and untracked non-ignored files, or undefined
+ * when `location` is not inside a git work tree.
+ */
+function gitReadmePaths(location: string): string[] | undefined {
+    const result = spawnSync(
+        "git",
+        ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+        { cwd: location, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
+    );
+    if (result.status !== 0) {
+        return undefined;
+    }
+    return (result.stdout ?? "")
+        .split("\0")
+        .filter((path) => path !== "" && isReadme(path.split("/").pop() ?? ""));
+}
+
+/** README paths from a directory walk, for a location outside a work tree. */
+function walkedReadmePaths(location: string): string[] {
+    const paths: string[] = [];
+    const excluded = README_EXCLUDED_DIRS as readonly string[];
+    const walk = (directory: string): void => {
+        let entries: Dirent[];
+        try {
+            entries = readdirSync(directory, { withFileTypes: true });
+        } catch {
+            return;
+        }
+        for (const item of entries) {
+            const path = join(directory, item.name);
+            if (item.isDirectory()) {
+                if (item.name.startsWith(".") || excluded.includes(item.name)) {
+                    continue;
+                }
+                walk(path);
+            } else if (item.isFile() && isReadme(item.name)) {
+                paths.push(relative(location, path));
+            }
+        }
+    };
+    walk(location);
+    return paths;
+}
+
+/**
+ * Collect the project's nested READMEs as search entries, with the same shape
+ * as lake docs: H1 title, path-derived area, no front-matter.
+ * @param location The project directory the plugin loaded in.
+ * @param resolve Resolves every path's date in one batched call.
+ * @param skip Absolute roots whose READMEs are collected elsewhere.
+ * @returns Entries ordered by path, or none when the project is unreadable.
+ */
+export function collectReadmes(
+    location: string,
+    resolve: (paths: readonly string[]) => ReadonlyMap<string, string>,
+    skip: readonly string[] = [],
+): DocEntry[] {
+    const paths = readmePaths(location, skip);
+    const dates = resolve(paths);
+    return paths.map((path) =>
+        toEntry(
+            path,
+            readFileSync(join(location, path), "utf8"),
             dates.get(path) ?? "",
         ),
     );
@@ -1107,8 +1235,10 @@ export function checkDocs(
 }
 
 export interface DocsToolDeps {
-    /** Collects the docs to serve; injected so the tool is testable. */
+    /** Collects the lake docs; `add` and `check` use only these. */
     collect: () => DocEntry[];
+    /** Collects everything searchable — lake docs plus local READMEs; defaults to `collect`. */
+    search?: () => DocEntry[];
     /** Whether a root-relative doc path exists; injected so writes are testable. */
     exists: (path: string) => boolean;
     /** Writes a root-relative doc path; injected so writes are testable. */
@@ -1126,8 +1256,10 @@ export type PromptSender = (
 ) => Promise<unknown>;
 
 export interface DocsCommandDeps {
-    /** Collects the docs to serve; injected so the command is testable. */
+    /** Collects the lake docs; `add` and `check` use only these. */
     collect: () => DocEntry[];
+    /** Collects everything searchable — lake docs plus local READMEs; defaults to `collect`. */
+    search?: () => DocEntry[];
     /** Reads a root-relative doc path's raw contents; injected so `check` is testable. */
     read: (path: string) => string;
     /** Environment notes appended to the `check` report; injected for testability. */
@@ -1170,11 +1302,12 @@ export function createDocsTool(deps: DocsToolDeps): Info<typeof DOCS_INPUT> {
         name: "docs",
         description:
             "Discover the knowledge docs under the configured docs root " +
-            "(default: the location's `docs/` directory). A blank search lists the " +
+            "(default: the location's `docs/` directory), plus nested `README.md` " +
+            "files in the project tree. A blank search lists the " +
             MAX_RESULTS +
             " most recently changed docs (path — Area — date — Summary); a search ranks docs over title, path, keywords, body headings and code spans, area and summary, falling back to the closest matches. Every call returns at most " +
             MAX_RESULTS +
-            " results and counts the rest. Search exactly `help` explains the ranking. `add` writes a new knowledge doc (or wholesale-replaces the doc at `path`) from a typed DTO — metadata becomes front-matter, the body must start with an H1; blank required fields, path traversal, non-.md targets and same-area near-twins are refused. `check` validates every doc against the convention (required front-matter, H1, claim sections, no hand-maintained Date, distinctive H1+Keywords, a Supersedes naming a doc in the tree, near-twins) and reports findings; an empty report means compliant. Read a matched file with the read tool.",
+            " results and counts the rest. Search exactly `help` explains the ranking. `add` writes a new knowledge doc (or wholesale-replaces the doc at `path`) from a typed DTO — metadata becomes front-matter, the body must start with an H1; blank required fields, path traversal, non-.md targets and same-area near-twins are refused. `check` validates every doc against the convention (required front-matter, H1, claim sections, no hand-maintained Date, distinctive H1+Keywords, a Supersedes naming a doc in the tree, near-twins) and reports findings; an empty report means compliant. Local READMEs are search-only: `add` and `check` ignore them. Read a matched file with the read tool.",
         input: DOCS_INPUT,
         options: { codemode: false },
         async execute(input) {
@@ -1196,7 +1329,7 @@ export function createDocsTool(deps: DocsToolDeps): Info<typeof DOCS_INPUT> {
                 };
             }
             const { entries, closest, omitted } = rankDocs(
-                deps.collect(),
+                (deps.search ?? deps.collect)(),
                 request.search,
             );
             return {
@@ -1243,7 +1376,7 @@ export function createDocsCommand(deps: DocsCommandDeps): CommandDefinition {
     return {
         name: "docs",
         description:
-            "Search the knowledge docs under the configured docs root, ranked; `add <text>` records new knowledge through the tool's typed `add`; `check` validates the convention; a blank search lists the " +
+            "Search the knowledge docs under the configured docs root, ranked, plus nested project `README.md` files (search only); `add <text>` records new knowledge through the tool's typed `add`; `check` validates the convention; a blank search lists the " +
             MAX_RESULTS +
             " most recently changed.",
         async execute({ sessionID, prompt }) {
@@ -1267,7 +1400,7 @@ export function createDocsCommand(deps: DocsCommandDeps): CommandDefinition {
             }
             const query = lower === SEARCH_VERB ? rest.join(" ") : text;
             const { entries, closest, omitted } = rankDocs(
-                deps.collect(),
+                (deps.search ?? deps.collect)(),
                 query,
             );
             await deps.prompt(sessionID, render(entries, { closest, omitted }));
@@ -1351,11 +1484,20 @@ export default Plugin.define({
         const notes = unversionedNote(root);
         const collect = () =>
             collectDocs(root, (paths) => fallbackDates(root, paths));
+        const search = () => [
+            ...collect(),
+            ...collectReadmes(
+                ctx.location.directory,
+                (paths) => fallbackDates(ctx.location.directory, paths),
+                [root],
+            ),
+        ];
         const read = (path: string) => readFileSync(join(root, path), "utf8");
         await ctx.tool.transform((editor) => {
             editor.add(
                 createDocsTool({
                     collect,
+                    search,
                     exists: (path) => existsSync(join(root, path)),
                     write: (path, contents) => {
                         const target = join(root, path);
@@ -1371,6 +1513,7 @@ export default Plugin.define({
             editor.add(
                 createDocsCommand({
                     collect,
+                    search,
                     read,
                     notes,
                     prompt: (sessionID, text) =>
