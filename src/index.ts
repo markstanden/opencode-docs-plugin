@@ -4,7 +4,7 @@ import type {
     CommandDefinition,
     CommandInvocation,
 } from "@opencode/plugin/promise/command";
-import type { Info } from "@opencode/plugin/promise/tool";
+import type { Info, Result } from "@opencode/plugin/promise/tool";
 import { spawnSync } from "node:child_process";
 import {
     type Dirent,
@@ -104,6 +104,12 @@ export const DOCS_INPUT = Schema.Struct({
         Schema.Boolean.annotate({
             description:
                 "Validate every doc under the docs root against the convention: required front-matter, an H1, claim sections, no hand-maintained Date, a distinctive H1+Keywords identity, a Supersedes naming a doc in the tree, and same-area near-twins. An empty report means compliant.",
+        }),
+    ),
+    read: Schema.optional(
+        Schema.String.annotate({
+            description:
+                "A root-relative doc path to return verbatim — front-matter and body — so find-then-read is one call. Lake docs only: project files and READMEs stay with the built-in `read` tool.",
         }),
     ),
 });
@@ -602,21 +608,23 @@ export function explainRanking(): string {
     ].join("\n");
 }
 
-/** A resolved `docs` tool call: exactly one verb wins (`add` > `check` > `help` > `search`). */
+/** A resolved `docs` tool call: exactly one verb wins (`add` > `check` > `read` > `help` > `search`). */
 export type DocsRequest =
     | { verb: "add"; add: DocsAdd }
     | { verb: "check" }
+    | { verb: "read"; read: string }
     | { verb: "help" }
     | { verb: "search"; search: string };
 
 /**
  * Resolve a tool call to one verb. An explicit `add` is never downgraded; a
- * `check` outranks a search; a lone `help` search explains the ranking;
- * anything else searches.
+ * `check` outranks a read; a non-blank `read` outranks a search; a lone `help`
+ * search explains the ranking; anything else searches.
  * @param input The raw tool input.
  * @param input.search The raw search text, when given.
  * @param input.add The typed add DTO, when given.
  * @param input.check The check flag, when given.
+ * @param input.read The root-relative doc path to read, when given.
  * @returns The single resolved request.
  */
 export function resolveRequest(input: DocsInput): DocsRequest {
@@ -625,6 +633,10 @@ export function resolveRequest(input: DocsInput): DocsRequest {
     }
     if (input.check === true) {
         return { verb: "check" };
+    }
+    const read = input.read?.trim() ?? "";
+    if (read !== "") {
+        return { verb: "read", read };
     }
     if (isHelp(input.search ?? "")) {
         return { verb: "help" };
@@ -1234,6 +1246,145 @@ export function checkDocs(
         : lines.join("\n");
 }
 
+/** The built-in tools the miss-nudge watches: content searches, both miss-prone. */
+export const NUDGED_TOOLS = ["grep", "glob"] as const;
+
+/**
+ * The text of a tool result's content: the string itself, or its text parts
+ * joined. Non-text parts and foreign shapes contribute nothing.
+ * @param content A `Tool.Result` content of any provenance.
+ * @returns The searchable text, possibly empty.
+ */
+function contentText(content: unknown): string {
+    if (typeof content === "string") {
+        return content;
+    }
+    if (Array.isArray(content)) {
+        return content
+            .map((part) =>
+                typeof part === "object" &&
+                part !== null &&
+                "text" in part &&
+                typeof (part as { text: unknown }).text === "string"
+                    ? (part as { text: string }).text
+                    : "",
+            )
+            .join("\n");
+    }
+    return "";
+}
+
+/**
+ * Whether a grep/glob result reads as a search miss. Raw rg prints nothing
+ * on a miss (exit 1, empty stdout) — "No matches found" and "No files found"
+ * are the host wrapper's phrasings — so emptiness is the primary signal and
+ * the phrases are a bonus that keeps working if the wrapper rewords.
+ * @param content The tool result's content (string or content parts).
+ * @returns True when the result is a miss.
+ */
+export function isSearchMiss(content: unknown): boolean {
+    const trimmed = contentText(content).trim();
+    return trimmed === "" || /no (matches|files) found/i.test(trimmed);
+}
+
+/** The grep/glob call's `pattern`, when the input carries a string one. */
+function patternOf(input: unknown): string {
+    if (typeof input === "object" && input !== null && "pattern" in input) {
+        const pattern = (input as { pattern: unknown }).pattern;
+        if (typeof pattern === "string") {
+            return pattern.trim();
+        }
+    }
+    return "";
+}
+
+/**
+ * The one-line pointer appended to a grep/glob miss: the docs tool indexes
+ * the same knowledge, so echo the failed pattern when there is one.
+ * @param pattern The failed call's pattern, possibly blank.
+ * @returns The nudge line.
+ */
+export function missNudge(pattern: string): string {
+    const suggestion =
+        pattern === ""
+            ? "a knowledge question may already be answered there."
+            : `try \`docs search\` with terms from "${pattern}".`;
+    return (
+        "Note: the `docs` tool also indexes the knowledge docs and project " +
+        `READMEs before you move on — ${suggestion}`
+    );
+}
+
+/** One tool call, as the miss-nudge decision sees it. */
+export interface NudgeCall {
+    /** The tool's registered name. */
+    readonly tool: string;
+    /** `"completed"` results only — an errored call is not a knowledge miss. */
+    readonly status: "completed" | "error";
+    /** The result's content (string or parts). */
+    readonly content: unknown;
+    /** The call's input, for the failed pattern. */
+    readonly input: unknown;
+}
+
+/**
+ * The nudge line for a tool call, or null when the call deserves none: not a
+ * watched tool, an errored call, a genuine hit, or a session that has already
+ * been nudged (or already used the lake).
+ * @param call The tool call to judge.
+ * @param alreadyNudged Whether the session was nudged — or used the docs
+ * tool — already.
+ * @returns The line to append, or null.
+ */
+export function missNudgeFor(
+    call: NudgeCall,
+    alreadyNudged: boolean,
+): string | null {
+    if (alreadyNudged || call.status !== "completed") {
+        return null;
+    }
+    if (!(NUDGED_TOOLS as readonly string[]).includes(call.tool)) {
+        return null;
+    }
+    if (!isSearchMiss(call.content)) {
+        return null;
+    }
+    return missNudge(patternOf(call.input));
+}
+
+/**
+ * The system part injected into compaction requests: the summariser has no
+ * tools, so it cannot record — instead it shapes each durable finding as its
+ * own record-ready block for the continuing agent, one artifact per topic,
+ * never a session dump (the near-twin guard catches duplicates, not dumps).
+ */
+export const RECORD_NUDGE =
+    "Before summarising: if this session established durable knowledge " +
+    "(decisions, traps, runbooks, verified behaviour), open the " +
+    "continuation with one `Record with docs add:` block per finding — " +
+    "never one session dump. Each block names its own artifact's `Area`, " +
+    "`H1` title and `Keywords`, plus a one-line what-and-why, so the next " +
+    "agent can persist each as a separate focused doc.";
+
+/**
+ * Resolve the plugin's `nudge` option: unset means on; a boolean passes
+ * through; anything else throws, matching `root`'s loud-failure precedent.
+ * @param configured The raw option value as the host delivers it.
+ * @returns Whether the runtime nudges are active.
+ */
+export function resolveNudge(configured: unknown): boolean {
+    if (configured === undefined) {
+        return true;
+    }
+    if (typeof configured === "boolean") {
+        return configured;
+    }
+    throw new Error(
+        `docs plugin option 'nudge' must be a boolean, ` +
+            `got ${JSON.stringify(configured)}.`,
+    );
+}
+
 export interface DocsToolDeps {
     /** Collects the lake docs; `add` and `check` use only these. */
     collect: () => DocEntry[];
@@ -1269,18 +1420,44 @@ export interface DocsCommandDeps {
 }
 
 /**
+ * The twin's description: the Code Mode catalog is injected into every
+ * `execute` prompt, so it pays its way in a short paragraph — the verbs, not
+ * the full doctrine the native `docs` description carries.
+ */
+const TWIN_DESCRIPTION =
+    "Search, read, add and check the knowledge docs under the configured " +
+    "docs root (plus nested project `README.md` files, search-only) from " +
+    "inside `execute` — the `docs` tool's Code Mode twin. A blank search " +
+    "lists the most recently changed docs; `read` returns a matched doc " +
+    "verbatim; `add` writes through a typed DTO; `check` validates the " +
+    "convention.";
+
+/**
  * Build the `docs` tool from its dependencies.
  *
- * Registered with `codemode: false` so the tool stays on the provider's native
- * tool list. That option is exclusive: a tool defaults into Code Mode
- * (`codemode` defaults true) and is dropped from the native list; only
- * `codemode: false` keeps it natively callable. This tool is called directly,
- * so it opts out.
+ * By default the tool is registered with `codemode: false` so it stays on the
+ * provider's native tool list. That option is exclusive: a tool defaults into
+ * Code Mode (`codemode` defaults true) and is dropped from the native list;
+ * only `codemode: false` keeps it natively callable — and `codemode: true`
+ * with a `namespace` is how the host's own plugins expose tools to `execute`
+ * (the catalog renders `tools.<namespace>.<name>(…)`). Pass a distinct
+ * `name` and `codemode: true` to register a Code Mode twin of the same core;
+ * the registry is name-keyed, so the twin cannot also be called `docs`.
  * @param deps Runtime seams used on each call: the docs to serve, and the
  * write seam {@link DocsToolDeps} for `add`.
+ * @param options Registration shape.
+ * @param options.name The tool name (default `"docs"`); a Code Mode twin
+ * passes a distinct name — the registry is name-keyed, so two tools cannot
+ * share one.
+ * @param options.codemode True to register for the `execute` catalog under
+ * the `docs` namespace (default `false` — the native tool list).
  * @returns The tool the host registers.
  */
-export function createDocsTool(deps: DocsToolDeps): Info<typeof DOCS_INPUT> {
+export function createDocsTool(
+    deps: DocsToolDeps,
+    options: { name?: string; codemode?: boolean } = {},
+): Info<typeof DOCS_INPUT> {
+    const { name = "docs", codemode = false } = options;
     const addDoc = (add: DocsAdd) => {
         const outcome = prepareAdd(add, deps.collect());
         if (outcome.action === "refuse") {
@@ -1298,18 +1475,45 @@ export function createDocsTool(deps: DocsToolDeps): Info<typeof DOCS_INPUT> {
             metadata: { written: true },
         };
     };
+    const readDoc = (given: string) => {
+        // The same guard an explicit `add` path passes: relative, inside the
+        // root, a `.md` file — the read verb never widens the surface.
+        const target = explicitTarget(given.trim());
+        if ("reason" in target) {
+            return {
+                content: `${REFUSE} ${target.reason}`,
+                metadata: { read: null },
+            };
+        }
+        if (!deps.exists(target.path)) {
+            return {
+                content: `No doc at ${target.path}.`,
+                metadata: { read: null },
+            };
+        }
+        const raw = deps.read(target.path);
+        const { body } = parseFrontMatter(raw);
+        return {
+            content: `${target.path} — ${titleOf(target.path, body)}\n\n${raw}`,
+            metadata: { read: target.path },
+        };
+    };
     return {
-        name: "docs",
-        description:
-            "Discover the knowledge docs under the configured docs root " +
-            "(default: the location's `docs/` directory), plus nested `README.md` " +
-            "files in the project tree. A blank search lists the " +
-            MAX_RESULTS +
-            " most recently changed docs (path — Area — date — Summary); a search ranks docs over title, path, keywords, body headings and code spans, area and summary, falling back to the closest matches. Every call returns at most " +
-            MAX_RESULTS +
-            " results and counts the rest. Search exactly `help` explains the ranking. `add` writes a new knowledge doc (or wholesale-replaces the doc at `path`) from a typed DTO — metadata becomes front-matter, the body must start with an H1; blank required fields, path traversal, non-.md targets and same-area near-twins are refused. `check` validates every doc against the convention (required front-matter, H1, claim sections, no hand-maintained Date, distinctive H1+Keywords, a Supersedes naming a doc in the tree, near-twins) and reports findings; an empty report means compliant. Local READMEs are search-only: `add` and `check` ignore them. Read a matched file with the read tool.",
+        name,
+        description: codemode
+            ? TWIN_DESCRIPTION
+            : "Discover the knowledge docs under the configured docs root " +
+              "(default: the location's `docs/` directory), plus nested `README.md` " +
+              "files in the project tree. Prefer it over a broad grep when the " +
+              "question is how-to knowledge rather than where code lives. A blank search lists the " +
+              MAX_RESULTS +
+              " most recently changed docs (path — Area — date — Summary); a search ranks docs over title, path, keywords, body headings and code spans, area and summary, falling back to the closest matches. Every call returns at most " +
+              MAX_RESULTS +
+              " results and counts the rest. Search exactly `help` explains the ranking. `read` returns a matched doc verbatim (front-matter and body). `add` writes a new knowledge doc (or wholesale-replaces the doc at `path`) from a typed DTO — metadata becomes front-matter, the body must start with an H1; blank required fields, path traversal, non-.md targets and same-area near-twins are refused. `check` validates every doc against the convention (required front-matter, H1, claim sections, no hand-maintained Date, distinctive H1+Keywords, a Supersedes naming a doc in the tree, near-twins) and reports findings; an empty report means compliant. Local READMEs are search-only: `add` and `check` ignore them. Read a matched project file with the built-in read tool.",
         input: DOCS_INPUT,
-        options: { codemode: false },
+        options: codemode
+            ? { namespace: "docs", codemode: true }
+            : { codemode: false },
         async execute(input) {
             const request = resolveRequest(input);
             if (request.verb === "add") {
@@ -1321,6 +1525,9 @@ export function createDocsTool(deps: DocsToolDeps): Info<typeof DOCS_INPUT> {
                     content: checkDocs(entries, deps.read, deps.notes ?? []),
                     metadata: { checked: entries.length },
                 };
+            }
+            if (request.verb === "read") {
+                return readDoc(request.read);
             }
             if (request.verb === "help") {
                 return {
@@ -1474,6 +1681,27 @@ export function unversionedNote(root: string): readonly string[] {
 interface DocsPluginOptions {
     /** The docs root override; defaults to `docs` beside the plugin. */
     root?: unknown;
+    /** The runtime nudges' switch; defaults to on. */
+    nudge?: unknown;
+}
+
+/** The registered tool names that count as using the lake. */
+const DOCS_TOOL_NAMES = new Set(["docs", "docs_search"]);
+
+/**
+ * Content with `line` appended: string concatenation, or one extra text part.
+ * @param content The tool result's content, when it has one.
+ * @param line The nudge line.
+ * @returns The content to write back.
+ */
+function appendLine(
+    content: NonNullable<Result["content"]> | undefined,
+    line: string,
+): NonNullable<Result["content"]> {
+    if (typeof content === "string" || content === undefined) {
+        return `${content ?? ""}\n\n${line}`;
+    }
+    return [...content, { type: "text", text: line }];
 }
 
 export default Plugin.define({
@@ -1481,6 +1709,7 @@ export default Plugin.define({
     async setup(ctx) {
         const options = ctx.options as DocsPluginOptions | undefined;
         const root = resolveRoot(options?.root, ctx.location.directory);
+        const nudge = resolveNudge(options?.nudge);
         const notes = unversionedNote(root);
         const collect = () =>
             collectDocs(root, (paths) => fallbackDates(root, paths));
@@ -1493,19 +1722,28 @@ export default Plugin.define({
             ),
         ];
         const read = (path: string) => readFileSync(join(root, path), "utf8");
+        const toolDeps = {
+            collect,
+            search,
+            exists: (path: string) => existsSync(join(root, path)),
+            write: (path: string, contents: string) => {
+                const target = join(root, path);
+                mkdirSync(dirname(target), { recursive: true });
+                writeFileSync(target, contents);
+            },
+            read,
+            notes,
+        };
+        // Two registrations of one core: the native `docs` for direct calls,
+        // and the Code Mode twin `docs_search` so `execute` reaches the same
+        // lake as `tools.docs.docs_search(…)`. The registry is name-keyed, so
+        // the twin must carry its own name.
         await ctx.tool.transform((editor) => {
+            editor.add(createDocsTool(toolDeps));
             editor.add(
-                createDocsTool({
-                    collect,
-                    search,
-                    exists: (path) => existsSync(join(root, path)),
-                    write: (path, contents) => {
-                        const target = join(root, path);
-                        mkdirSync(dirname(target), { recursive: true });
-                        writeFileSync(target, contents);
-                    },
-                    read,
-                    notes,
+                createDocsTool(toolDeps, {
+                    name: "docs_search",
+                    codemode: true,
                 }),
             );
         });
@@ -1516,11 +1754,55 @@ export default Plugin.define({
                     search,
                     read,
                     notes,
-                    prompt: (sessionID, text) =>
-                        ctx.session.prompt({ sessionID, text }),
+                    prompt: (sessionID, text) => {
+                        // Any `/docs` use counts as consulting the lake.
+                        nudged.add(sessionID);
+                        return ctx.session.prompt({ sessionID, text });
+                    },
                 }),
             );
         });
+        // The nudges (default on; `nudge: false` restores silence). The
+        // miss-nudge fires once per session, at the first grep/glob miss, and
+        // is fail-quiet by construction — it must never break the tool it
+        // wraps. The record-nudge rides compaction: the summariser has no
+        // tools, so it shapes record-ready blocks for the continuing agent.
+        const nudged = new Set<string>();
+        if (nudge) {
+            await ctx.tool.hook("execute.after", (event) => {
+                try {
+                    if (event.status !== "completed") {
+                        return;
+                    }
+                    if (DOCS_TOOL_NAMES.has(event.tool)) {
+                        nudged.add(event.sessionID);
+                        return;
+                    }
+                    const line = missNudgeFor(
+                        {
+                            tool: event.tool,
+                            status: event.status,
+                            content: event.result.content,
+                            input: event.input,
+                        },
+                        nudged.has(event.sessionID),
+                    );
+                    if (line === null) {
+                        return;
+                    }
+                    nudged.add(event.sessionID);
+                    event.result = {
+                        ...event.result,
+                        content: appendLine(event.result.content, line),
+                    };
+                } catch {
+                    // Fail-quiet: a nudge must never break the wrapped tool.
+                }
+            });
+            await ctx.session.hook("compaction", (compaction) => {
+                compaction.system.push({ type: "text", text: RECORD_NUDGE });
+            });
+        }
         // The skill is the doctrine's runtime face. Its content ships next to
         // this module and is resolved through `import.meta.url`, so it works
         // whether the plugin is loaded from a local path or an installed
@@ -1536,9 +1818,13 @@ export default Plugin.define({
                     "configured docs root, plus the project's nested " +
                     "README.md files (search only): find the right file with " +
                     "the docs tool, read it, and record plans and task " +
-                    "documentation for the next human or agent. Use at the " +
-                    "start of unfamiliar work, when hunting for prior " +
-                    "decisions or traps, and when closing out a session.",
+                    "documentation for the next human or agent. Use before " +
+                    "searching the codebase for how-to knowledge, when a " +
+                    "task names a service, flag or error string the lake " +
+                    "may already explain, at the start of unfamiliar work, " +
+                    "when hunting for prior decisions or traps, when a " +
+                    "session learns something the next one will need, and " +
+                    "when closing out a session.",
                 path: AbsolutePath.make(fileURLToPath(skillURL)),
                 content: skill,
             });

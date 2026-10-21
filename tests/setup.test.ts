@@ -33,19 +33,38 @@ interface Harness {
     commands: unknown[];
     skills: unknown[];
     sent: string[];
+    /** The tool hook callbacks the plugin registered, by hook name. */
+    toolHooks: Record<string, (event: never) => unknown>;
+    /** The session hook callbacks the plugin registered, by hook name. */
+    sessionHooks: Record<string, (input: never) => unknown>;
 }
 
 /**
  * Run the plugin's `setup` against a minimal fake context rooted at
  * `directory`: each domain's `transform` runs its callback against an editor
- * that records every `add`, and `session.prompt` records what the command sent.
+ * that records every `add`, each `hook` records its callback, and
+ * `session.prompt` records what the command sent.
  */
 async function setup(
     directory: string,
     options: Record<string, unknown> = {},
 ): Promise<Harness> {
-    const added: Harness = { tools: [], commands: [], skills: [], sent: [] };
-    const domain = (bucket: unknown[]) => ({
+    const added: Harness = {
+        tools: [],
+        commands: [],
+        skills: [],
+        sent: [],
+        toolHooks: {},
+        sessionHooks: {},
+    };
+    const hookOf = (store: Record<string, unknown>) => ({
+        hook: async (name: string, callback: (input: never) => unknown) => {
+            store[name] = callback;
+            return { dispose: async () => {} };
+        },
+    });
+    const domain = (bucket: unknown[], hooks: Record<string, unknown>) => ({
+        ...hookOf(hooks),
         transform: async (callback: (editor: unknown) => void) => {
             callback({
                 add: (definition: unknown) => void bucket.push(definition),
@@ -55,10 +74,11 @@ async function setup(
     const ctx = {
         options,
         location: { directory },
-        tool: domain(added.tools),
-        command: domain(added.commands),
-        skill: domain(added.skills),
+        tool: domain(added.tools, added.toolHooks),
+        command: domain(added.commands, {}),
+        skill: domain(added.skills, {}),
         session: {
+            ...hookOf(added.sessionHooks),
             prompt: async (input: { text: string }) =>
                 void added.sent.push(input.text),
         },
@@ -70,19 +90,32 @@ async function setup(
 }
 
 describe("setup", () => {
-    it("registers the docs tool, command and skill", async () => {
+    it("registers the docs tools, command and skill", async () => {
         const added = await setup(tempDir());
 
-        assert.equal(added.tools.length, 1);
+        assert.equal(added.tools.length, 2);
         assert.equal(added.commands.length, 1);
         assert.equal(added.skills.length, 1);
     });
 
-    it("names the tool and command docs", async () => {
+    it("names the native tool docs and the Code Mode twin docs_search", async () => {
         const added = await setup(tempDir());
 
         assert.equal((added.tools[0] as { name: string }).name, "docs");
+        assert.equal((added.tools[1] as { name: string }).name, "docs_search");
         assert.equal((added.commands[0] as { name: string }).name, "docs");
+    });
+
+    it("registers the twin for Code Mode under the docs namespace", async () => {
+        const added = await setup(tempDir());
+
+        assert.deepEqual((added.tools[0] as { options: unknown }).options, {
+            codemode: false,
+        });
+        assert.deepEqual((added.tools[1] as { options: unknown }).options, {
+            namespace: "docs",
+            codemode: true,
+        });
     });
 
     it("registers the skill with the shipped doctrine as its content", async () => {
@@ -91,7 +124,7 @@ describe("setup", () => {
 
         assert.equal(skill.id, "docs");
         assert.match(skill.content, /Open questions/);
-        assert.match(skill.content, /reachable from the `execute`/);
+        assert.match(skill.content, /`tools\.docs\.docs_search/);
     });
 
     it("writes a doc through the tool the setup registered", async () => {
@@ -238,5 +271,108 @@ describe("setup", () => {
 
         // Assert – the report is about the lake only, never the README.
         assert.doesNotMatch(added.sent[0] ?? "", /README\.md/);
+    });
+
+    it("nudges a grep miss once per session through the tool hook", async () => {
+        const added = await setup(tempDir());
+        const hook = added.toolHooks["execute.after"] as (
+            event: never,
+        ) => unknown;
+        const event = {
+            tool: "grep",
+            status: "completed",
+            sessionID: "ses_nudge",
+            input: { pattern: "queue backend" },
+            result: { content: "No matches found" },
+        };
+
+        await hook(event as never);
+        await hook(event as never);
+
+        const content = String((event.result as { content: unknown }).content);
+        assert.match(content, /`docs search`/);
+        assert.match(content, /queue backend/);
+        assert.equal(content.match(/`docs search`/g)?.length, 1);
+    });
+
+    it("stays quiet once the session has used the docs tool", async () => {
+        const added = await setup(tempDir());
+        const hook = added.toolHooks["execute.after"] as (
+            event: never,
+        ) => unknown;
+
+        await hook({
+            tool: "docs",
+            status: "completed",
+            sessionID: "ses_used",
+            input: {},
+            result: { content: "ok" },
+        } as never);
+        const miss = {
+            tool: "grep",
+            status: "completed",
+            sessionID: "ses_used",
+            input: {},
+            result: { content: "No matches found" },
+        };
+        await hook(miss as never);
+
+        assert.equal(miss.result.content, "No matches found");
+    });
+
+    it("counts a /docs command use as consulting the lake", async () => {
+        const dir = tempDir();
+        const added = await setup(dir);
+        const command = added.commands[0] as {
+            execute: (input: unknown) => Promise<void>;
+        };
+
+        await command.execute({
+            sessionID: "ses_cmd",
+            prompt: { text: "check" },
+        } as never);
+        const miss = {
+            tool: "grep",
+            status: "completed",
+            sessionID: "ses_cmd",
+            input: {},
+            result: { content: "No matches found" },
+        };
+        const hook = added.toolHooks["execute.after"] as (
+            event: never,
+        ) => unknown;
+        await hook(miss as never);
+
+        assert.equal(miss.result.content, "No matches found");
+    });
+
+    it("injects the record nudge into compaction requests", async () => {
+        const added = await setup(tempDir());
+        const hook = added.sessionHooks["compaction"] as (
+            input: never,
+        ) => unknown;
+        const compaction = { system: [] as unknown[] };
+
+        await hook(compaction as never);
+
+        assert.equal(compaction.system.length, 1);
+        assert.match(
+            String((compaction.system[0] as { text: string })?.text ?? ""),
+            /Record with docs add/,
+        );
+    });
+
+    it("registers no hooks when nudge is false", async () => {
+        const added = await setup(tempDir(), { nudge: false });
+
+        assert.deepEqual(Object.keys(added.toolHooks), []);
+        assert.deepEqual(Object.keys(added.sessionHooks), []);
+    });
+
+    it("throws at setup on a non-boolean nudge", async () => {
+        await assert.rejects(
+            setup(tempDir(), { nudge: "off" }),
+            /must be a boolean/,
+        );
     });
 });

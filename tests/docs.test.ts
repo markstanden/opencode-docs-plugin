@@ -27,17 +27,22 @@ const {
     FIELD_WEIGHTS,
     FRONT_MATTER_FIELDS,
     gitDates,
+    isSearchMiss,
     matches,
     MAX_RESULTS,
     MIN_TERM_LENGTH,
+    missNudge,
+    missNudgeFor,
     nearTwins,
     parseFrontMatter,
     prepareAdd,
     QUALITY,
     rankDocs,
     README_EXCLUDED_DIRS,
+    RECORD_NUDGE,
     render,
     reconcileQuery,
+    resolveNudge,
     resolveRequest,
     resolveRoot,
     score,
@@ -1359,6 +1364,25 @@ describe("createDocsTool", () => {
         assert.equal(tool.options?.codemode, false);
     });
 
+    it("takes a name and a Code Mode registration shape", () => {
+        const tool = createDocsTool(
+            {
+                collect: () => [],
+                exists: () => false,
+                write: () => {},
+                read: () => "",
+            },
+            { name: "docs_search", codemode: true },
+        );
+
+        assert.equal(tool.name, "docs_search");
+        assert.deepEqual(tool.options, {
+            namespace: "docs",
+            codemode: true,
+        });
+        assert.notEqual(tool.description, toolOf([]).description);
+    });
+
     it("searches local READMEs but keeps add and check lake-only", async () => {
         // Arrange – a lake doc and a project README with overlapping words.
         const lake = entry({
@@ -2280,6 +2304,284 @@ describe("resolveRequest check", () => {
             resolveRequest({ add: addRequest(), check: true }).verb,
             "add",
         );
+    });
+});
+
+describe("resolveRequest read", () => {
+    it("resolves a read over a search and a help search", () => {
+        // Assert – read outranks everything below check.
+        assert.equal(resolveRequest({ read: "aa/x.md" }).verb, "read");
+        assert.equal(
+            resolveRequest({ read: "aa/x.md", search: "queue" }).verb,
+            "read",
+        );
+        assert.equal(
+            resolveRequest({ read: "aa/x.md", search: "help" }).verb,
+            "read",
+        );
+    });
+
+    it("gives add and check precedence over read", () => {
+        assert.equal(
+            resolveRequest({ read: "aa/x.md", check: true }).verb,
+            "check",
+        );
+        assert.equal(
+            resolveRequest({ add: addRequest(), read: "aa/x.md" }).verb,
+            "add",
+        );
+    });
+
+    it("ignores a blank read", () => {
+        // A blank read counts as unset: the catalogue search falls through.
+        assert.equal(resolveRequest({ read: "   " }).verb, "search");
+        assert.equal(
+            resolveRequest({ read: "  ", search: "queue" }).verb,
+            "search",
+        );
+    });
+});
+
+describe("tool read", () => {
+    const readRaw =
+        "---\nArea: api\nKeywords: queue\nSummary: A queue doc.\n---\n" +
+        "# Queue\n\n## Facts\n\n- Verified.\n";
+
+    /** A tool whose lake holds exactly one readable doc. */
+    function readTool(): ReturnType<typeof createDocsTool> {
+        return createDocsTool({
+            collect: () => [toEntry("api/queue.md", readRaw, "2026-01-01")],
+            exists: (path) => path === "api/queue.md",
+            write: () => {},
+            read: (path) => (path === "api/queue.md" ? readRaw : ""),
+        });
+    }
+
+    it("returns the doc verbatim under a header line", async () => {
+        const result = await readTool().execute(
+            { read: "api/queue.md" },
+            {} as never,
+        );
+
+        const content = String(result.content);
+        assert.match(content, /^api\/queue\.md — Queue\n\n---\nArea: api\n/);
+        assert.match(content, /## Facts/);
+        assert.equal(result.metadata?.read, "api/queue.md");
+    });
+
+    it("refuses a path that escapes the docs root", async () => {
+        const result = await readTool().execute(
+            { read: "../secret.md" },
+            {} as never,
+        );
+
+        assert.match(String(result.content), /^Rejected:/);
+        assert.equal(result.metadata?.read, null);
+    });
+
+    it("refuses a non-.md path", async () => {
+        const result = await readTool().execute(
+            { read: "api/queue.txt" },
+            {} as never,
+        );
+
+        assert.match(String(result.content), /path must end in \.md\./);
+    });
+
+    it("refuses a doc the lake does not hold", async () => {
+        const result = await readTool().execute(
+            { read: "api/nope.md" },
+            {} as never,
+        );
+
+        assert.match(String(result.content), /^No doc at api\/nope\.md\.$/);
+        assert.equal(result.metadata?.read, null);
+    });
+});
+
+describe("resolveNudge", () => {
+    it("defaults to on", () => {
+        assert.equal(resolveNudge(undefined), true);
+    });
+
+    it("passes a boolean through", () => {
+        assert.equal(resolveNudge(false), false);
+        assert.equal(resolveNudge(true), true);
+    });
+
+    it("throws on a non-boolean", () => {
+        assert.throws(() => resolveNudge("off"), /must be a boolean/);
+    });
+});
+
+describe("miss nudge", () => {
+    it("nudges a grep miss once, echoing the failed pattern", () => {
+        const line = missNudgeFor(
+            {
+                tool: "grep",
+                status: "completed",
+                content: "No matches found",
+                input: { pattern: "queue backend" },
+            },
+            false,
+        );
+
+        assert.match(String(line), /`docs search`/);
+        assert.match(String(line), /queue backend/);
+    });
+
+    it("treats an empty result as a miss — rg prints nothing", () => {
+        assert.equal(
+            missNudgeFor(
+                { tool: "grep", status: "completed", content: "", input: {} },
+                false,
+            ) !== null,
+            true,
+        );
+    });
+
+    it("treats whitespace-only content as a miss", () => {
+        assert.equal(
+            missNudgeFor(
+                {
+                    tool: "grep",
+                    status: "completed",
+                    content: "  \n ",
+                    input: {},
+                },
+                false,
+            ) !== null,
+            true,
+        );
+    });
+
+    it("recognises glob's No files found phrasing", () => {
+        assert.equal(
+            missNudgeFor(
+                {
+                    tool: "glob",
+                    status: "completed",
+                    content: "No files found",
+                    input: { pattern: "x" },
+                },
+                false,
+            ) !== null,
+            true,
+        );
+    });
+
+    it("reads a content-parts array through its text parts", () => {
+        assert.equal(
+            missNudgeFor(
+                {
+                    tool: "grep",
+                    status: "completed",
+                    content: [{ type: "text", text: "No matches found" }],
+                    input: {},
+                },
+                false,
+            ) !== null,
+            true,
+        );
+    });
+
+    it("does not nudge a genuine hit", () => {
+        assert.equal(
+            missNudgeFor(
+                {
+                    tool: "grep",
+                    status: "completed",
+                    content: "Found 3 matches",
+                    input: {},
+                },
+                false,
+            ),
+            null,
+        );
+    });
+
+    it("does not nudge an errored call", () => {
+        assert.equal(
+            missNudgeFor(
+                {
+                    tool: "grep",
+                    status: "error",
+                    content: "",
+                    input: {},
+                },
+                false,
+            ),
+            null,
+        );
+    });
+
+    it("does not nudge tools outside the watched pair", () => {
+        assert.equal(
+            missNudgeFor(
+                {
+                    tool: "read",
+                    status: "completed",
+                    content: "",
+                    input: {},
+                },
+                false,
+            ),
+            null,
+        );
+    });
+
+    it("stays quiet for a session that was already nudged", () => {
+        assert.equal(
+            missNudgeFor(
+                {
+                    tool: "grep",
+                    status: "completed",
+                    content: "No matches found",
+                    input: {},
+                },
+                true,
+            ),
+            null,
+        );
+    });
+
+    it("falls back to a term-free line when no pattern is given", () => {
+        const line = missNudge("");
+
+        assert.match(line, /may already be answered/);
+        assert.doesNotMatch(line, /docs search/);
+        assert.match(
+            String(
+                missNudgeFor(
+                    {
+                        tool: "grep",
+                        status: "completed",
+                        content: "No matches found",
+                        input: { pattern: 42 },
+                    },
+                    false,
+                ),
+            ),
+            /may already be answered/,
+        );
+    });
+
+    it("keeps the suggested call out of the nudge's own shadow", () => {
+        // The nudge mentions `docs search` — a later grep for those words
+        // must still read as a miss, so the miss phrases stay narrow.
+        assert.match(missNudge("queue"), /^Note: /);
+        assert.equal(isSearchMiss(missNudge("queue")), false);
+    });
+});
+
+describe("record nudge", () => {
+    it("shapes each finding as its own artifact, never a session dump", () => {
+        assert.match(RECORD_NUDGE, /`Record with docs add:` block per finding/);
+        assert.match(RECORD_NUDGE, /never one session dump/);
+        assert.match(RECORD_NUDGE, /`Area`/);
+        assert.match(RECORD_NUDGE, /`H1` title/);
+        assert.match(RECORD_NUDGE, /`Keywords`/);
+        assert.match(RECORD_NUDGE, /separate focused doc/);
     });
 });
 

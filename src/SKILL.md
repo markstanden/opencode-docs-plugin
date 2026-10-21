@@ -5,9 +5,9 @@ option; default `<location>/docs`). This skill covers both
 halves of the loop: **find** (discover with the `docs` tool, read the match) and
 **record** (write or update a doc for the current task).
 
-Call the `docs` tool directly at top level. It is a plugin-registered tool and
-is **not** reachable from the `execute` (Code Mode) catalog — do not try to
-batch it inside `execute`, and do not be misled by the unknown-tool suggestion.
+Call the `docs` tool at top level. Inside `execute` (Code Mode) the same tool
+is reachable as the twin `tools.docs.docs_search(…)` — same verbs, same lake —
+so batch it with the rest of the catalog there.
 
 ## Find it
 
@@ -27,9 +27,11 @@ Call the `docs` tool:
 - **exactly `help`** — plain text explaining the weights, the hit qualities and
   the outcomes, instead of a search.
 
-Then open the match with the built-in `read` tool. The tool only discovers; it
-never returns a doc's body. `/docs [search]` runs the same search into the
-session (`/docs search <text>` is the explicit form).
+Then open the match: either the built-in `read` tool (project files and
+READMEs), or the tool's own `read` verb — pass the root-relative path and it
+returns the doc verbatim, front-matter and body, in one call.
+`/docs [search]` runs the same search into the session (`/docs search <text>`
+is the explicit form).
 
 Every `*.md` under the root is covered except the excluded areas — scratch (`plans/`)
 and vendored mirrors (`requirements/`, `wiki/`). `Area` comes from the path,
@@ -65,6 +67,10 @@ Before writing:
 2. **Reconcile, then add.** Edit before add; merge near-twins; split a bloated
    doc into per-topic files; after any split, merge or move, grep for inbound
    references and repoint them, leaving a stub if needed.
+
+One artifact per topic: a session's findings land as several focused docs,
+never one session dump — a compaction nudge hands you `Record with docs add:`
+blocks already shaped for this.
 
 Then record through the `docs` tool's typed `add`: metadata (`Area`, `Keywords`
 as a list, `Summary`; optionally `Status`/`Supersedes`) plus a body carrying an

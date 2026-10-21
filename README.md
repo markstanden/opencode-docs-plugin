@@ -9,10 +9,14 @@ writing convention those docs follow.
 - `docs` (tool) — blank search lists the 10 most recently changed docs
   (`path — Area — date — Summary`); a search ranks docs over their
   front-matter, path and body identifiers, falling back to the closest
-  matches rather than a dead end; `add` writes knowledge through a typed DTO;
-  `check` validates the tree against the convention. Nested project
-  `README.md` files are indexed too — `.gitignore` rules decide what is
-  skipped — but only for search: `add` and `check` never touch them.
+  matches rather than a dead end; `read` returns a matched doc verbatim
+  (front-matter and body), so find-then-read is one call; `add` writes
+  knowledge through a typed DTO; `check` validates the tree against the
+  convention. Nested project `README.md` files are indexed too —
+  `.gitignore` rules decide what is skipped — but only for search: `add`
+  and `check` never touch them. A Code Mode twin, `docs_search`, registers
+  alongside it, so `execute` reaches the same lake as
+  `tools.docs.docs_search(…)`.
 - `/docs` (command) — the same core, driven from the prompt:
   `search <text>` (bare text searches too), `add <text>`, `check`, `help`.
 - The plugin also registers the `docs` skill, so the convention travels with
@@ -66,6 +70,13 @@ non-string value fails at startup. The root directory itself need not exist in
 advance — it is created on the first `add`, and a search or `check` over a
 still-empty tree simply reports nothing. Restart OpenCode after editing the
 config — it isn't hot-reloaded.
+
+The runtime nudges default on: a one-line pointer appended to the first
+grep/glob miss of a session (suggesting a `docs search`), and a record-ready
+block format injected into compaction summarisation, so durable findings are
+shaped as separate focused docs — one artifact per topic, never a session
+dump. Set `"nudge": false` to restore silence; a non-boolean value fails at
+startup.
 
 ## Status
 
