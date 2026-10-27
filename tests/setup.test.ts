@@ -273,6 +273,127 @@ describe("setup", () => {
         assert.doesNotMatch(added.sent[0] ?? "", /README\.md/);
     });
 
+    it("adds repo lakes from .opencode/docs-lakes.json", async () => {
+        // Arrange – the repo keeps its docs in documentation/, not docs/.
+        const dir = tempDir();
+        mkdirSync(join(dir, ".opencode"), { recursive: true });
+        mkdirSync(join(dir, "documentation"), { recursive: true });
+        writeFileSync(
+            join(dir, ".opencode/docs-lakes.json"),
+            JSON.stringify({
+                lakes: [{ root: "documentation", name: "docs" }],
+            }),
+        );
+        writeFileSync(
+            join(dir, "documentation/landmine.md"),
+            "---\nArea: landmine\nKeywords: gateway\nSummary: A trap.\n---\n" +
+                "# Gateway landmine\n\n### Facts\n\n- x.\n",
+        );
+        const added = await setup(dir);
+        const tool = added.tools[0] as {
+            execute: (
+                input: unknown,
+                context: unknown,
+            ) => Promise<{ content: unknown }>;
+        };
+
+        // Act
+        const result = await tool.execute({ search: "gateway" }, {} as never);
+
+        // Assert – the repo file supplied the lake, so no implicit docs/ lake
+        // was created, and the doc is searchable.
+        assert.match(String(result.content), /landmine\.md/);
+        assert.equal(existsSync(join(dir, "docs")), false);
+    });
+
+    it("appends the miss nudge to content parts", async () => {
+        const added = await setup(tempDir());
+        const hook = added.toolHooks["execute.after"] as (
+            event: never,
+        ) => unknown;
+        const event = {
+            tool: "grep",
+            status: "completed",
+            sessionID: "ses_parts",
+            input: { pattern: "queue" },
+            result: {
+                content: [{ type: "text", text: "No matches found" }],
+            },
+        };
+
+        await hook(event as never);
+
+        const content = (event.result as { content: unknown }).content;
+        assert.ok(Array.isArray(content));
+        assert.match(
+            String((content as Array<{ text: string }>).at(-1)?.text),
+            /`docs search`/,
+        );
+    });
+
+    it("stays quiet when the hook event is malformed", async () => {
+        const added = await setup(tempDir());
+        const hook = added.toolHooks["execute.after"] as (
+            event: never,
+        ) => unknown;
+
+        await assert.doesNotReject(async () => {
+            await hook({
+                tool: "grep",
+                status: "completed",
+                sessionID: "ses_bad",
+                input: {},
+                result: undefined,
+            } as never);
+        });
+    });
+
+    it("reads base lakes from lakesFile and keeps the wiki read-only", async () => {
+        const dir = tempDir();
+        const wiki = tempDir();
+        writeFileSync(
+            join(wiki, "page.md"),
+            "# Page\n\nA unique wiki phrase zqx9.\n",
+        );
+        const base = join(tempDir(), "lakes.json");
+        writeFileSync(
+            base,
+            JSON.stringify({
+                lakes: [{ class: "wiki", root: wiki, name: "wiki" }],
+            }),
+        );
+        const added = await setup(dir, { lakesFile: base });
+        const tool = added.tools[0] as {
+            execute: (
+                input: unknown,
+                context: unknown,
+            ) => Promise<{
+                content: unknown;
+                metadata?: { written?: boolean };
+            }>;
+        };
+
+        const found = await tool.execute({ search: "zqx9" }, {} as never);
+        const addedToWiki = await tool.execute(
+            {
+                lake: "wiki",
+                add: {
+                    metadata: {
+                        Area: "aa",
+                        Keywords: ["alpha"],
+                        Summary: "S.",
+                    },
+                    body: "# T\n\n### Facts\n\n- x.\n",
+                },
+            },
+            {} as never,
+        );
+
+        assert.match(String(found.content), /wiki:page\.md/);
+        assert.equal(addedToWiki.metadata?.written, false);
+        assert.match(String(addedToWiki.content), /read-only/);
+    });
+
     it("nudges a grep miss once per session through the tool hook", async () => {
         const added = await setup(tempDir());
         const hook = added.toolHooks["execute.after"] as (

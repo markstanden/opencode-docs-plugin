@@ -1,8 +1,8 @@
 {
     "name": "@markstanden/opencode-docs-plugin",
-    "version": "0.4.0",
+    "version": "0.5.0",
     "type": "module",
-    "description": "OpenCode V2 plugin: a `docs` tool and `/docs` command over a repository's knowledge tree and the project's nested README.md files (search only), with the writing convention it owns",
+    "description": "OpenCode V2 plugin: a `docs` tool and `/docs` command over configurable knowledge lakes (repo, machine, global and read-only wiki), nested README.md search, and the writing convention they share",
     "repository": {
         "type": "git",
         "url": "git+https://github.com/markstanden/opencode-docs-plugin.git"

@@ -61,13 +61,15 @@ type DocEntry = ReturnType<(typeof docs)["toEntry"]>;
 function entry(overrides: Partial<DocEntry> = {}): DocEntry {
     return {
         path: "decisions/x.md",
+        lake: "",
+        class: "repo",
         area: "decisions",
         date: "2026-01-02",
         title: "X",
         summary: "A summary",
-        superseded: false,
         keywords: [],
         identifiers: [],
+        text: "",
         ...overrides,
     };
 }
@@ -146,6 +148,14 @@ describe("parseFrontMatter", () => {
         assert.equal(body, "# Title\n");
     });
 
+    it("ignores a front-matter line without a colon", () => {
+        const { meta } = parseFrontMatter(
+            "---\nArea: aa\ngarbage\nSummary: S\n---\n# T\n",
+        );
+
+        assert.deepEqual(meta, { Area: "aa", Summary: "S" });
+    });
+
     it("returns the whole file when front-matter is unterminated", () => {
         const raw = "---\nArea: decisions\n";
         const { meta, body } = parseFrontMatter(raw);
@@ -178,13 +188,15 @@ describe("toEntry", () => {
 
         assert.deepEqual(result, {
             path: "decisions/a.md",
+            lake: "",
+            class: "repo",
             area: "runtime",
             date: "2026-01-01",
             title: "T",
             summary: "S",
-            superseded: false,
             keywords: ["one", "two"],
             identifiers: [],
+            text: "",
         });
     });
 
@@ -210,26 +222,20 @@ describe("toEntry", () => {
         assert.equal(toEntry("README.md", "# T\n", "").area, "");
     });
 
-    it("marks a superseded doc from its front-matter Status", () => {
-        const result = toEntry(
-            "aa/a.md",
-            "---\nStatus: superseded\nSummary: S\n---\n# T\n",
-            "2026-01-01",
-        );
+    it("derives a wiki summary and prose, but not for knowledge docs", () => {
+        const body =
+            "# Title\n\n![badge](x.png)\n\nA one-line summary of the page.\n\n## Facts\n\nMore.\n";
+        const wiki = toEntry("guide/a.md", body, "2026-01-01", {
+            class: "wiki",
+            lake: "wiki",
+            profile: "wiki",
+        });
+        const knowledge = toEntry("guide/a.md", body, "2026-01-01");
 
-        assert.equal(result.superseded, true);
-    });
-
-    it("treats a missing or active Status as not superseded", () => {
-        const missing = toEntry("aa/a.md", "# T\n", "");
-        const active = toEntry(
-            "aa/a.md",
-            "---\nStatus: active\n---\n# T\n",
-            "",
-        );
-
-        assert.equal(missing.superseded, false);
-        assert.equal(active.superseded, false);
+        assert.equal(wiki.summary, "A one-line summary of the page.");
+        assert.match(wiki.text, /More\./);
+        assert.equal(knowledge.summary, "");
+        assert.equal(knowledge.text, "");
     });
 });
 
@@ -448,80 +454,19 @@ describe("render", () => {
     });
 });
 
-describe("superseded docs", () => {
-    it("ranks the active doc above a superseded one at equal score", () => {
-        const retired = entry({
-            path: "b.md",
-            title: "Serena",
-            superseded: true,
-        });
-        const active = entry({ path: "a.md", title: "Serena" });
-
-        const { entries } = rankDocs([retired, active], "serena");
-
-        assert.deepEqual(
-            entries.map((doc) => doc.path),
-            ["a.md", "b.md"],
-        );
-    });
-
-    it("keeps the active doc above a same-date superseded one in the catalogue", () => {
-        const retired = entry({
-            path: "b.md",
-            date: "2026-02-02",
-            superseded: true,
-        });
-        const active = entry({ path: "a.md", date: "2026-02-02" });
-
-        const { entries } = rankDocs([retired, active], "");
-
-        assert.deepEqual(
-            entries.map((doc) => doc.path),
-            ["a.md", "b.md"],
-        );
-    });
-
-    it("marks a superseded doc in the rendered line", () => {
-        const text = render([
-            entry({
-                path: "a.md",
-                area: "aa",
-                date: "2026-01-01",
-                superseded: true,
-            }),
-        ]);
-
-        assert.match(text, /— \(superseded\)/);
-    });
-
-    it("flags a Supersedes that names no doc", () => {
+describe("lifecycle fields", () => {
+    it("reports Status and Supersedes as obsolete notes, not findings", () => {
         const raw =
             "---\nArea: aa\nKeywords: alpha\nSummary: S.\n" +
-            "Supersedes: aa/gone.md\n---\n# Alpha doc\n\n### Facts\n\n- x.\n";
+            "Status: superseded\nSupersedes: aa/gone.md\n---\n" +
+            "# Alpha doc\n\n### Facts\n\n- x.\n";
         const entries = [entry({ path: "aa/a.md", title: "Alpha doc" })];
 
         const report = checkDocs(entries, () => raw);
 
-        assert.match(report, /Supersedes names no doc: aa\/gone\.md/);
-    });
-
-    it("accepts a Supersedes that names a doc in the tree", () => {
-        const parts = (title: string, supersedes?: string): string =>
-            "---\nArea: aa\nKeywords: alpha\nSummary: S.\n" +
-            (supersedes === undefined ? "" : `Supersedes: ${supersedes}\n`) +
-            `---\n# ${title}\n\n### Facts\n\n- x.\n`;
-        const raws: Record<string, string> = {
-            "aa/a.md": parts("Alpha doc", "aa/b.md"),
-            "aa/b.md": parts("Beta doc"),
-        };
-        const entries = [
-            entry({ path: "aa/a.md", title: "Alpha doc" }),
-            entry({ path: "aa/b.md", title: "Beta doc" }),
-        ];
-
-        const report = checkDocs(entries, (path) => raws[path] ?? "");
-
-        assert.doesNotMatch(report, /Supersedes names no doc/);
+        assert.match(report, /All 1 docs comply\./);
+        assert.match(report, /obsolete field `Status`/);
+        assert.match(report, /obsolete field `Supersedes`/);
     });
 });
 
@@ -1623,8 +1568,6 @@ function addRequest(overrides: Record<string, unknown> = {}): {
         Area: string;
         Keywords: string[];
         Summary: string;
-        Status?: "active" | "superseded";
-        Supersedes?: string;
     };
     body: string;
     path?: string;
@@ -1655,15 +1598,13 @@ describe("resolveRequest", () => {
 });
 
 describe("FRONT_MATTER_FIELDS", () => {
-    it("puts the required fields first, the optionals last, in canonical order", async () => {
+    it("puts the required fields first, in canonical order", async () => {
         assert.deepEqual(
             FRONT_MATTER_FIELDS.map((field) => [field.name, field.required]),
             [
                 ["Area", true],
                 ["Keywords", true],
                 ["Summary", true],
-                ["Status", false],
-                ["Supersedes", false],
             ],
         );
     });
@@ -1682,20 +1623,13 @@ describe("serializeDoc", () => {
         );
     });
 
-    it("serialises the optional fields when present", async () => {
+    it("does not write lifecycle fields", async () => {
         const raw = serializeDoc(
-            {
-                Area: "aa",
-                Keywords: ["one"],
-                Summary: "S",
-                Status: "superseded",
-                Supersedes: "aa/old.md",
-            },
+            { Area: "aa", Keywords: ["one"], Summary: "S" },
             "# T\n",
         );
 
-        assert.match(raw, /\nStatus: superseded\n/);
-        assert.match(raw, /\nSupersedes: aa\/old\.md\n/);
+        assert.doesNotMatch(raw, /Status|Supersedes/);
     });
 
     it("round-trips through parseFrontMatter", async () => {
@@ -2082,6 +2016,7 @@ describe("validateDoc", () => {
             "Facts",
             "Inferred",
             "Tested",
+            "Failed approaches",
             "Open questions",
         ] as const;
 
@@ -2155,7 +2090,7 @@ describe("validateDoc", () => {
             "Area is required and must not be blank.",
             "Keywords is required and must not be blank.",
             "Summary is required and must not be blank.",
-            "no claim section (Facts / Inferred / Tested / Open questions).",
+            "no claim section (Facts / Inferred / Tested / Failed approaches / Open questions).",
             "the H1 and Keywords carry no term of MIN_TERM_LENGTH (3) or longer.",
         ]);
     });
@@ -2279,14 +2214,15 @@ describe("checkDocs", () => {
             "note: unversioned root",
         ]);
 
+        assert.match(report, /All 1 docs comply\./);
+        assert.match(report, /Notes:/);
         assert.match(report, /note: unversioned root/);
-        assert.doesNotMatch(report, /comply/);
     });
 
     it("reports a note even for an empty tree", () => {
         assert.equal(
             checkDocs([], () => "", ["note: only"]),
-            "note: only",
+            "All 0 docs comply.\n\nNotes:\n- note: only",
         );
     });
 });
@@ -2670,11 +2606,21 @@ describe("prepareAdd short identity", () => {
  * identifiers, never a real tree — so the ranking harness can pin behaviour
  * without shipping anyone's docs. Edit it directly when a new shape is needed.
  */
-const corpus: DocEntry[] = JSON.parse(
-    readFileSync(
-        join(import.meta.dirname, "fixtures/docs-corpus.json"),
-        "utf8",
-    ),
+const corpus: DocEntry[] = (
+    JSON.parse(
+        readFileSync(
+            join(import.meta.dirname, "fixtures/docs-corpus.json"),
+            "utf8",
+        ),
+    ) as Array<Partial<DocEntry>>
+).map(
+    (item) =>
+        ({
+            lake: "",
+            class: "repo",
+            text: "",
+            ...item,
+        }) as DocEntry,
 );
 
 describe("reconcileQuery", () => {
