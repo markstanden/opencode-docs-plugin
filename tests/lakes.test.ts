@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import {
     mkdirSync,
     mkdtempSync,
+    readFileSync,
     rmSync,
     symlinkSync,
     writeFileSync,
@@ -28,6 +29,7 @@ import {
     summaryOf,
     toEntry,
     type DocEntry,
+    type Lake,
 } from "../src/index.ts";
 
 const cleanups: string[] = [];
@@ -569,6 +571,114 @@ describe("multi-lake tool", () => {
         assert.match(
             String(result.content),
             /wiki \(wiki, read-only, not checked\)/,
+        );
+    });
+});
+
+describe("lake path safety", () => {
+    /** A writable knowledge lake rooted at `root`. */
+    function lakeAt(root: string): Lake {
+        return createLakes([
+            {
+                name: "repo",
+                class: "repo",
+                root,
+                profile: "knowledge",
+                writable: true,
+            },
+        ])[0] as Lake;
+    }
+
+    /** A writable lake with a symlinked doc pointing at an outside file. */
+    function escapeFixture(): { outside: string; lake: Lake } {
+        const root = tempDir();
+        const outside = tempDir();
+        writeFileSync(join(outside, "secret.md"), "outside\n");
+        symlinkSync(join(outside, "secret.md"), join(root, "linked.md"));
+        return { outside, lake: lakeAt(root) };
+    }
+
+    it("does not report a symlinked file as present", () => {
+        const { lake } = escapeFixture();
+
+        assert.equal(lake.exists("linked.md"), false);
+    });
+
+    it("refuses to read a symlinked file", () => {
+        const { lake } = escapeFixture();
+
+        assert.throws(
+            () => lake.read("linked.md"),
+            /escapes the lake root or crosses a symlink/,
+        );
+    });
+
+    it("refuses to write through a symlink and leaves the target untouched", () => {
+        const { lake, outside } = escapeFixture();
+
+        assert.throws(
+            () => lake.write("linked.md", "overwritten\n"),
+            /crosses a symlink/,
+        );
+        assert.equal(
+            readFileSync(join(outside, "secret.md"), "utf8"),
+            "outside\n",
+        );
+    });
+
+    it("refuses a path that runs through a symlinked directory", () => {
+        const root = tempDir();
+        const outside = tempDir();
+        writeFileSync(join(outside, "page.md"), "outside\n");
+        symlinkSync(outside, join(root, "linked"), "dir");
+
+        assert.throws(
+            () => lakeAt(root).read("linked/page.md"),
+            /crosses a symlink/,
+        );
+    });
+
+    it("refuses a symlink that points back inside the root", () => {
+        const root = tempDir();
+        writeFileSync(join(root, "real.md"), "# Real\n");
+        symlinkSync(join(root, "real.md"), join(root, "alias.md"));
+
+        assert.throws(() => lakeAt(root).read("alias.md"), /crosses a symlink/);
+    });
+
+    it("refuses a path that escapes the root", () => {
+        const { lake } = escapeFixture();
+
+        assert.throws(
+            () => lake.write("../outside.md", "x\n"),
+            /escapes the lake root/,
+        );
+    });
+
+    it("refuses an add whose target is a symlink", async () => {
+        const { lake, outside } = escapeFixture();
+        const tool = createDocsTool({ lakes: [lake] });
+
+        const result = await tool.execute(
+            {
+                add: {
+                    metadata: {
+                        Area: "aa",
+                        Keywords: ["alpha"],
+                        Summary: "S.",
+                    },
+                    body: "# T\n\n### Facts\n\n- x.\n",
+                    path: "linked.md",
+                },
+            } as never,
+            {} as never,
+        );
+
+        assert.equal(result.metadata?.written, false);
+        assert.match(String(result.content), /Rejected:.*crosses a symlink/);
+        assert.equal(
+            readFileSync(join(outside, "secret.md"), "utf8"),
+            "outside\n",
         );
     });
 });

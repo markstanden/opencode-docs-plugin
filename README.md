@@ -155,6 +155,10 @@ Lake entries:
 | `name`     | Lower-case dashes; defaults to the root folder name. `instructions` is reserved.                 |
 | `writable` | Defaults true for knowledge classes, fixed false for `wiki`.                                     |
 
+Lake paths never follow symlinks: a symlinked doc is skipped by search and
+`check`, refused by `read`, and refused by `add`. The configured `root` itself
+may be a symlink; the content beneath it must be real.
+
 `maxDocLines` (default 200, `0` disables) is a **soft** note on a long doc, not a
 refusal. `perLakeQuota` (default 3, `0` disables) is the per-source result
 reservation.

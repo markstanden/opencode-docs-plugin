@@ -9,6 +9,7 @@ import { spawnSync } from "node:child_process";
 import {
     type Dirent,
     existsSync,
+    lstatSync,
     mkdirSync,
     readFileSync,
     readdirSync,
@@ -119,7 +120,7 @@ export const DOCS_INPUT = Schema.Struct({
             }),
         }).annotate({
             description:
-                "The only mutating mode: writes a new knowledge doc, or wholesale-replaces the doc at `path`. Blank required metadata, path traversal, a non-.md target, and a same-area near-twin (when `path` is omitted) are all refused. Wiki lakes are read-only.",
+                "The only mutating mode: writes a new knowledge doc, or wholesale-replaces the doc at `path`. Blank required metadata, path traversal, a non-.md target, a symlinked target, and a same-area near-twin (when `path` is omitted) are all refused. Wiki lakes are read-only.",
         }),
     ),
     check: Schema.optional(
@@ -2105,6 +2106,66 @@ export interface Lake extends LakeSpec {
 }
 
 /**
+ * A lake path that would leave its root or pass through a symlink. The lake
+ * seams raise it so `add` can refuse the request rather than fail the call.
+ */
+class UnsafePathError extends Error {
+    constructor(path: string) {
+        super(`path '${path}' escapes the lake root or crosses a symlink.`);
+        this.name = "UnsafePathError";
+    }
+}
+
+/** Whether `path` is outside `root` or is the root itself. */
+function escapesRoot(root: string, path: string): boolean {
+    const rest = relative(root, path);
+    return (
+        rest === "" ||
+        rest === ".." ||
+        rest.startsWith(`..${sep}`) ||
+        isAbsolute(rest)
+    );
+}
+
+/**
+ * Resolve a root-relative path to an absolute target, refusing an escape and
+ * any symlink in the path. Missing trailing segments are allowed, so a write
+ * can create them beneath a real directory.
+ *
+ * ponytail: the check and the caller's file operation are separate syscalls,
+ * so a local process that can swap a component for a symlink in between still
+ * wins the race. The threat model is a symlink committed to the tree, not a
+ * live local attacker; closing the gap needs per-component `O_NOFOLLOW` opens.
+ * @param root The lake root.
+ * @param path The root-relative path.
+ * @returns The target, or null when the path escapes or crosses a symlink.
+ */
+function safeLakeTarget(root: string, path: string): string | null {
+    const target = join(root, path);
+    if (escapesRoot(root, target)) {
+        return null;
+    }
+    let current = root;
+    for (const segment of relative(root, target).split(sep)) {
+        current = join(current, segment);
+        try {
+            const stats = lstatSync(current);
+            if (
+                stats.isSymbolicLink() ||
+                (current !== target && !stats.isDirectory())
+            ) {
+                return null;
+            }
+        } catch (error) {
+            return (error as NodeJS.ErrnoException).code === "ENOENT"
+                ? target
+                : null;
+        }
+    }
+    return target;
+}
+
+/**
  * Attach the filesystem seams to a lake spec.
  * @param spec The configured lake.
  * @param options Runtime options.
@@ -2116,6 +2177,13 @@ export function createLake(
     spec: LakeSpec,
     options: { skip?: readonly string[] } = {},
 ): Lake {
+    const guarded = (path: string): string => {
+        const target = safeLakeTarget(spec.root, path);
+        if (target === null) {
+            throw new UnsafePathError(path);
+        }
+        return target;
+    };
     return {
         ...spec,
         notes: unversionedNote(spec.root),
@@ -2127,10 +2195,13 @@ export function createLake(
                 class: spec.class,
                 skip: options.skip ?? [],
             }),
-        read: (path) => readFileSync(join(spec.root, path), "utf8"),
-        exists: (path) => existsSync(join(spec.root, path)),
+        read: (path) => readFileSync(guarded(path), "utf8"),
+        exists: (path) => {
+            const target = safeLakeTarget(spec.root, path);
+            return target !== null && existsSync(target);
+        },
         write: (path, contents) => {
-            const target = join(spec.root, path);
+            const target = guarded(path);
             mkdirSync(dirname(target), { recursive: true });
             writeFileSync(target, contents);
         },
@@ -2742,8 +2813,19 @@ function addDoc(
     if (outcome.action === "refuse") {
         return { content: outcome.reason, written: false };
     }
-    const updated = target.exists(outcome.path);
-    target.write(outcome.path, outcome.contents);
+    let updated: boolean;
+    try {
+        updated = target.exists(outcome.path);
+        target.write(outcome.path, outcome.contents);
+    } catch (error) {
+        if (error instanceof UnsafePathError) {
+            return {
+                content: `${REFUSE} ${error.message}`,
+                written: false,
+            };
+        }
+        throw error;
+    }
     const head = `${address(target, outcome.path, runtime.lakes)} — ${
         updated ? "updated" : "created"
     }.`;
@@ -2934,7 +3016,7 @@ export function createDocsTool(
               MAX_RESULTS +
               " most recently changed docs (path — Area — date — Summary); a search ranks docs over title, path, keywords, body headings and code spans, area, summary and wiki prose, falling back to the closest matches. Every source reserves a few results; every call caps at " +
               MAX_RESULTS +
-              " and counts the rest. Search exactly `help` for the lakes and ranking. `read` returns a doc verbatim; pass a `lake` or a `lake:path`. `add` writes a new knowledge doc (or replaces the doc at `path`) from a typed DTO — metadata becomes front-matter, the body must start with an H1; blank fields, path traversal, non-.md targets, read-only lakes and same-area near-twins are refused. `check` validates the knowledge lakes (front-matter, H1, claim sections, no hand-maintained Date, distinctive identity, near-twins, broken links, soft length note); wiki lakes are read-only and not validated. READMEs are search-only and render as `instructions:path`; read them with the built-in read tool.",
+              " and counts the rest. Search exactly `help` for the lakes and ranking. `read` returns a doc verbatim; pass a `lake` or a `lake:path`. `add` writes a new knowledge doc (or replaces the doc at `path`) from a typed DTO — metadata becomes front-matter, the body must start with an H1; blank fields, path traversal, non-.md targets, symlinked targets, read-only lakes and same-area near-twins are refused. `check` validates the knowledge lakes (front-matter, H1, claim sections, no hand-maintained Date, distinctive identity, near-twins, broken links, soft length note); wiki lakes are read-only and not validated. READMEs are search-only and render as `instructions:path`; read them with the built-in read tool.",
         input: DOCS_INPUT,
         options: codemode
             ? { namespace: "docs", codemode: true }
