@@ -29,8 +29,9 @@ version.
   `lake` or `lake:path`; `add` writes knowledge through a typed DTO; `check`
   validates the knowledge lakes. Nested project `README.md` files are indexed
   too — `.gitignore` rules decide what is skipped — but only for search: `add`
-  and `check` never touch them. A Code Mode twin, `docs_search`, registers
-  alongside it, so `execute` reaches the same lakes as
+  and `check` never touch them, and their results are prefixed `instructions:`
+  and read with the built-in `read` tool. A Code Mode twin, `docs_search`,
+  registers alongside it, so `execute` reaches the same lakes as
   `tools.docs.docs_search(…)`.
 - `/docs` (command) — the same core, driven from the prompt:
   `search <text>` (bare text searches too), `add <text>`, `check`, `help`.

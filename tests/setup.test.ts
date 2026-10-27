@@ -247,7 +247,10 @@ describe("setup", () => {
         const result = await tool.execute({ search: "widget" }, {} as never);
 
         // Assert
-        assert.match(String(result.content), /\bpackages\/api\/README\.md/);
+        assert.match(
+            String(result.content),
+            /\binstructions:packages\/api\/README\.md/,
+        );
     });
 
     it("keeps local READMEs out of the convention check", async () => {

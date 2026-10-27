@@ -42,14 +42,17 @@ Call the `docs` tool:
   then the ranking rules.
 
 Then open the match with the tool's `read` verb — pass the root-relative path,
-or `lake:path` when several lakes are configured. `/docs [search]` runs the same
-search into the session (`/docs search <text>` is the explicit form).
+or `lake:path` when several lakes are configured. A project README result is
+prefixed `instructions:`; read it with the built-in `read` tool instead.
+`/docs [search]` runs the same search into the session (`/docs search <text>` is
+the explicit form).
 
 Every `*.md` under a knowledge lake is covered except the excluded areas —
 scratch (`plans/`) and vendored mirrors (`requirements/`, `wiki/`). `Area` comes
 from the path, `date` from git. Wiki lakes are read-only; their pages are
 indexed as prose and tables, and their summaries are derived from the first
-paragraph. A README is search-only and is never validated.
+paragraph. A README is search-only, rendered as `instructions:path`, and is
+never validated.
 
 ## Read it
 

@@ -221,6 +221,56 @@ describe("resolveLakes", () => {
         );
     });
 
+    it("throws when two lakes resolve to the same root", () => {
+        const location = tempDir();
+        const root = tempDir();
+        const alias = join(tempDir(), "alias");
+        symlinkSync(root, alias, "dir");
+
+        assert.throws(
+            () =>
+                resolveLakes(
+                    {
+                        lakes: [
+                            { root, name: "one" },
+                            { root: alias, name: "two" },
+                        ],
+                    },
+                    location,
+                ),
+            /share the root/,
+        );
+    });
+
+    it("rejects a repo-local lake root that is a symlink outside the location", () => {
+        const location = tempDir();
+        const outside = tempDir();
+        mkdirSync(join(location, ".opencode"), { recursive: true });
+        symlinkSync(outside, join(location, "documentation"), "dir");
+        writeFileSync(
+            join(location, ".opencode/docs-lakes.json"),
+            JSON.stringify({ lakes: [{ root: "documentation" }] }),
+        );
+
+        assert.throws(
+            () => resolveLakes({}, location),
+            /must stay inside the location/,
+        );
+    });
+
+    it("allows a repo-local lake root that does not exist yet", () => {
+        const location = tempDir();
+        mkdirSync(join(location, ".opencode"), { recursive: true });
+        writeFileSync(
+            join(location, ".opencode/docs-lakes.json"),
+            JSON.stringify({ lakes: [{ root: "documentation" }] }),
+        );
+
+        const lakes = resolveLakes({}, location);
+
+        assert.equal(lakes[0]?.root, join(location, "documentation"));
+    });
+
     it("throws when root and lakes are both given", () => {
         assert.throws(
             () =>
@@ -412,6 +462,23 @@ describe("per-lake reservation", () => {
 
         assert.match(text, /^a\.md/m);
         assert.match(text, /^wiki:b\.md/m);
+    });
+
+    it("prefixes a project README even when a lake has the same path", () => {
+        const text = render(
+            [
+                entry({ path: "README.md", lake: "repo", class: "repo" }),
+                entry({
+                    path: "README.md",
+                    lake: "",
+                    class: "instructions",
+                }),
+            ],
+            { primaryLake: "repo" },
+        );
+
+        assert.match(text, /^README\.md/m);
+        assert.match(text, /^instructions:README\.md/m);
     });
 });
 
@@ -730,7 +797,10 @@ describe("tool lake filters", () => {
         );
 
         assert.match(String(wiki.content), /^wiki:page\.md/m);
-        assert.match(String(readme.content), /packages\/api\/README\.md/);
+        assert.match(
+            String(readme.content),
+            /instructions:packages\/api\/README\.md/,
+        );
         assert.match(String(missing.content), /No lake named 'nope'/);
     });
 
@@ -758,6 +828,12 @@ describe("tool lake filters", () => {
         assert.match(String(wikiCheck.content), /read-only reference/);
         assert.match(String(repoCheck.content), /All 1 docs comply/);
         assert.match(String(missingRead.content), /lake named 'nope'/i);
+
+        const readmeRead = await tool.execute(
+            { read: "instructions:packages/api/README.md" },
+            {} as never,
+        );
+        assert.match(String(readmeRead.content), /built-in read tool/);
     });
 
     it("reports a missing doc in an explicitly selected lake", async () => {

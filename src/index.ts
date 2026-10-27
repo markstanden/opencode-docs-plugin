@@ -12,11 +12,20 @@ import {
     mkdirSync,
     readFileSync,
     readdirSync,
+    realpathSync,
     statSync,
     writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
+import {
+    basename,
+    dirname,
+    isAbsolute,
+    join,
+    normalize,
+    relative,
+    sep,
+} from "node:path";
 import { fileURLToPath } from "node:url";
 import { Schema } from "effect";
 
@@ -773,9 +782,11 @@ export function render(
             const meta = parts.join(" — ");
             const head = meta === "" ? entry.path : `${entry.path} — ${meta}`;
             const labelled =
-                entry.lake !== "" && entry.lake !== options.primaryLake
-                    ? `${entry.lake}:${head}`
-                    : head;
+                entry.class === "instructions"
+                    ? `instructions:${head}`
+                    : entry.lake !== "" && entry.lake !== options.primaryLake
+                      ? `${entry.lake}:${head}`
+                      : head;
             return entry.summary === ""
                 ? labelled
                 : `${labelled}\n  ${entry.summary}`;
@@ -813,7 +824,7 @@ export function explainRanking(): string {
         `- Fields weighted: title ${FIELD_WEIGHTS.title} > path ${FIELD_WEIGHTS.path} > keywords ${FIELD_WEIGHTS.keywords} > identifiers ${FIELD_WEIGHTS.identifiers} > area ${FIELD_WEIGHTS.area} > summary ${FIELD_WEIGHTS.summary} > wiki prose ${FIELD_WEIGHTS.text}.`,
         `- Each term scores its best field as weight × quality; quality is exact > prefix > substring.`,
         `- Terms shorter than MIN_TERM_LENGTH (${MIN_TERM_LENGTH}) are ignored unless they are the whole query.`,
-        "- Search covers every configured lake and nested project `README.md` files, honouring `.gitignore` (dependency and build directories are skipped when the project is not in git). READMEs are searchable only: `add` and `check` ignore them.",
+        "- Search covers every configured lake and nested project `README.md` files, honouring `.gitignore` (dependency and build directories are skipped when the project is not in git). READMEs are searchable only: `add` and `check` ignore them, and their results are prefixed `instructions:` so they read with the built-in `read` tool.",
         `- Each source reserves up to ${DEFAULT_PER_LAKE_QUOTA} results (configurable), then leftover slots fill by score. Every call returns at most MAX_RESULTS (${MAX_RESULTS}), best matches first, then the most recently edited; anything cut is counted as "… and N more not shown."`,
         "- Class precedence on a tie: repo > instructions > global > machine > wiki.",
         '- Outcomes: a blank query lists the most recently changed docs; a doc carrying every term ranks the full matches; otherwise the docs matching any term as a substring are listed under "Closest matches"; nothing hits is "No knowledge docs matched."',
@@ -850,7 +861,9 @@ export function helpText(lakes: readonly LakeInfo[]): string {
         );
     }
     lines.push(
-        "- instructions (read-only, not checked): nested project README.md files",
+        "- instructions (read-only, not checked): nested project README.md " +
+            "files; results are prefixed `instructions:` and read with the " +
+            "built-in read tool",
     );
     return `${lines.join("\n")}\n\n${explainRanking()}`;
 }
@@ -1152,6 +1165,30 @@ function isUnder(path: string, root: string): boolean {
         rest === "" ||
         (rest !== ".." && !rest.startsWith(`..${sep}`) && !isAbsolute(rest))
     );
+}
+
+/**
+ * Resolve symlinks in the existing prefix of a path, appending any missing
+ * suffix. Used to compare lake roots by their real filesystem location.
+ * @param path The path to resolve.
+ * @returns The real path, or a normalised path when it cannot be resolved.
+ */
+function realPathOf(path: string): string {
+    let current = path;
+    const missing: string[] = [];
+    while (!existsSync(current)) {
+        const parent = dirname(current);
+        if (parent === current) {
+            return normalize(path);
+        }
+        missing.unshift(basename(current));
+        current = parent;
+    }
+    try {
+        return join(realpathSync(current), ...missing);
+    } catch {
+        return normalize(path);
+    }
 }
 
 /** Whether a file name is a README in any case (`README.md`, `readme.md`). */
@@ -2288,7 +2325,7 @@ function lakeRootOf(
         );
     }
     const root = resolveRoot(entry.root, location);
-    if (fromRepoFile && !isUnder(root, location)) {
+    if (fromRepoFile && !isUnder(realPathOf(root), realPathOf(location))) {
         throw new Error(
             `docs plugin repo lake root must stay inside the location: ${root}.`,
         );
@@ -2429,6 +2466,22 @@ function assertUniqueLakeNames(specs: readonly LakeSpec[]): void {
     }
 }
 
+/** Throw when two differently named lakes resolve to the same root. */
+function assertUniqueLakeRoots(specs: readonly LakeSpec[]): void {
+    const roots = new Map<string, string>();
+    for (const spec of specs) {
+        const key = realPathOf(spec.root);
+        const existing = roots.get(key);
+        if (existing !== undefined) {
+            throw new Error(
+                `docs plugin lakes '${existing}' and '${spec.name}' share ` +
+                    `the root ${spec.root}; give each lake its own root.`,
+            );
+        }
+        roots.set(key, spec.name);
+    }
+}
+
 /**
  * Resolve the plugin's lakes: the base `lakesFile`, the repo-local additions,
  * inline `lakes`, then `root` sugar. One implicit repo lake at
@@ -2470,6 +2523,7 @@ export function resolveLakes(
         );
     }
     assertUniqueLakeNames(specs);
+    assertUniqueLakeRoots(specs);
     return specs;
 }
 
@@ -2733,6 +2787,14 @@ function readTargetOf(
     if (colon <= 0) {
         return { path };
     }
+    if (path.startsWith("instructions:")) {
+        return {
+            path,
+            reason:
+                `${REFUSE} instructions: paths are project READMEs; ` +
+                "use the built-in read tool.",
+        };
+    }
     const lake = findLake(runtime.lakes, path.slice(0, colon));
     return lake === undefined
         ? { path }
@@ -2872,7 +2934,7 @@ export function createDocsTool(
               MAX_RESULTS +
               " most recently changed docs (path — Area — date — Summary); a search ranks docs over title, path, keywords, body headings and code spans, area, summary and wiki prose, falling back to the closest matches. Every source reserves a few results; every call caps at " +
               MAX_RESULTS +
-              " and counts the rest. Search exactly `help` for the lakes and ranking. `read` returns a doc verbatim; pass a `lake` or a `lake:path`. `add` writes a new knowledge doc (or replaces the doc at `path`) from a typed DTO — metadata becomes front-matter, the body must start with an H1; blank fields, path traversal, non-.md targets, read-only lakes and same-area near-twins are refused. `check` validates the knowledge lakes (front-matter, H1, claim sections, no hand-maintained Date, distinctive identity, near-twins, broken links, soft length note); wiki lakes are read-only and not validated. READMEs are search-only. Read a matched project file with the built-in read tool.",
+              " and counts the rest. Search exactly `help` for the lakes and ranking. `read` returns a doc verbatim; pass a `lake` or a `lake:path`. `add` writes a new knowledge doc (or replaces the doc at `path`) from a typed DTO — metadata becomes front-matter, the body must start with an H1; blank fields, path traversal, non-.md targets, read-only lakes and same-area near-twins are refused. `check` validates the knowledge lakes (front-matter, H1, claim sections, no hand-maintained Date, distinctive identity, near-twins, broken links, soft length note); wiki lakes are read-only and not validated. READMEs are search-only and render as `instructions:path`; read them with the built-in read tool.",
         input: DOCS_INPUT,
         options: codemode
             ? { namespace: "docs", codemode: true }

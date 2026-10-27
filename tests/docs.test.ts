@@ -1338,6 +1338,8 @@ describe("createDocsTool", () => {
         });
         const local = entry({
             path: "packages/api/README.md",
+            lake: "",
+            class: "instructions",
             area: "packages",
             title: "Widget",
             keywords: ["widget"],
@@ -1355,7 +1357,10 @@ describe("createDocsTool", () => {
         const found = await tool.execute({ search: "widget" }, {} as never);
 
         // Assert
-        assert.match(String(found.content), /packages\/api\/README\.md/);
+        assert.match(
+            String(found.content),
+            /instructions:packages\/api\/README\.md/,
+        );
 
         // Act – check sees the lake only.
         const checked = await tool.execute({ check: true }, {} as never);
@@ -1485,7 +1490,12 @@ describe("createDocsCommand", () => {
             collect: () => [entry({ path: "aa/lake.md" })],
             search: () => [
                 entry({ path: "aa/lake.md" }),
-                entry({ path: "packages/api/README.md", keywords: ["widget"] }),
+                entry({
+                    path: "packages/api/README.md",
+                    lake: "",
+                    class: "instructions",
+                    keywords: ["widget"],
+                }),
             ],
             read: () => "",
             prompt: async (_sessionID, text) => {
@@ -1500,7 +1510,7 @@ describe("createDocsCommand", () => {
         } as never);
 
         // Assert
-        assert.match(sent[0] ?? "", /packages\/api\/README\.md/);
+        assert.match(sent[0] ?? "", /instructions:packages\/api\/README\.md/);
     });
 });
 
