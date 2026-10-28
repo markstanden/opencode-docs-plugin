@@ -53,11 +53,11 @@ are skipped by name.
 Every knowledge doc opens with a `---` front-matter block. The fields, in
 canonical order:
 
-| Field      | Required | Meaning                                                                 |
-| ---------- | -------- | ----------------------------------------------------------------------- |
-| `Area`     | yes      | One top-level path segment; the doc's group.                            |
-| `Keywords` | yes      | Comma-separated search terms; the second half of the doc's identity.    |
-| `Summary`  | yes      | One self-contained sentence: enough to decide whether to open the file. |
+| Field      | Required | Meaning                                                                                                     |
+| ---------- | -------- | ----------------------------------------------------------------------------------------------------------- |
+| `Area`     | yes      | One top-level path segment; the doc's group.                                                                |
+| `Keywords` | yes      | Comma-separated search terms; the second half of the doc's identity.                                        |
+| `Summary`  | yes      | One self-contained sentence that lets a reader decide whether to open the file — not a second introduction. |
 
 `Date` is **derived, never written**: the file's last git commit date, falling
 back to mtime. A hand-maintained `Date` is a finding, not a field.
@@ -79,6 +79,12 @@ git. Optional invisible metadata may be added later; it is not required.
 - At least one claim section as an `H2`/`H3` heading — `Facts`, `Inferred`,
   `Tested`, `Failed approaches`, `Open questions` — so a reader knows how much
   to rely on each claim. Group claims by section rather than mixing them.
+- Include only the sections the doc actually needs. An empty heading is noise;
+  leave it out.
+- Write so the next reader decides fast: lead with the actionable fact, include
+  its reason, limits and evidence where they affect its use, and omit discovery
+  chronology, repeated conclusions and empty sections. Under `Tested`, record
+  the check, its result and the conditions that mattered.
 - A failed attempt is a valid current doc or section: state what was tried, why
   it failed, what is true now, and what not to retry. Do not keep a doc whose
   claims are no longer true.
@@ -92,6 +98,11 @@ git. Optional invisible metadata may be added later; it is not required.
   `add` refuses a near-twin write and returns the candidates to reconcile
   against — edit before add, merge near-twins, split a bloated doc into
   per-topic files.
+- The reconcile applies to a **create**: with `path` omitted, the target is
+  derived and the near-twin guard runs. An explicit `path` is the update
+  contract and skips it, which is how you replace a doc in place. Passing an
+  explicit _new_ path is therefore a deliberate override, not a protected
+  write.
 - Near-twins are per lake. The same topic at repo and global scope is
   legitimate; the narrower doc states its delta and links up.
 
@@ -129,9 +140,12 @@ knowledge when it records the outcome and the current truth.
 
 ## Adopting it
 
-Run `check` to audit an existing tree, and the gate's `defined comply` before
-proposing a commit. A missing lake root is a note, not an error: the plugin
-scans what is there, search and help flag the absent path, and `add` refuses
-rather than creating a tree at a mistyped root. Create the directory
-deliberately. Wiki lakes are read-only and are reported as not validated, never
-silently skipped.
+Run `check` to audit an existing tree, and the project's own tests before
+proposing a commit. `add` enforces the per-doc structural rules at the write
+boundary — front-matter, `H1`, claim section, identity term floor, and the
+near-twin guard on a create — while the cross-document audits (near-twin pairs
+and relative links) stay with `check`. A missing lake root is a note, not an
+error: the plugin scans what is there, search and help flag the absent path, and
+`add` refuses rather than creating a tree at a mistyped root. Create the
+directory deliberately. Wiki lakes are read-only and are reported as not
+validated, never silently skipped.

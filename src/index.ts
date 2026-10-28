@@ -89,13 +89,13 @@ export const DOCS_INPUT = Schema.Struct({
     search: Schema.optional(
         Schema.String.annotate({
             description:
-                "Case-insensitive search over title, path, keywords, body headings and code spans, area, summary and wiki prose. Omit or leave blank to list the most recently changed docs; a partial match returns the closest docs.",
+                "Case-insensitive search over title, path, keywords, headings, code spans, area, summary and wiki prose. Blank lists the most recently changed docs; a partial match returns the closest.",
         }),
     ),
     lake: Schema.optional(
         Schema.String.annotate({
             description:
-                "Optional lake name. Search and check are limited to it; read and add target it. Omit to search every lake, read the unique match, or add to the first writable repo lake.",
+                "Optional lake name: search and check are limited to it, read and add target it. Omit to search every lake, read the unique match, or add to the first writable repo lake.",
         }),
     ),
     add: Schema.optional(
@@ -103,7 +103,7 @@ export const DOCS_INPUT = Schema.Struct({
             path: Schema.optional(
                 Schema.String.annotate({
                     description:
-                        "Update target, e.g. `guides/getting-started.md` (relative to the lake root). Omit to create `<Area>/<slug>.md` from the H1.",
+                        "Update target, e.g. `guides/getting-started.md`, relative to the lake root: replaces that doc wholesale, so omitted body content is lost, and skips the near-twin reconcile. Omit to create `<Area>/<slug>.md` from the H1.",
                 }),
             ),
             metadata: Schema.Struct({
@@ -112,27 +112,27 @@ export const DOCS_INPUT = Schema.Struct({
                 Summary: Schema.String,
             }).annotate({
                 description:
-                    "Front-matter metadata; serialised, never copied. All three fields are required and must not be blank.",
+                    "Front-matter metadata; serialised, never copied. All three are required and must not be blank.",
             }),
             body: Schema.String.annotate({
                 description:
-                    "Markdown body: an H1, then the claim sections (Facts / Inferred / Tested / Failed approaches / Open questions).",
+                    "Markdown body: an H1 title, plus at least one claim section as an H2/H3 — Facts, Inferred, Tested, Failed approaches, Open questions.",
             }),
         }).annotate({
             description:
-                "The only mutating mode: writes a new knowledge doc, or wholesale-replaces the doc at `path`. Blank required metadata, path traversal, a non-.md target, a symlinked target, and a same-area near-twin (when `path` is omitted) are all refused. Wiki lakes are read-only.",
+                "The only mutating mode: writes a new knowledge doc, or wholesale-replaces the doc at `path`. Refused: blank metadata, path traversal, a non-.md or symlinked target, no claim section, and a same-area near-twin when `path` is omitted. Wiki lakes are read-only.",
         }),
     ),
     check: Schema.optional(
         Schema.Boolean.annotate({
             description:
-                "Validate every knowledge doc against the convention: required front-matter, an H1, claim sections, no hand-maintained Date, a distinctive H1+Keywords identity, same-area near-twins, broken relative links, and a soft length note. Wiki lakes and READMEs are not validated.",
+                "Validate every knowledge doc: front-matter, an H1, a claim section, no hand-maintained Date, a distinctive H1+Keywords identity, near-twins, broken relative links, a soft length note. Wiki lakes and READMEs are not validated.",
         }),
     ),
     read: Schema.optional(
         Schema.String.annotate({
             description:
-                "A root-relative doc path, or `lake:path`, to return verbatim — front-matter and body — so find-then-read is one call. Lake docs and wiki pages only: project READMEs stay with the built-in `read` tool.",
+                "A root-relative doc path, or `lake:path`: returns the doc verbatim, front-matter and body, so find-then-read is one call. Lake docs and wiki pages only; project READMEs use the built-in `read` tool.",
         }),
     ),
 });
@@ -1322,7 +1322,11 @@ export type AddOutcome =
           path: string;
           /** The serialised file contents. */
           contents: string;
-          /** Same-area docs already on disk, shown alongside the write. */
+          /**
+           * Same-area docs already on disk. Not rendered in the tool result —
+           * the success path names the path and outcome only — but retained for
+           * programmatic callers that want the surrounding context.
+           */
           neighbours: readonly DocEntry[];
           /** Soft advisory lines (e.g. a long doc worth splitting). */
           notes: readonly string[];
@@ -1529,6 +1533,14 @@ export function prepareAdd(
     if (h1Of(add.body) === undefined) {
         return refuse("The body must carry an H1 (`# Title`).");
     }
+    // The same rule `check` applies, enforced before anything touches disk: a
+    // doc that `check` would flag on the next run should never be written.
+    if (!hasClaimSection(add.body)) {
+        return refuse(
+            "the body carries no claim section; add an H2/H3 headed Facts, " +
+                "Inferred, Tested, Failed approaches or Open questions.",
+        );
+    }
     if (!hasDistinctiveIdentity(reconcileQuery(add))) {
         return refuse(
             `the H1 and Keywords together carry no term of MIN_TERM_LENGTH ` +
@@ -1593,6 +1605,24 @@ export const CLAIM_SECTIONS = [
 ] as const;
 
 /**
+ * Whether a body carries at least one recognisable claim section as an H2/H3
+ * heading. This is the one rule {@link prepareAdd} and {@link validateDoc}
+ * share, so `add` cannot accept a doc that `check` would immediately flag.
+ *
+ * It reads through {@link scanBody}, so a fenced code block or an inline code
+ * span cannot masquerade as a section, and a `# H1` or `#### H4` does not
+ * satisfy it.
+ * @param body Markdown body, front-matter already stripped.
+ * @returns True when a claim-section heading is present.
+ */
+export function hasClaimSection(body: string): boolean {
+    const claims = CLAIM_SECTIONS.map((section) => section.toLowerCase());
+    return scanBody(body).headings.some((heading) =>
+        claims.includes(heading.toLowerCase()),
+    );
+}
+
+/**
  * The required front-matter fields that are blank in a raw doc: `Keywords` is
  * blank when it yields no terms (matching `add`'s typed rule in
  * {@link blankRequiredField} — `Keywords: , ,` is blank), the others when
@@ -1636,10 +1666,7 @@ export function validateDoc(path: string, raw: string): string[] {
             "hand-maintained `Date` — the date is derived by git, never written.",
         );
     }
-    const claims = CLAIM_SECTIONS.map((section) => section.toLowerCase());
-    if (
-        !scanBody(body).headings.some((h) => claims.includes(h.toLowerCase()))
-    ) {
+    if (!hasClaimSection(body)) {
         findings.push(
             "no claim section (Facts / Inferred / Tested / Failed approaches / Open questions).",
         );
@@ -2051,13 +2078,17 @@ export function missNudgeFor(
  * never a session dump (the near-twin guard catches duplicates, not dumps).
  */
 export const RECORD_NUDGE =
-    "Before summarising: if this session established durable knowledge " +
-    "(decisions, traps, runbooks, verified behaviour), open the " +
-    "continuation with one `Record with docs add:` block per finding — " +
+    "Before summarising, the active task comes first. If the session " +
+    "established durable knowledge (decisions, traps, runbooks, verified " +
+    "behaviour), add one `Record with docs add:` block per durable topic and " +
+    "scope — coalesce related findings rather than one block per observation, " +
     "never one session dump, and never one mixed-scope doc. Each block names " +
-    "its own artifact's class (repo, machine, or global), `Area`, `H1` title " +
-    "and `Keywords`, plus a one-line what-and-why, so the next agent can " +
-    "persist each as a separate focused doc at the narrowest true scope.";
+    "its class (repo, machine or global), `Area`, `H1` title and `Keywords`, and " +
+    "keeps what was learned, why it matters, the evidence or status, any " +
+    "unresolved uncertainty and the intended scope, so the next agent can " +
+    "reconcile before writing. Reference a finding already recorded by path " +
+    "rather than restating it, and assume persistence only where the session " +
+    "confirms it.";
 
 /**
  * Resolve the plugin's `nudge` option: unset means on; a boolean passes
@@ -2867,16 +2898,12 @@ function addDoc(
     const head = `${address(target, outcome.path, runtime.lakes)} — ${
         updated ? "updated" : "created"
     }.`;
-    const neighbours =
-        outcome.neighbours.length > 0
-            ? `\n\nNearby docs in the same area:\n\n${render(
-                  outcome.neighbours,
-                  { primaryLake: target.name },
-              )}`
-            : "";
+    // The path and outcome are the answer; a list of same-area neighbours was
+    // unsolicited context that grew with the area and was picked by collection
+    // order, not relevance. Refusals still carry their candidates.
     const notes =
         outcome.notes.length > 0 ? `\n\n${outcome.notes.join("\n")}` : "";
-    return { content: `${head}${neighbours}${notes}`, written: true };
+    return { content: `${head}${notes}`, written: true };
 }
 
 /** A parsed read request: the lake (when known) and the path. */
@@ -3013,11 +3040,11 @@ export interface DocsCommandDeps extends RuntimeInput {
  * the full doctrine the native `docs` description carries.
  */
 const TWIN_DESCRIPTION =
-    "Search, read, add and check the configured knowledge lakes (plus nested " +
-    "project `README.md` files, search-only) from inside `execute` — the " +
-    "`docs` tool's Code Mode twin. A blank search lists the most recently " +
-    "changed docs; `read` returns a matched doc verbatim; `add` writes through " +
-    "a typed DTO; `check` validates the knowledge lakes.";
+    "Search, read, add and check the configured knowledge lakes and nested " +
+    "project `README.md` files (search-only) from inside `execute` — the `docs` " +
+    "tool's Code Mode twin, same verbs and lakes. A blank search lists recent " +
+    "docs; `read` returns a matched doc verbatim; `add` writes through a typed " +
+    "DTO; `check` validates the lakes.";
 
 /**
  * Build the `docs` tool from its dependencies.
@@ -3049,13 +3076,13 @@ export function createDocsTool(
         name,
         description: codemode
             ? TWIN_DESCRIPTION
-            : "Discover the configured knowledge lakes plus nested `README.md` " +
-              "files in the project tree. Prefer it over a broad grep when the " +
-              "question is how-to knowledge rather than where code lives. A blank search lists the " +
-              MAX_RESULTS +
-              " most recently changed docs (path — Area — date — Summary); a search ranks docs over title, path, keywords, body headings and code spans, area, summary and wiki prose, falling back to the closest matches. Every source reserves a few results; every call caps at " +
-              MAX_RESULTS +
-              " and counts the rest. Search exactly `help` for the lakes and ranking. `read` returns a doc verbatim; pass a `lake` or a `lake:path`. `add` writes a new knowledge doc (or replaces the doc at `path`) from a typed DTO — metadata becomes front-matter, the body must start with an H1; blank fields, path traversal, non-.md targets, symlinked targets, read-only lakes and same-area near-twins are refused. `check` validates the knowledge lakes (front-matter, H1, claim sections, no hand-maintained Date, distinctive identity, near-twins, broken links, soft length note); wiki lakes are read-only and not validated. READMEs are search-only and render as `instructions:path`; read them with the built-in read tool.",
+            : "Search the configured knowledge lakes and nested project " +
+              "`README.md` files before a broad grep for how-to knowledge, " +
+              "decisions or known problems. A blank search lists recent docs; " +
+              "`help` shows the lakes and ranking. `read` returns a lake doc " +
+              "verbatim; project `instructions:` results open with the built-in " +
+              "read tool. `add` writes or replaces a knowledge doc; `check` " +
+              "audits convention compliance.",
         input: DOCS_INPUT,
         options: codemode
             ? { namespace: "docs", codemode: true }
@@ -3138,9 +3165,7 @@ export function createDocsCommand(deps: DocsCommandDeps): CommandDefinition {
     return {
         name: "docs",
         description:
-            "Search the configured knowledge lakes, ranked, plus nested project `README.md` files (search only); `add <text>` records new knowledge through the tool's typed `add`; `check` validates the knowledge lakes; a blank search lists the " +
-            MAX_RESULTS +
-            " most recently changed.",
+            "Search the configured knowledge lakes, ranked, plus nested project `README.md` files (search only); `add <text>` records new knowledge through the tool's typed `add`; `check` validates the lakes; a blank search lists recent docs.",
         async execute({ sessionID, prompt }) {
             const text = prompt.text.trim();
             if (isHelp(text)) {
@@ -3383,17 +3408,12 @@ export default Plugin.define({
                 id: Skill.ID.make("docs"),
                 name: Skill.Name.make("Docs"),
                 description:
-                    "The entry point to the configured knowledge lakes " +
-                    "(repo, machine, global and read-only wiki), plus the " +
-                    "project's nested README.md files (search only): find the " +
-                    "right doc with the docs tool, read it, and record focused " +
-                    "task knowledge for the next human or agent at the " +
-                    "narrowest true scope. Use before searching the codebase " +
-                    "for how-to knowledge, when a task names a service, flag " +
-                    "or error string the lake may already explain, at the " +
-                    "start of unfamiliar work, when hunting for prior " +
-                    "decisions or traps, when a session learns something the " +
-                    "next one will need, and when closing out a session.",
+                    "Entry point to the configured knowledge lakes " +
+                    "(repo, machine, global, read-only wiki) and nested project " +
+                    "README.md files: find and read the right doc, then record " +
+                    "focused knowledge at the narrowest true scope. Use before " +
+                    "searching the codebase for how-to knowledge, or when a " +
+                    "session learns something durable.",
                 path: AbsolutePath.make(fileURLToPath(skillURL)),
                 content: skill,
             });
