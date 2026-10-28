@@ -18,6 +18,7 @@ import * as docs from "../src/index.ts";
  */
 const {
     checkDocs,
+    CLAIM_SECTIONS,
     collectDocs,
     collectReadmes,
     createDocsCommand,
@@ -28,6 +29,7 @@ const {
     FIELD_WEIGHTS,
     FRONT_MATTER_FIELDS,
     gitDates,
+    hasClaimSection,
     isSearchMiss,
     matches,
     MAX_RESULTS,
@@ -1597,7 +1599,7 @@ function addRequest(overrides: Record<string, unknown> = {}): {
 } {
     return {
         metadata: { Area: "aa", Keywords: ["alpha"], Summary: "A fresh doc." },
-        body: "# Fresh\n\nFacts.\n",
+        body: "# Fresh\n\n### Facts\n\n- Something verified.\n",
         ...overrides,
     };
 }
@@ -1765,7 +1767,12 @@ describe("prepareAdd guardrails", () => {
     });
 
     it("refuses a title that yields no usable file name", async () => {
-        const outcome = prepareAdd(addRequest({ body: "# -- ##\n" }), []);
+        const outcome = prepareAdd(
+            addRequest({
+                body: "# -- ##\n\n### Facts\n\n- Something verified.\n",
+            }),
+            [],
+        );
 
         assert.equal(outcome.action, "refuse");
         assert.match(String(outcome.reason), /file name/i);
@@ -1949,7 +1956,7 @@ describe("tool add", () => {
         assert.match(String(result.content), /\baa\/fresh\.md/);
     });
 
-    it("lists same-area neighbours with a successful write", async () => {
+    it("does not list unrelated same-area neighbours with a successful write", async () => {
         const { seam } = memoryFs();
         const entries = [
             entry({
@@ -1966,7 +1973,121 @@ describe("tool add", () => {
             {} as never,
         );
 
-        assert.match(String(result.content), /\baa\/old\.md/);
+        // The write names its own path and outcome; unsolicited context is gone.
+        assert.match(String(result.content), /\baa\/fresh\.md\b/);
+        assert.match(String(result.content), /created/);
+        assert.doesNotMatch(String(result.content), /\baa\/old\.md\b/);
+        assert.doesNotMatch(String(result.content), /Nearby docs/);
+    });
+
+    it("refuses a body with no claim section without writing", async () => {
+        const { seam, written } = memoryFs();
+        const tool = createDocsTool({ collect: () => [], ...seam });
+
+        const result = await tool.execute(
+            {
+                add: addRequest({ body: "# Fresh\n\nJust prose.\n" }),
+            } as never,
+            {} as never,
+        );
+
+        assert.equal(result.metadata?.written, false);
+        assert.match(String(result.content), /no claim section/);
+        assert.equal(written.length, 0);
+    });
+
+    it("leaves an existing doc byte-identical when a replacement is refused", async () => {
+        const original = "---\nArea: aa\n---\n# Old\n\n### Facts\n\n- Kept.\n";
+        const { seam, written } = memoryFs(["aa/fresh.md"]);
+        const tool = createDocsTool({
+            collect: () => [],
+            ...seam,
+            read: () => original,
+        });
+
+        const result = await tool.execute(
+            {
+                add: addRequest({
+                    path: "aa/fresh.md",
+                    body: "# Fresh\n\nNo section here.\n",
+                }),
+            } as never,
+            {} as never,
+        );
+
+        assert.equal(result.metadata?.written, false);
+        assert.equal(
+            written.length,
+            0,
+            "the refusal must not reach the writer",
+        );
+    });
+});
+
+describe("claim sections", () => {
+    /** A body carrying `section` at the given heading depth. */
+    function withSection(section: string, depth = 2): string {
+        return `# Title\n\n${"#".repeat(depth)} ${section}\n\n- A claim.\n`;
+    }
+
+    it("accepts every claim section at H2 and H3", () => {
+        for (const section of CLAIM_SECTIONS) {
+            for (const depth of [2, 3]) {
+                assert.equal(
+                    hasClaimSection(withSection(section, depth)),
+                    true,
+                    `${section} at H${depth} should be accepted`,
+                );
+            }
+        }
+    });
+
+    it("keeps case-insensitivity", () => {
+        assert.equal(hasClaimSection(withSection("TESTED")), true);
+        assert.equal(hasClaimSection(withSection("failed approaches")), true);
+    });
+
+    it("rejects a body with no claim section", () => {
+        assert.equal(hasClaimSection("# Title\n\nJust prose.\n"), false);
+    });
+
+    it("is not satisfied by a heading inside a fenced code block", () => {
+        const body = "# Title\n\n```md\n## Facts\n```\n";
+
+        assert.equal(hasClaimSection(body), false);
+    });
+
+    it("is not satisfied by inline code or an H1/H4", () => {
+        assert.equal(hasClaimSection("# Title\n\n`## Facts`\n"), false);
+        assert.equal(hasClaimSection(withSection("Facts", 1)), false);
+        assert.equal(hasClaimSection(withSection("Facts", 4)), false);
+    });
+
+    it("agrees with the validator on the same bodies", () => {
+        // One shared table, so the write boundary and the audit cannot drift
+        // on the rule they both own.
+        const bodies = [
+            withSection("Facts"),
+            withSection("Open questions", 3),
+            withSection("facts"),
+            "# Title\n\nJust prose.\n",
+            "# Title\n\n```\n## Facts\n```\n",
+            withSection("Facts", 4),
+        ];
+
+        for (const body of bodies) {
+            const accepted = hasClaimSection(body);
+            const finding = validateDoc(
+                "aa/doc.md",
+                `---\nArea: aa\nKeywords: alpha9\nSummary: S.\n---\n${body}`,
+            ).some((line) => line.includes("no claim section"));
+
+            assert.equal(
+                accepted,
+                !finding,
+                `add and check disagree on: ${JSON.stringify(body)}`,
+            );
+        }
     });
 });
 
@@ -2534,13 +2655,20 @@ describe("miss nudge", () => {
 });
 
 describe("record nudge", () => {
-    it("shapes each finding as its own artifact, never a session dump", () => {
-        assert.match(RECORD_NUDGE, /`Record with docs add:` block per finding/);
+    it("shapes findings as record blocks the add DTO accepts", () => {
+        // A stable structural contract, not a prose snapshot: the block marker
+        // the skill tells the agent to look for, the DTO fields a block must
+        // name, and the two things it must forbid. Wording is review's job.
+        assert.match(RECORD_NUDGE, /`Record with docs add:`/);
+        for (const field of ["class", "`Area`", "`H1`", "`Keywords`"]) {
+            assert.ok(
+                RECORD_NUDGE.includes(field),
+                `the nudge does not name ${field}`,
+            );
+        }
         assert.match(RECORD_NUDGE, /never one session dump/);
-        assert.match(RECORD_NUDGE, /`Area`/);
-        assert.match(RECORD_NUDGE, /`H1` title/);
-        assert.match(RECORD_NUDGE, /`Keywords`/);
-        assert.match(RECORD_NUDGE, /separate focused doc/);
+        assert.match(RECORD_NUDGE, /mixed-scope/);
+        assert.match(RECORD_NUDGE, /reconcile before writing/);
     });
 });
 
@@ -2602,7 +2730,7 @@ describe("prepareAdd short identity", () => {
         const outcome = prepareAdd(
             addRequest({
                 metadata: { Area: "aa", Keywords: ["go"], Summary: "S" },
-                body: "# Go\n\nFacts.\n",
+                body: "# Go\n\n### Facts\n\n- Verified.\n",
             }),
             [],
         );
@@ -2615,7 +2743,7 @@ describe("prepareAdd short identity", () => {
         const outcome = prepareAdd(
             addRequest({
                 metadata: { Area: "aa", Keywords: ["go"], Summary: "S" },
-                body: "# Go language\n\nFacts.\n",
+                body: "# Go language\n\n### Facts\n\n- Verified.\n",
             }),
             [],
         );
@@ -2689,7 +2817,7 @@ describe("reconcile harness (fixture corpus)", () => {
             body: string;
         } = {
             metadata: { Area: area, Keywords: keywords, Summary: summary },
-            body: `# ${title}\n\nFacts: harness fixture.\n`,
+            body: `# ${title}\n\n### Facts\n\n- Harness fixture.\n`,
         };
         if (path !== undefined) {
             request.path = path;

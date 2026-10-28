@@ -1322,7 +1322,11 @@ export type AddOutcome =
           path: string;
           /** The serialised file contents. */
           contents: string;
-          /** Same-area docs already on disk, shown alongside the write. */
+          /**
+           * Same-area docs already on disk. Not rendered in the tool result —
+           * the success path names the path and outcome only — but retained for
+           * programmatic callers that want the surrounding context.
+           */
           neighbours: readonly DocEntry[];
           /** Soft advisory lines (e.g. a long doc worth splitting). */
           notes: readonly string[];
@@ -1529,6 +1533,14 @@ export function prepareAdd(
     if (h1Of(add.body) === undefined) {
         return refuse("The body must carry an H1 (`# Title`).");
     }
+    // The same rule `check` applies, enforced before anything touches disk: a
+    // doc that `check` would flag on the next run should never be written.
+    if (!hasClaimSection(add.body)) {
+        return refuse(
+            "the body carries no claim section; add an H2/H3 headed Facts, " +
+                "Inferred, Tested, Failed approaches or Open questions.",
+        );
+    }
     if (!hasDistinctiveIdentity(reconcileQuery(add))) {
         return refuse(
             `the H1 and Keywords together carry no term of MIN_TERM_LENGTH ` +
@@ -1593,6 +1605,24 @@ export const CLAIM_SECTIONS = [
 ] as const;
 
 /**
+ * Whether a body carries at least one recognisable claim section as an H2/H3
+ * heading. This is the one rule {@link prepareAdd} and {@link validateDoc}
+ * share, so `add` cannot accept a doc that `check` would immediately flag.
+ *
+ * It reads through {@link scanBody}, so a fenced code block or an inline code
+ * span cannot masquerade as a section, and a `# H1` or `#### H4` does not
+ * satisfy it.
+ * @param body Markdown body, front-matter already stripped.
+ * @returns True when a claim-section heading is present.
+ */
+export function hasClaimSection(body: string): boolean {
+    const claims = CLAIM_SECTIONS.map((section) => section.toLowerCase());
+    return scanBody(body).headings.some((heading) =>
+        claims.includes(heading.toLowerCase()),
+    );
+}
+
+/**
  * The required front-matter fields that are blank in a raw doc: `Keywords` is
  * blank when it yields no terms (matching `add`'s typed rule in
  * {@link blankRequiredField} — `Keywords: , ,` is blank), the others when
@@ -1636,10 +1666,7 @@ export function validateDoc(path: string, raw: string): string[] {
             "hand-maintained `Date` — the date is derived by git, never written.",
         );
     }
-    const claims = CLAIM_SECTIONS.map((section) => section.toLowerCase());
-    if (
-        !scanBody(body).headings.some((h) => claims.includes(h.toLowerCase()))
-    ) {
+    if (!hasClaimSection(body)) {
         findings.push(
             "no claim section (Facts / Inferred / Tested / Failed approaches / Open questions).",
         );
@@ -2051,13 +2078,17 @@ export function missNudgeFor(
  * never a session dump (the near-twin guard catches duplicates, not dumps).
  */
 export const RECORD_NUDGE =
-    "Before summarising: if this session established durable knowledge " +
-    "(decisions, traps, runbooks, verified behaviour), open the " +
-    "continuation with one `Record with docs add:` block per finding — " +
+    "Before summarising, the active task comes first. If the session " +
+    "established durable knowledge (decisions, traps, runbooks, verified " +
+    "behaviour), add one `Record with docs add:` block per durable topic and " +
+    "scope — coalesce related findings rather than one block per observation, " +
     "never one session dump, and never one mixed-scope doc. Each block names " +
-    "its own artifact's class (repo, machine, or global), `Area`, `H1` title " +
-    "and `Keywords`, plus a one-line what-and-why, so the next agent can " +
-    "persist each as a separate focused doc at the narrowest true scope.";
+    "its class (repo, machine or global), `Area`, `H1` title and `Keywords`, and " +
+    "keeps what was learned, why it matters, the evidence or status, any " +
+    "unresolved uncertainty and the intended scope, so the next agent can " +
+    "reconcile before writing. Reference a finding already recorded by path " +
+    "rather than restating it, and assume persistence only where the session " +
+    "confirms it.";
 
 /**
  * Resolve the plugin's `nudge` option: unset means on; a boolean passes
@@ -2867,16 +2898,12 @@ function addDoc(
     const head = `${address(target, outcome.path, runtime.lakes)} — ${
         updated ? "updated" : "created"
     }.`;
-    const neighbours =
-        outcome.neighbours.length > 0
-            ? `\n\nNearby docs in the same area:\n\n${render(
-                  outcome.neighbours,
-                  { primaryLake: target.name },
-              )}`
-            : "";
+    // The path and outcome are the answer; a list of same-area neighbours was
+    // unsolicited context that grew with the area and was picked by collection
+    // order, not relevance. Refusals still carry their candidates.
     const notes =
         outcome.notes.length > 0 ? `\n\n${outcome.notes.join("\n")}` : "";
-    return { content: `${head}${neighbours}${notes}`, written: true };
+    return { content: `${head}${notes}`, written: true };
 }
 
 /** A parsed read request: the lake (when known) and the path. */
