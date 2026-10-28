@@ -844,6 +844,8 @@ export interface LakeInfo {
     writable: boolean;
     /** Whether `check` validates it. */
     validated: boolean;
+    /** Whether the root is absent, so the lake contributes nothing yet. */
+    missing?: boolean;
 }
 
 /**
@@ -857,8 +859,9 @@ export function helpText(lakes: readonly LakeInfo[]): string {
     for (const lake of lakes) {
         const access = lake.writable ? "writable" : "read-only";
         const checked = lake.validated ? "checked" : "not checked";
+        const missing = lake.missing === true ? " — missing" : "";
         lines.push(
-            `- ${lake.name} (${lake.class}, ${access}, ${checked}): ${lake.root}`,
+            `- ${lake.name} (${lake.class}, ${access}, ${checked}): ${lake.root}${missing}`,
         );
     }
     lines.push(
@@ -2097,7 +2100,10 @@ export interface Lake extends LakeSpec {
     read: (path: string) => string;
     /** Whether a root-relative path exists. */
     exists: (path: string) => boolean;
-    /** Writes a root-relative path, creating parent directories. */
+    /**
+     * Writes a root-relative path, creating parent directories beneath an
+     * existing root; throws when the root is absent rather than creating it.
+     */
     write: (path: string, contents: string) => void;
     /** Environment notes for `check` (missing root, unversioned root). */
     notes: readonly string[];
@@ -2186,7 +2192,7 @@ export function createLake(
     };
     return {
         ...spec,
-        notes: unversionedNote(spec.root),
+        notes: unversionedNote(spec.root, spec.name),
         linkCheck: true,
         collect: () =>
             collectDocs(spec.root, (paths) => fallbackDates(spec.root, paths), {
@@ -2202,6 +2208,14 @@ export function createLake(
         },
         write: (path, contents) => {
             const target = guarded(path);
+            // The root is configured, never invented: a mistyped path must not
+            // bootstrap a lake. `add` pre-checks for a friendlier refusal.
+            if (!existsSync(spec.root)) {
+                throw new Error(
+                    `lake '${spec.name}' root ${spec.root} does not exist; ` +
+                        "create it first.",
+                );
+            }
             mkdirSync(dirname(target), { recursive: true });
             writeFileSync(target, contents);
         },
@@ -2725,12 +2739,26 @@ function searchDocs(
         closest,
         omitted,
     } = rankDocs(entries, query, { perLakeQuota: runtime.perLakeQuota });
+    const content = render(ranked, {
+        closest,
+        omitted,
+        primaryLake: primaryLakeName(runtime.lakes) ?? "",
+    });
+    // A dormant lake contributes nothing, so without the note a typo'd root
+    // looks like an empty lake rather than a broken path.
+    const missing = runtime.lakes
+        .filter(
+            (lake) =>
+                lake.root !== "" &&
+                (lakeName === undefined || lakeName === lake.name) &&
+                !existsSync(lake.root),
+        )
+        .map((lake) => missingRootNote(lake.root, lake.name));
     return {
-        content: render(ranked, {
-            closest,
-            omitted,
-            primaryLake: primaryLakeName(runtime.lakes) ?? "",
-        }),
+        content:
+            missing.length > 0
+                ? `${content}\n\n${missing.join("\n")}`
+                : content,
         count: ranked.length,
         omitted,
     };
@@ -2805,6 +2833,16 @@ function addDoc(
     const target = writableLake(runtime.lakes, lakeName);
     if ("reason" in target) {
         return { content: target.reason, written: false };
+    }
+    // A typo'd root must not bootstrap a new tree; the area directories below
+    // an existing root still create on write.
+    if (target.root !== "" && !existsSync(target.root)) {
+        return {
+            content:
+                `${REFUSE} lake '${target.name}' root ${target.root} does ` +
+                "not exist — create it first.",
+            written: false,
+        };
     }
     const entries = target.collect();
     const outcome = prepareAdd(add, entries, {
@@ -2950,6 +2988,7 @@ function lakeInfo(lakes: readonly Lake[]): LakeInfo[] {
         root: lake.root,
         writable: lake.writable,
         validated: lake.profile === "knowledge",
+        missing: lake.root !== "" && !existsSync(lake.root),
     }));
 }
 
@@ -3166,18 +3205,39 @@ export function resolveRoot(
 }
 
 /**
- * Probe whether the lake root sits inside a git work tree, as `check`-report
- * notes. An unversioned root still works — dates fall back to file mtimes and
- * the knowledge has no history — so it is surfaced, not refused.
- * @param root The lake root to probe.
- * @returns The note lines; empty when the root is version-controlled.
+ * The advisory note for a lake root that is absent. A missing root is a
+ * configuration smell, not a failure: the lake stays dormant until the
+ * directory exists, and `add` refuses rather than creating it.
+ * @param root The resolved lake root.
+ * @param lake The lake name, when known.
+ * @returns The note line.
  */
-export function unversionedNote(root: string): readonly string[] {
+export function missingRootNote(root: string, lake?: string): string {
+    const subject =
+        lake === undefined
+            ? `lake root ${root}`
+            : `lake '${lake}' root ${root}`;
+    return (
+        `note: ${subject} does not exist — it is ignored until it does. ` +
+        "A missing root is not an error."
+    );
+}
+
+/**
+ * The environment notes for a lake root: missing, or unversioned. An absent
+ * root is flagged but tolerated; an unversioned root still works — dates fall
+ * back to file mtimes and the knowledge has no history — so it is surfaced,
+ * not refused.
+ * @param root The lake root to probe.
+ * @param lake The lake name, when known.
+ * @returns The note lines; empty when the root is present and version-controlled.
+ */
+export function unversionedNote(
+    root: string,
+    lake?: string,
+): readonly string[] {
     if (!existsSync(root)) {
-        return [
-            "note: this lake root does not exist yet — it is ignored until " +
-                "it does. A missing root is not an error.",
-        ];
+        return [missingRootNote(root, lake)];
     }
     const probe = spawnSync("git", ["rev-parse", "--show-toplevel"], {
         cwd: root,

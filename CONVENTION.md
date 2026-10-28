@@ -131,5 +131,7 @@ knowledge when it records the outcome and the current truth.
 
 Run `check` to audit an existing tree, and the gate's `defined comply` before
 proposing a commit. A missing lake root is a note, not an error: the plugin
-scans what is there and reports per-doc findings for what is not. Wiki lakes
-are read-only and are reported as not validated, never silently skipped.
+scans what is there, search and help flag the absent path, and `add` refuses
+rather than creating a tree at a mistyped root. Create the directory
+deliberately. Wiki lakes are read-only and are reported as not validated, never
+silently skipped.

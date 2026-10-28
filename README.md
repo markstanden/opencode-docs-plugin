@@ -159,6 +159,12 @@ Lake paths never follow symlinks: a symlinked doc is skipped by search and
 `check`, refused by `read`, and refused by `add`. The configured `root` itself
 may be a symlink; the content beneath it must be real.
 
+A missing lake root is flagged, never created. The lake stays dormant until the
+directory exists: `search` appends a note naming the lake and path, `help` marks
+it `— missing`, and `add` refuses with the path rather than bootstrapping a
+tree. Create the directory deliberately. Area folders beneath an existing root
+are still created on write.
+
 `maxDocLines` (default 200, `0` disables) is a **soft** note on a long doc, not a
 refusal. `perLakeQuota` (default 3, `0` disables) is the per-source result
 reservation.
