@@ -129,6 +129,7 @@ describe("setup", () => {
 
     it("writes a doc through the tool the setup registered", async () => {
         const dir = tempDir();
+        mkdirSync(join(dir, "docs"), { recursive: true });
         const added = await setup(dir);
         const tool = added.tools[0] as {
             execute: (

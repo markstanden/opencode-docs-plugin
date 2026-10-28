@@ -820,6 +820,15 @@ describe("resolveRoot", () => {
 });
 
 describe("unversionedNote", () => {
+    it("names the lake and path when the root is absent", () => {
+        const root = join(tempDir(), "absent");
+
+        const [note] = unversionedNote(root, "doclake");
+
+        assert.ok(note?.includes(`lake 'doclake' root ${root}`));
+        assert.match(note ?? "", /not an error/);
+    });
+
     it("notes a root outside any git work tree", () => {
         const [note] = unversionedNote(tempDir());
 

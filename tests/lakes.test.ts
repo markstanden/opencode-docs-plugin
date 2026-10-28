@@ -2,6 +2,7 @@ import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
+    existsSync,
     mkdirSync,
     mkdtempSync,
     readFileSync,
@@ -571,6 +572,118 @@ describe("multi-lake tool", () => {
         assert.match(
             String(result.content),
             /wiki \(wiki, read-only, not checked\)/,
+        );
+    });
+});
+
+describe("missing lake roots", () => {
+    /** An existing repo lake plus a machine lake whose root is absent. */
+    function toolOf(): {
+        tool: ReturnType<typeof createDocsTool>;
+        root: string;
+    } {
+        const repoRoot = tempDir();
+        writeFileSync(
+            join(repoRoot, "a.md"),
+            "---\nArea: aa\nKeywords: alpha\nSummary: Repo.\n---\n# Repo\n",
+        );
+        const root = join(tempDir(), "absent");
+        const lakes = createLakes([
+            {
+                name: "repo",
+                class: "repo",
+                root: repoRoot,
+                profile: "knowledge",
+                writable: true,
+            },
+            {
+                name: "doclake",
+                class: "machine",
+                root,
+                profile: "knowledge",
+                writable: true,
+            },
+        ]);
+        return { tool: createDocsTool({ lakes }), root };
+    }
+
+    it("flags a missing root after search results", async () => {
+        const { tool, root } = toolOf();
+
+        const result = await tool.execute({ search: "" }, {} as never);
+
+        assert.match(String(result.content), /Repo\./);
+        assert.ok(
+            String(result.content).includes(
+                `lake 'doclake' root ${root} does not exist`,
+            ),
+        );
+    });
+
+    it("stays quiet about a missing root outside the selected lake", async () => {
+        const { tool } = toolOf();
+
+        const result = await tool.execute(
+            { search: "", lake: "repo" },
+            {} as never,
+        );
+
+        assert.doesNotMatch(String(result.content), /does not exist/);
+    });
+
+    it("refuses an add to a missing root without creating it", async () => {
+        const { tool, root } = toolOf();
+
+        const result = await tool.execute(
+            {
+                lake: "doclake",
+                add: {
+                    metadata: {
+                        Area: "aa",
+                        Keywords: ["alpha"],
+                        Summary: "S.",
+                    },
+                    body: "# T\n\n### Facts\n\n- x.\n",
+                },
+            } as never,
+            {} as never,
+        );
+
+        assert.equal(result.metadata?.written, false);
+        assert.match(
+            String(result.content),
+            /Rejected: lake 'doclake' root .* does not exist/,
+        );
+        assert.equal(existsSync(root), false);
+    });
+
+    it("refuses a lake write when the root is missing", () => {
+        const root = join(tempDir(), "absent");
+        const lake = createLakes([
+            {
+                name: "doclake",
+                class: "machine",
+                root,
+                profile: "knowledge",
+                writable: true,
+            },
+        ])[0] as Lake;
+
+        assert.throws(
+            () => lake.write("aa/x.md", "x\n"),
+            /does not exist; create it first/,
+        );
+        assert.equal(existsSync(root), false);
+    });
+
+    it("marks a missing root in help", async () => {
+        const { tool } = toolOf();
+
+        const result = await tool.execute({ search: "help" }, {} as never);
+
+        assert.match(
+            String(result.content),
+            /doclake \(machine, writable, checked\): .* — missing/,
         );
     });
 });
