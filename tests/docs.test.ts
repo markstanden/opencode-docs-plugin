@@ -22,6 +22,7 @@ const {
     collectReadmes,
     createDocsCommand,
     createDocsTool,
+    DEFAULT_PER_LAKE_QUOTA,
     explainRanking,
     fallbackDates,
     FIELD_WEIGHTS,
@@ -1119,7 +1120,7 @@ describe("ranking knobs", () => {
         assert.ok(keywordScore > titleScore);
     });
 
-    it("states the cap from MAX_RESULTS in the tool and command descriptions", () => {
+    it("keeps the ranking inventory in help, not the discovery prose", () => {
         const tool = createDocsTool({
             collect: () => [],
             exists: () => false,
@@ -1132,8 +1133,11 @@ describe("ranking knobs", () => {
             prompt: async () => {},
         });
 
-        assert.ok(tool.description.includes(String(MAX_RESULTS)));
-        assert.ok(String(command.description).includes(String(MAX_RESULTS)));
+        // Help owns the ranking details; the descriptions only route to them.
+        assert.ok(explainRanking().includes(`MAX_RESULTS (${MAX_RESULTS})`));
+        assert.ok(explainRanking().includes(`${DEFAULT_PER_LAKE_QUOTA}`));
+        assert.doesNotMatch(tool.description, /MAX_RESULTS|perLakeQuota/);
+        assert.doesNotMatch(String(command.description), /MAX_RESULTS/);
     });
 });
 

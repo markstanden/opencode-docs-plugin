@@ -80,7 +80,7 @@ The simplest setup uses `root` — one repo lake:
         {
             "package": "@markstanden/opencode-docs-plugin",
             "options": {
-                "root": "~/doclake",
+                "root": "./docs",
             },
         },
     ],
@@ -201,7 +201,6 @@ Standalone extract of the docs tooling, under active development.
 npm install
 npm test          # node --test
 npm run typecheck
-defined comply    # the gate: bootstrap, repair and verify
 ```
 
 Tests run the plugin source directly under Node's type-stripping (`noEmit`,

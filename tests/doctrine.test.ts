@@ -67,3 +67,28 @@ describe("convention alignment", () => {
         });
     }
 });
+
+/**
+ * The gate splices its managed block into `AGENTS.md` between a start/end
+ * marker pair. It rewrites the block it finds but never removes a second,
+ * stray pair, so a duplicate has to be caught here or it survives every run.
+ */
+describe("managed guidance", () => {
+    const agents = doctrine("../AGENTS.md");
+
+    it("carries exactly one managed marker pair", () => {
+        const starts = agents.match(/<!--\s*defined:start\s*-->/g) ?? [];
+        const ends = agents.match(/<!--\s*defined:end\s*-->/g) ?? [];
+
+        assert.equal(starts.length, 1, "expected one defined:start marker");
+        assert.equal(ends.length, 1, "expected one defined:end marker");
+    });
+
+    it("orders the markers start then end", () => {
+        const start = agents.indexOf("<!-- defined:start -->");
+        const end = agents.indexOf("<!-- defined:end -->");
+
+        assert.ok(start !== -1 && end !== -1, "a managed marker is missing");
+        assert.ok(start < end, "the end marker precedes the start marker");
+    });
+});
