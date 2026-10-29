@@ -1004,8 +1004,7 @@ export function gitDates(
         return dates;
     }
     const result = spawnSync(
-        // NOSONAR: portable git lookup; cwd is trusted local config, not model input.
-        "git",
+        "git", // NOSONAR: portable git lookup; cwd is trusted local config, not model input.
         // `--relative` keeps the output paths root-relative to `cwd`; without
         // it a lake rooted at `<repo>/docs` maps `docs/foo.md` while the
         // requested paths are `foo.md`, silently falling back to mtimes.
@@ -1306,8 +1305,7 @@ export function readmePaths(
  */
 function gitReadmePaths(location: string): string[] | undefined {
     const result = spawnSync(
-        // NOSONAR: portable git lookup; cwd is trusted local config, not model input.
-        "git",
+        "git", // NOSONAR: portable git lookup; cwd is trusted local config, not model input.
         ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
         { cwd: location, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
     );
@@ -3375,10 +3373,11 @@ export function unversionedNote(
     if (!existsSync(root)) {
         return [missingRootNote(root, lake)];
     }
-    const probe = spawnSync("git", ["rev-parse", "--show-toplevel"], {
-        // NOSONAR: portable git lookup; cwd is trusted local config.
-        cwd: root,
-    });
+    const probe = spawnSync(
+        "git", // NOSONAR: portable git lookup; cwd is trusted local config.
+        ["rev-parse", "--show-toplevel"],
+        { cwd: root },
+    );
     if (probe.status === 0) {
         return [];
     }
