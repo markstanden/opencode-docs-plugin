@@ -264,6 +264,12 @@ describe("identifiers", () => {
         ["a heading's trailing hashes", "# T\n\n## kqx7 ##\n", ["kqx7"]],
         ["no body", "# T\n", []],
         ["a fenced block", "# T\n\n```\nkqx7\n```\n", []],
+        ["a tilde-fenced block", "# T\n\n~~~\nkqx7\n~~~\n", []],
+        [
+            "a shorter run inside a longer fence",
+            "# T\n\n````\n```\n## kqx7\n````\n",
+            [],
+        ],
         ["body prose", "# T\n\nkqx7 in prose\n", []],
     ];
 
@@ -272,6 +278,12 @@ describe("identifiers", () => {
             assert.deepEqual(fromBody(body).identifiers, expected);
         });
     }
+
+    it("keeps identifiers outside a closed fence", () => {
+        const body = "# T\n\n~~~\n`hidden`\n~~~\n\nUse `kqx7` here.\n";
+
+        assert.deepEqual(fromBody(body).identifiers, ["kqx7"]);
+    });
 
     it("does not repeat the H1 as an identifier", () => {
         assert.deepEqual(fromBody("# kqx7 here\n\nprose\n").identifiers, []);
@@ -386,6 +398,24 @@ describe("minimum term length", () => {
         assert.deepEqual(
             result.entries.map((item) => item.path),
             ["below.md"],
+        );
+    });
+
+    it("keeps every short term when no longer term is present", () => {
+        // The fallback is not limited to a single-word query: two short terms
+        // still form a multi-term search.
+        const result = rankDocs(
+            [
+                entry({ path: "both.md", title: "ab cd" }),
+                entry({ path: "one.md", title: "ab" }),
+            ],
+            "ab cd",
+        );
+
+        assert.equal(result.closest, false);
+        assert.deepEqual(
+            result.entries.map((item) => item.path),
+            ["both.md"],
         );
     });
 });
@@ -1996,6 +2026,26 @@ describe("tool add", () => {
         assert.equal(written.length, 0);
     });
 
+    it("refuses a body whose only claim section is inside a tilde fence", async () => {
+        const { seam, written } = memoryFs();
+        const tool = createDocsTool({ collect: () => [], ...seam });
+
+        const result = await tool.execute(
+            {
+                add: addRequest({
+                    body:
+                        "# Fresh\n\n~~~markdown\n## Facts\n" +
+                        "This is example code, not a claim.\n~~~\n",
+                }),
+            } as never,
+            {} as never,
+        );
+
+        assert.equal(result.metadata?.written, false);
+        assert.match(String(result.content), /no claim section/);
+        assert.equal(written.length, 0);
+    });
+
     it("leaves an existing doc byte-identical when a replacement is refused", async () => {
         const original = "---\nArea: aa\n---\n# Old\n\n### Facts\n\n- Kept.\n";
         const { seam, written } = memoryFs(["aa/fresh.md"]);
@@ -2056,6 +2106,108 @@ describe("claim sections", () => {
 
         assert.equal(hasClaimSection(body), false);
     });
+
+    /** A raw doc wrapping `body` in otherwise-valid front-matter. */
+    function rawDoc(body: string): string {
+        return "---\nArea: aa\nKeywords: alpha9\nSummary: S.\n---\n" + body;
+    }
+
+    /**
+     * Otherwise-valid bodies whose only `Facts` heading is fenced, or whose
+     * genuine section follows a fence. Both the write boundary and the audit
+     * must reach the same verdict.
+     */
+    const fenceCases: ReadonlyArray<{
+        readonly name: string;
+        readonly body: string;
+        readonly accepted: boolean;
+    }> = [
+        {
+            name: "a triple-backtick fake Facts heading",
+            body: "# Example\n\n```markdown\n## Facts\nThis is example code, not an actual claim section.\n```\n",
+            accepted: false,
+        },
+        {
+            name: "a triple-tilde fake Facts heading",
+            body: "# Example\n\n~~~markdown\n## Facts\nThis is example code, not an actual claim section.\n~~~\n",
+            accepted: false,
+        },
+        {
+            name: "a four-backtick fence holding a triple-backtick line",
+            body: "# Example\n\n````markdown\n```\n## Facts\n````\n",
+            accepted: false,
+        },
+        {
+            name: "a different-character delimiter inside the fence",
+            body: "# Example\n\n```\n## Facts\n~~~~\n## Still code\n```\n",
+            accepted: false,
+        },
+        {
+            name: "a delimiter with a non-whitespace suffix",
+            body: "# Example\n\n```\n## Facts\n``` trailing\n## Still code\n",
+            accepted: false,
+        },
+        {
+            name: "an unclosed fence hiding a later heading",
+            body: "# Example\n\n```\n## Facts\n## Still code\n",
+            accepted: false,
+        },
+        {
+            name: "a three-space-indented fence",
+            body: "# Example\n\n   ```\n## Facts\nThis is code.\n   ```\n",
+            accepted: false,
+        },
+        {
+            name: "a genuine section after a valid closing fence",
+            body: "# Example\n\n```\ncode\n```\n\n## Facts\n\n- A claim.\n",
+            accepted: true,
+        },
+        {
+            name: "a longer closing delimiter",
+            body: "# Example\n\n```\n## Not a section\n````\n\n### Facts\n\n- A claim.\n",
+            accepted: true,
+        },
+        {
+            name: "a four-space indent, which is not a fence",
+            body: "# Example\n\n    ```\n## Facts\n\n- A claim.\n",
+            accepted: true,
+        },
+        {
+            name: "a backtick info string carrying a backtick, which is not an opener",
+            body: "# Example\n\n``` not `a` fence\n## Facts\n\n- A claim.\n",
+            accepted: true,
+        },
+        {
+            name: "a tilde opener whose info string carries a backtick",
+            body: "# Example\n\n~~~ `code`\n## Facts\n~~~\n",
+            accepted: false,
+        },
+    ];
+
+    for (const { name, body, accepted } of fenceCases) {
+        it(`treats ${name} consistently at add and check`, () => {
+            const outcome = prepareAdd(addRequest({ body }), []);
+            const findings = validateDoc("aa/doc.md", rawDoc(body));
+            const claimFinding = findings.some((line) =>
+                line.includes("no claim section"),
+            );
+
+            assert.equal(
+                outcome.action,
+                accepted ? "write" : "refuse",
+                `${name}: add outcome`,
+            );
+            assert.equal(!claimFinding, accepted, `${name}: check finding`);
+            assert.equal(
+                findings.length,
+                accepted ? 0 : 1,
+                `${name}: fixtures should isolate the claim rule`,
+            );
+            if (!accepted && outcome.action === "refuse") {
+                assert.match(outcome.reason, /no claim section/);
+            }
+        });
+    }
 
     it("is not satisfied by inline code or an H1/H4", () => {
         assert.equal(hasClaimSection("# Title\n\n`## Facts`\n"), false);

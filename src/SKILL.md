@@ -21,14 +21,16 @@ means two docs; one omnibus doc is out of place everywhere.
 
 A **blank `search`** lists recent docs, one line each; a **`search`** ranks
 them, falling back to `Closest matches` and matching terms as **substrings** —
-so a typo finds nothing and terms under `MIN_TERM_LENGTH` (3) are ignored.
-`help` lists the lakes and ranking.
+so a typo finds nothing. Terms shorter than `MIN_TERM_LENGTH` (3) are dropped
+when longer terms exist; otherwise all query terms are kept. `help` lists the
+lakes and ranking.
 
 Open the match with `read`: the root-relative path, or `lake:path` when several
 lakes exist. A README result is `instructions:path` and opens with the built-in
 `read`. Consult matching docs before a broad grep; a tie ranks repo,
-instructions, global, machine, wiki. Excluded areas: `plans/`, `requirements/`
-and `wiki/`.
+instructions, global, machine, wiki. Knowledge lakes exclude `plans/`,
+`requirements/` and `wiki/` at the root; wiki lakes exclude only
+dot-directories and `node_modules`.
 
 ## Record it
 

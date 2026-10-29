@@ -250,9 +250,77 @@ function splitKeywords(value: string): string[] {
         .filter((keyword) => keyword !== "");
 }
 
-/** Whether a line opens or closes a fenced code block. */
-function isFence(line: string): boolean {
-    return line.trimStart().startsWith("```");
+/**
+ * An open fenced code block: the opener's delimiter character and run length.
+ * The length and character are remembered so a shorter or different-character
+ * run inside the block cannot close it.
+ */
+interface Fence {
+    readonly char: "`" | "~";
+    readonly length: number;
+}
+
+/**
+ * The supported Markdown fence subset: a backtick or tilde run of three or
+ * more, indented by at most three spaces. A backtick opener's info string may
+ * not contain a backtick. Four-space indentation is an indented code block, not
+ * a fence, and is not modelled; nor are tab-indented fences or the full
+ * CommonMark block grammar.
+ * @param line One source line.
+ * @returns The opened fence, or null when the line is not an opener.
+ */
+function fenceOpener(line: string): Fence | null {
+    const match = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (match === null) {
+        return null;
+    }
+    const run = match[1] ?? "";
+    const info = line.slice(match[0].length);
+    const char = run[0] as Fence["char"];
+    if (char === "`" && info.includes("`")) {
+        return null;
+    }
+    return { char, length: run.length };
+}
+
+/**
+ * Whether a line closes `fence`: the same delimiter character, a run at least
+ * as long as the opener, and nothing after it but spaces or tabs.
+ * @param line One source line.
+ * @param fence The open fence.
+ * @returns True when the line closes the block.
+ */
+function closesFence(line: string, fence: Fence): boolean {
+    const match = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line);
+    if (match === null) {
+        return false;
+    }
+    const run = match[1] ?? "";
+    return run[0] === fence.char && run.length >= fence.length;
+}
+
+/**
+ * The body's lines outside fenced code blocks, fence delimiters included in
+ * neither. An unclosed fence keeps every remaining line inside the block.
+ * @param body Doc body, front-matter already stripped.
+ * @returns Source lines with fenced blocks removed.
+ */
+function outsideFenceLines(body: string): string[] {
+    const lines: string[] = [];
+    let fence: Fence | null = null;
+    for (const line of body.split("\n")) {
+        if (fence === null) {
+            const opener = fenceOpener(line);
+            if (opener !== null) {
+                fence = opener;
+                continue;
+            }
+            lines.push(line);
+        } else if (closesFence(line, fence)) {
+            fence = null;
+        }
+    }
+    return lines;
 }
 
 /** Drop an ATX heading's trailing `#` decoration (and any trailing spaces). */
@@ -279,15 +347,7 @@ interface BodyScan {
 function scanBody(body: string): BodyScan {
     const headings: string[] = [];
     const spans: string[] = [];
-    let fenced = false;
-    for (const line of body.split("\n")) {
-        if (isFence(line)) {
-            fenced = !fenced;
-            continue;
-        }
-        if (fenced) {
-            continue;
-        }
+    for (const line of outsideFenceLines(body)) {
         const heading = /^(#{2,3})\s+/.exec(line);
         if (heading !== null) {
             const text = stripTrailingHashes(
@@ -358,18 +418,7 @@ function plainProse(text: string): string {
 
 /** The body with fenced code blocks removed. */
 function withoutFences(body: string): string {
-    const lines: string[] = [];
-    let fenced = false;
-    for (const line of body.split("\n")) {
-        if (isFence(line)) {
-            fenced = !fenced;
-            continue;
-        }
-        if (!fenced) {
-            lines.push(line);
-        }
-    }
-    return lines.join("\n");
+    return outsideFenceLines(body).join("\n");
 }
 
 /** Block prefixes that are never a wiki summary. */
@@ -824,7 +873,7 @@ export function explainRanking(): string {
         "How docs search ranks:",
         `- Fields weighted: title ${FIELD_WEIGHTS.title} > path ${FIELD_WEIGHTS.path} > keywords ${FIELD_WEIGHTS.keywords} > identifiers ${FIELD_WEIGHTS.identifiers} > area ${FIELD_WEIGHTS.area} > summary ${FIELD_WEIGHTS.summary} > wiki prose ${FIELD_WEIGHTS.text}.`,
         `- Each term scores its best field as weight × quality; quality is exact > prefix > substring.`,
-        `- Terms shorter than MIN_TERM_LENGTH (${MIN_TERM_LENGTH}) are ignored unless they are the whole query.`,
+        `- Terms shorter than MIN_TERM_LENGTH (${MIN_TERM_LENGTH}) are dropped when longer terms exist; otherwise all query terms are kept.`,
         "- Search covers every configured lake and nested project `README.md` files, honouring `.gitignore` (dependency and build directories are skipped when the project is not in git). READMEs are searchable only: `add` and `check` ignore them, and their results are prefixed `instructions:` so they read with the built-in `read` tool.",
         `- Each source reserves up to ${DEFAULT_PER_LAKE_QUOTA} results (configurable), then leftover slots fill by score. Every call returns at most MAX_RESULTS (${MAX_RESULTS}), best matches first, then the most recently edited; anything cut is counted as "… and N more not shown."`,
         "- Class precedence on a tie: repo > instructions > global > machine > wiki.",
@@ -1768,15 +1817,7 @@ function inlineTargets(line: string): string[] {
  */
 export function markdownTargets(body: string): string[] {
     const targets: string[] = [];
-    let fenced = false;
-    for (const line of body.split("\n")) {
-        if (isFence(line)) {
-            fenced = !fenced;
-            continue;
-        }
-        if (fenced) {
-            continue;
-        }
+    for (const line of outsideFenceLines(body)) {
         targets.push(...inlineTargets(line));
         const reference = /^\s*\[[^\]]+\]:\s*(\S+)/.exec(line);
         if (reference?.[1] !== undefined) {
