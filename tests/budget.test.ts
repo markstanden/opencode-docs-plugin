@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Schema } from "effect";
 import plugin, { DOCS_INPUT } from "../src/index.ts";
 
 /**
@@ -68,12 +69,33 @@ async function registered(directory: string): Promise<Registered> {
 }
 
 /**
- * Every `description` annotation reachable from the input schema — the payload
- * a model reads in the tool definition alongside the description itself, so
- * prose cannot migrate into annotations to evade the budget.
+ * The JSON Schema the host derives from a tool input schema — the supported
+ * conversion, rather than Effect's internal AST. Missing or unreadable output
+ * fails here instead of silently measuring nothing.
+ * @param schema The tool input schema.
+ * @returns The root JSON Schema object.
+ */
+function schemaDocument(schema: unknown): Record<string, unknown> {
+    if (schema === undefined || schema === null) {
+        throw new Error("the tool input schema is absent");
+    }
+    const document = Schema.toJsonSchemaDocument(schema as never) as {
+        readonly schema?: unknown;
+    };
+    if (typeof document.schema !== "object" || document.schema === null) {
+        throw new Error("the tool input schema has no readable JSON Schema");
+    }
+    return document.schema as Record<string, unknown>;
+}
+
+/**
+ * Every `description` annotation reachable from the converted input schema —
+ * the payload a model reads in the tool definition alongside the description
+ * itself, so prose cannot migrate into annotations to evade the budget.
+ * @param schema The tool input schema.
  * @returns The annotation strings.
  */
-function annotationDescriptions(): string[] {
+function annotationDescriptions(schema: unknown): string[] {
     const found: string[] = [];
     const seen = new Set<unknown>();
     const walk = (node: unknown): void => {
@@ -81,17 +103,11 @@ function annotationDescriptions(): string[] {
             return;
         }
         seen.add(node);
-        const annotations = (node as { annotations?: unknown }).annotations;
-        if (typeof annotations === "object" && annotations !== null) {
-            const { description } = annotations as { description?: unknown };
-            if (typeof description === "string") {
-                found.push(description);
-            }
+        const { description } = node as { description?: unknown };
+        if (typeof description === "string") {
+            found.push(description);
         }
         for (const value of Object.values(node)) {
-            if (typeof value === "function") {
-                continue;
-            }
             if (Array.isArray(value)) {
                 value.forEach(walk);
             } else {
@@ -99,8 +115,43 @@ function annotationDescriptions(): string[] {
             }
         }
     };
-    walk((DOCS_INPUT as { ast?: unknown }).ast);
+    walk(schemaDocument(schema));
     return found;
+}
+
+/** A path through the converted JSON Schema: object keys and array indices. */
+type SchemaPath = ReadonlyArray<string | number>;
+
+/** The node at `path`, or a clear failure when the shape is unexpected. */
+function nodeAt(root: unknown, path: SchemaPath): unknown {
+    let current = root;
+    for (const key of path) {
+        if (typeof key === "number") {
+            if (!Array.isArray(current)) {
+                throw new Error(`${path.join(".")}: expected an array`);
+            }
+            current = current[key];
+        } else {
+            if (typeof current !== "object" || current === null) {
+                throw new Error(`${path.join(".")}: expected an object`);
+            }
+            current = (current as Record<string, unknown>)[key];
+        }
+    }
+    return current;
+}
+
+/** The description annotation at `path`, or a clear failure when absent. */
+function descriptionAt(root: unknown, path: SchemaPath): string {
+    const node = nodeAt(root, path);
+    if (typeof node !== "object" || node === null) {
+        throw new Error(`${path.join(".")}: expected an object`);
+    }
+    const { description } = node as { description?: unknown };
+    if (typeof description !== "string") {
+        throw new Error(`${path.join(".")}: no description annotation`);
+    }
+    return description;
 }
 
 describe("model-facing prose budget", () => {
@@ -159,6 +210,59 @@ describe("model-facing prose budget", () => {
         );
     });
 
+    it("discovers representative top-level and nested annotations", () => {
+        const root = schemaDocument(DOCS_INPUT);
+        const add = ["properties", "add", "anyOf", 0] as const;
+        const paths: readonly SchemaPath[] = [
+            ["properties", "search", "anyOf", 0],
+            ["properties", "lake", "anyOf", 0],
+            add,
+            [...add, "properties", "path", "anyOf", 0],
+            [...add, "properties", "metadata"],
+            [...add, "properties", "body"],
+            ["properties", "check", "anyOf", 0],
+            ["properties", "read", "anyOf", 0],
+        ];
+        const discovered = annotationDescriptions(DOCS_INPUT);
+
+        for (const path of paths) {
+            assert.ok(
+                discovered.includes(descriptionAt(root, path)),
+                `the walk missed the annotation at ${path.join(".")}`,
+            );
+        }
+    });
+
+    it("measures a synthetic nested description large enough to exceed the budget", () => {
+        const huge = "x".repeat(BUDGETS.descriptionPlusAnnotations + 1);
+        const synthetic = Schema.Struct({
+            outer: Schema.Struct({
+                inner: Schema.String.annotate({ description: huge }),
+            }),
+        });
+
+        const discovered = annotationDescriptions(synthetic);
+        const payload = discovered.join(" ").length;
+
+        assert.ok(
+            discovered.includes(huge),
+            "the nested synthetic annotation was not measured",
+        );
+        assert.ok(
+            payload > BUDGETS.descriptionPlusAnnotations,
+            `synthetic annotation payload is ${payload} chars; the measurement ` +
+                `did not cross the ${BUDGETS.descriptionPlusAnnotations} ceiling`,
+        );
+    });
+
+    it("fails clearly when the schema representation is absent", () => {
+        assert.throws(
+            () => annotationDescriptions(undefined),
+            /tool input schema/,
+        );
+        assert.throws(() => schemaDocument(null), /tool input schema/);
+    });
+
     it("keeps the description plus schema annotations within their ceiling", async () => {
         const { tools } = await pending;
         const native = tools.find((tool) => tool.name === "docs");
@@ -166,7 +270,7 @@ describe("model-facing prose budget", () => {
         assert.ok(native, "the native tool was not registered");
         const payload =
             native.description.length +
-            annotationDescriptions().join(" ").length;
+            annotationDescriptions(DOCS_INPUT).join(" ").length;
         assert.ok(
             payload <= BUDGETS.descriptionPlusAnnotations,
             `description + annotations are ${payload} chars, over the ` +

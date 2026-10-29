@@ -367,14 +367,21 @@ describe("collectDocPaths", () => {
         assert.deepEqual(collectDocPaths(root), ["decisions/a.md"]);
     });
 
-    it("keeps those folders in a wiki lake", () => {
+    it("keeps named areas in a wiki lake but still skips dot-directories and dependencies", () => {
         const root = tempDir();
-        for (const dir of ["requirements", "wiki", ".git"]) {
+        for (const dir of [
+            "requirements",
+            "wiki",
+            "plans",
+            ".git",
+            "node_modules/pkg",
+        ]) {
             mkdirSync(join(root, dir), { recursive: true });
             writeFileSync(join(root, dir, "a.md"), "# A\n");
         }
 
         assert.deepEqual(collectDocPaths(root, { profile: "wiki" }), [
+            "plans/a.md",
             "requirements/a.md",
             "wiki/a.md",
         ]);
