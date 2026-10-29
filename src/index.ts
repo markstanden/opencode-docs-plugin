@@ -296,7 +296,7 @@ function closesFence(line: string, fence: Fence): boolean {
         return false;
     }
     const run = match[1] ?? "";
-    return run[0] === fence.char && run.length >= fence.length;
+    return run.startsWith(fence.char) && run.length >= fence.length;
 }
 
 /**
@@ -351,7 +351,7 @@ function scanBody(body: string): BodyScan {
         const heading = /^(#{2,3})\s+/.exec(line);
         if (heading !== null) {
             const text = stripTrailingHashes(
-                line.slice(heading[0].length).replace(/`/g, ""),
+                line.slice(heading[0].length).replaceAll("`", ""),
             ).trim();
             if (text !== "") {
                 headings.push(text);
@@ -801,6 +801,20 @@ export function rankDocs(
     };
 }
 
+/** The provenance prefix for a result: instructions, non-primary lake, or none. */
+function resultPrefix(
+    entry: DocEntry,
+    primaryLake: string | undefined,
+): string {
+    if (entry.class === "instructions") {
+        return "instructions";
+    }
+    if (entry.lake !== "" && entry.lake !== primaryLake) {
+        return entry.lake;
+    }
+    return "";
+}
+
 /**
  * Render matched docs as `path — Area — date` lines with the summary indented
  * beneath; a non-primary lake is prefixed `lake:` so provenance is clear. A
@@ -831,12 +845,8 @@ export function render(
             );
             const meta = parts.join(" — ");
             const head = meta === "" ? entry.path : `${entry.path} — ${meta}`;
-            const labelled =
-                entry.class === "instructions"
-                    ? `instructions:${head}`
-                    : entry.lake !== "" && entry.lake !== options.primaryLake
-                      ? `${entry.lake}:${head}`
-                      : head;
+            const prefix = resultPrefix(entry, options.primaryLake);
+            const labelled = prefix === "" ? head : `${prefix}:${head}`;
             return entry.summary === ""
                 ? labelled
                 : `${labelled}\n  ${entry.summary}`;
@@ -994,6 +1004,7 @@ export function gitDates(
         return dates;
     }
     const result = spawnSync(
+        // NOSONAR: portable git lookup; cwd is trusted local config, not model input.
         "git",
         // `--relative` keeps the output paths root-relative to `cwd`; without
         // it a lake rooted at `<repo>/docs` maps `docs/foo.md` while the
@@ -1109,6 +1120,22 @@ function skipDirectory(
 }
 
 /**
+ * Code-unit string order, matching the default sort but stated explicitly.
+ * @param a Left string.
+ * @param b Right string.
+ * @returns Negative, zero or positive in code-unit order.
+ */
+function compareText(a: string, b: string): number {
+    if (a < b) {
+        return -1;
+    }
+    if (a > b) {
+        return 1;
+    }
+    return 0;
+}
+
+/**
  * Walk a lake root, returning its `.md` paths relative to the root. Dot
  * directories are skipped (which drops `.git` and `.attachments`), as are
  * symlinked directories, `node_modules` and any other configured lake root
@@ -1155,7 +1182,7 @@ export function collectDocPaths(
     if (existsSync(root)) {
         walk(root);
     }
-    return paths.sort();
+    return paths.sort(compareText);
 }
 
 /**
@@ -1270,7 +1297,7 @@ export function readmePaths(
         .filter(
             (path) => !skip.some((root) => isUnder(join(location, path), root)),
         )
-        .sort();
+        .sort(compareText);
 }
 
 /**
@@ -1279,6 +1306,7 @@ export function readmePaths(
  */
 function gitReadmePaths(location: string): string[] | undefined {
     const result = spawnSync(
+        // NOSONAR: portable git lookup; cwd is trusted local config, not model input.
         "git",
         ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
         { cwd: location, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
@@ -1665,9 +1693,11 @@ export const CLAIM_SECTIONS = [
  * @returns True when a claim-section heading is present.
  */
 export function hasClaimSection(body: string): boolean {
-    const claims = CLAIM_SECTIONS.map((section) => section.toLowerCase());
+    const claims = new Set(
+        CLAIM_SECTIONS.map((section) => section.toLowerCase()),
+    );
     return scanBody(body).headings.some((heading) =>
-        claims.includes(heading.toLowerCase()),
+        claims.has(heading.toLowerCase()),
     );
 }
 
@@ -1747,7 +1777,7 @@ function nearTwinPairs(
         const query = identityQuery(doc.title, doc.keywords);
         const others = entries.filter((other) => other.path !== doc.path);
         for (const twin of nearTwins(query, doc.area, others)) {
-            const key = [doc.path, twin.path].sort().join("\n");
+            const key = [doc.path, twin.path].sort(compareText).join("\n");
             if (!pairs.has(key)) {
                 pairs.set(key, [doc, twin]);
             }
@@ -1781,26 +1811,47 @@ function resolveLink(from: string, target: string): string | null {
     return stack.join("/");
 }
 
+/** An inline link's destination and the index of its closing `)`. */
+interface InlineLink {
+    readonly destination: string | undefined;
+    readonly end: number;
+}
+
+/**
+ * Parse an inline `[text](target)` link starting at `start`.
+ * @param line One source line.
+ * @param start Index of the opening `[`.
+ * @returns The destination and closing index, or null when the link is incomplete.
+ */
+function inlineLinkAt(line: string, start: number): InlineLink | null {
+    const close = line.indexOf("](", start + 1);
+    if (close === -1) {
+        return null;
+    }
+    const end = line.indexOf(")", close + 2);
+    if (end === -1) {
+        return null;
+    }
+    const destination = line
+        .slice(close + 2, end)
+        .trim()
+        .split(/\s+/)[0];
+    return { destination, end };
+}
+
 /** Inline `[text](target)` destinations on one line; images are skipped. */
 function inlineTargets(line: string): string[] {
     const targets: string[] = [];
     let index = 0;
     while (index < line.length) {
         if (line[index] === "[" && line[index - 1] !== "!") {
-            const close = line.indexOf("](", index + 1);
-            if (close !== -1) {
-                const end = line.indexOf(")", close + 2);
-                if (end !== -1) {
-                    const destination = line
-                        .slice(close + 2, end)
-                        .trim()
-                        .split(/\s+/)[0];
-                    if (destination !== undefined && destination !== "") {
-                        targets.push(destination);
-                    }
-                    index = end + 1;
-                    continue;
+            const link = inlineLinkAt(line, index);
+            if (link !== null) {
+                if (link.destination !== undefined && link.destination !== "") {
+                    targets.push(link.destination);
                 }
+                index = link.end + 1;
+                continue;
             }
         }
         index += 1;
@@ -2003,7 +2054,8 @@ export function checkDocs(
     if (advisory.length === 0) {
         return head;
     }
-    return `${head}\n\nNotes:\n${advisory.map((note) => `- ${note}`).join("\n")}`;
+    const noteLines = advisory.map((note) => `- ${note}`).join("\n");
+    return `${head}\n\nNotes:\n${noteLines}`;
 }
 
 /** The built-in tools the miss-nudge watches: content searches, both miss-prone. */
@@ -2400,13 +2452,20 @@ function readLakesJson(
             { cause: error },
         );
     }
-    const lakes = Array.isArray(parsed)
-        ? parsed
-        : typeof parsed === "object" && parsed !== null && "lakes" in parsed
-          ? (parsed as { lakes: unknown }).lakes
-          : undefined;
+    let lakes: unknown;
+    if (Array.isArray(parsed)) {
+        lakes = parsed;
+    } else if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        "lakes" in parsed
+    ) {
+        lakes = (parsed as { lakes: unknown }).lakes;
+    } else {
+        lakes = undefined;
+    }
     if (!Array.isArray(lakes)) {
-        throw new Error(
+        throw new TypeError(
             `docs plugin ${label} must contain a "lakes" array: ${path}.`,
         );
     }
@@ -2476,7 +2535,7 @@ function lakeRootOf(
         return join(location, "docs");
     }
     if (typeof entry.root !== "string") {
-        throw new Error(
+        throw new TypeError(
             `docs plugin ${lakeClass} lake root must be a string, ` +
                 `got ${JSON.stringify(entry.root)}.`,
         );
@@ -2497,12 +2556,14 @@ function lakeNameOf(
     lakeClass: LakeClass,
 ): string {
     const derived = slugify(basename(root)) || lakeClass;
-    const name =
-        entry.name === undefined
-            ? derived
-            : typeof entry.name === "string"
-              ? entry.name.trim()
-              : "";
+    let name: string;
+    if (entry.name === undefined) {
+        name = derived;
+    } else if (typeof entry.name === "string") {
+        name = entry.name.trim();
+    } else {
+        name = "";
+    }
     if (!LAKE_NAME.test(name)) {
         throw new Error(
             `docs plugin lake name must match ${LAKE_NAME}, ` +
@@ -2529,8 +2590,7 @@ function lakeWritableOf(
                 `got ${JSON.stringify(entry.writable)}.`,
         );
     }
-    const writable =
-        entry.writable === undefined ? lakeClass !== "wiki" : entry.writable;
+    const writable = entry.writable ?? lakeClass !== "wiki";
     if (lakeClass === "wiki" && writable) {
         throw new Error(
             `docs plugin lake '${name}' is a wiki lake and cannot be writable.`,
@@ -3088,6 +3148,51 @@ const TWIN_DESCRIPTION =
     "DTO; `check` validates the lakes.";
 
 /**
+ * Run one resolved `docs` request against the runtime.
+ * @param runtime The resolved lakes and seams.
+ * @param input The typed tool input.
+ * @returns The tool result.
+ */
+function executeRequest(runtime: Runtime, input: DocsInput): Result {
+    const request = resolveRequest(input);
+    if (request.verb === "add") {
+        const result = addDoc(runtime, request.add, request.lake);
+        return {
+            content: result.content,
+            metadata: { written: result.written },
+        };
+    }
+    if (request.verb === "check") {
+        const result = checkLakes(runtime, request.lake);
+        return {
+            content: result.content,
+            metadata: { checked: result.checked },
+        };
+    }
+    if (request.verb === "read") {
+        const result = readDoc(runtime, request.read, request.lake);
+        return {
+            content: result.content,
+            metadata: { read: result.read },
+        };
+    }
+    if (request.verb === "help") {
+        return {
+            content: helpText(lakeInfo(runtime.lakes)),
+            metadata: { count: 0, omitted: 0 },
+        };
+    }
+    const result = searchDocs(runtime, request.search, request.lake);
+    return {
+        content: result.content,
+        metadata: {
+            count: result.count,
+            omitted: result.omitted,
+        },
+    };
+}
+
+/**
  * Build the `docs` tool from its dependencies.
  *
  * By default the tool is registered with `codemode: false` so it stays on the
@@ -3128,43 +3233,8 @@ export function createDocsTool(
         options: codemode
             ? { namespace: "docs", codemode: true }
             : { codemode: false },
-        async execute(input) {
-            const request = resolveRequest(input);
-            if (request.verb === "add") {
-                const result = addDoc(runtime, request.add, request.lake);
-                return {
-                    content: result.content,
-                    metadata: { written: result.written },
-                };
-            }
-            if (request.verb === "check") {
-                const result = checkLakes(runtime, request.lake);
-                return {
-                    content: result.content,
-                    metadata: { checked: result.checked },
-                };
-            }
-            if (request.verb === "read") {
-                const result = readDoc(runtime, request.read, request.lake);
-                return {
-                    content: result.content,
-                    metadata: { read: result.read },
-                };
-            }
-            if (request.verb === "help") {
-                return {
-                    content: helpText(lakeInfo(runtime.lakes)),
-                    metadata: { count: 0, omitted: 0 },
-                };
-            }
-            const result = searchDocs(runtime, request.search, request.lake);
-            return {
-                content: result.content,
-                metadata: {
-                    count: result.count,
-                    omitted: result.omitted,
-                },
-            };
+        execute(input) {
+            return Promise.resolve(executeRequest(runtime, input));
         },
     };
 }
@@ -3254,7 +3324,7 @@ export function resolveRoot(
         return join(locationDirectory, "docs");
     }
     if (typeof configured !== "string") {
-        throw new Error(
+        throw new TypeError(
             `docs plugin option 'root' must be a non-empty string path, ` +
                 `got ${JSON.stringify(configured)}.`,
         );
@@ -3306,6 +3376,7 @@ export function unversionedNote(
         return [missingRootNote(root, lake)];
     }
     const probe = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+        // NOSONAR: portable git lookup; cwd is trusted local config.
         cwd: root,
     });
     if (probe.status === 0) {
