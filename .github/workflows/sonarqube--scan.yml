@@ -1,0 +1,54 @@
+---
+name: "SonarQube"
+
+# CI-based SonarQube Cloud analysis. The project's Automatic Analysis is off,
+# so this workflow is the only thing that produces an analysis — and it is what
+# makes sonar-project.properties (sources, test scope, LCOV) take effect.
+#
+# PR analysis is derived from the GitHub context by the scan action; main gets
+# a long-lived-branch analysis on push. SONAR_TOKEN is a project analysis
+# token stored as a repository secret.
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+    workflow_dispatch:
+
+concurrency:
+    group: sonarqube-${{ github.ref }}
+    cancel-in-progress: true
+
+permissions:
+    contents: read
+
+jobs:
+    scan:
+        name: SonarQube
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+              with:
+                  # Full history so SCM blame and the new-code period work.
+                  fetch-depth: 0
+                  # zizmor (artipacked): leave no credentials in .git/config.
+                  persist-credentials: false
+            - name: Set up Node
+              uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+              with:
+                  # package.json requires >=26; the scan needs the same
+                  # runtime the suite runs on.
+                  node-version: "26"
+                  cache: npm
+                  cache-dependency-path: package-lock.json
+            - name: Install dependencies
+              run: npm ci
+            - name: Test with coverage
+              # Writes coverage/lcov.info, which sonar.javascript.lcov.reportPaths
+              # points at.
+              run: npm run test:coverage
+            - name: SonarQube Scan
+              uses: SonarSource/sonarqube-scan-action@ba9859eae8dd6bd29e412f25ddbbef3d032000f4 # v8
+              env:
+                  SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
