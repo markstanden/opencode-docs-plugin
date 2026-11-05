@@ -181,6 +181,11 @@ writable repo lake may sit inside a larger read-only wiki lake, and search,
 only decides its own profile and defaults; `repo`, `machine`, `global` and
 `wiki` all skip a nested root the same way.
 
+The skip compares the configured roots as written, so reach the tree the same
+way from both declarations. If one lake names the real directory and the other
+reaches it through a symlink, junction or mapped drive, the two paths never
+match and the nested doc is indexed twice.
+
 ```jsonc
 {
     "plugins": [
