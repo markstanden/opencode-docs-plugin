@@ -583,6 +583,110 @@ describe("multi-lake tool", () => {
     });
 });
 
+describe("nested lake roots", () => {
+    /**
+     * A writable repo lake rooted inside a larger read-only wiki lake, as when
+     * a project's docs live inside a reference tree.
+     */
+    function fixture(): {
+        tool: ReturnType<typeof createDocsTool>;
+        outerRoot: string;
+        nestedRoot: string;
+    } {
+        const outerRoot = tempDir();
+        const nestedRoot = join(outerRoot, "megacortex/knowledge");
+        mkdirSync(join(nestedRoot, "machine"), { recursive: true });
+        writeFileSync(
+            join(outerRoot, "outer-only.md"),
+            "# Outer page\n\nStormtrooper box reference.\n",
+        );
+        writeFileSync(
+            join(nestedRoot, "machine/inner-only.md"),
+            "---\nArea: machine\nKeywords: stormtrooper\nSummary: Nested doc about the stormtrooper box.\n---\n# Inner\n\n## Facts\n\n- x.\n",
+        );
+        const lakes = createLakes([
+            {
+                name: "wiki",
+                class: "wiki",
+                root: outerRoot,
+                profile: "wiki",
+                writable: false,
+            },
+            {
+                name: "doclake",
+                class: "repo",
+                root: nestedRoot,
+                profile: "knowledge",
+                writable: true,
+            },
+        ]);
+        return { tool: createDocsTool({ lakes }), outerRoot, nestedRoot };
+    }
+
+    it("returns a nested lake's doc once, from the nested lake", async () => {
+        const { tool } = fixture();
+
+        const result = await tool.execute(
+            { search: "stormtrooper" },
+            {} as never,
+        );
+        const text = String(result.content);
+
+        assert.equal(text.match(/inner-only\.md/g)?.length, 1);
+        assert.match(text, /^machine\/inner-only\.md —/m);
+        assert.equal(text.match(/outer-only\.md/g)?.length, 1);
+        assert.match(text, /^wiki:outer-only\.md/m);
+    });
+
+    it("lists a nested lake's doc once in a blank search", async () => {
+        const { tool } = fixture();
+
+        const result = await tool.execute({ search: "" }, {} as never);
+        const text = String(result.content);
+
+        assert.equal(text.match(/inner-only\.md/g)?.length, 1);
+        assert.equal(text.match(/outer-only\.md/g)?.length, 1);
+    });
+
+    it("reads a nested lake's doc without a multiple-lakes refusal", async () => {
+        const { tool } = fixture();
+
+        const result = await tool.execute(
+            { read: "machine/inner-only.md" },
+            {} as never,
+        );
+
+        assert.doesNotMatch(String(result.content), /multiple lakes/);
+        assert.match(
+            String(result.content),
+            /^doclake:machine\/inner-only\.md — Inner/m,
+        );
+    });
+
+    it("writes to the writable nested lake, never the read-only outer one", async () => {
+        const { tool, outerRoot, nestedRoot } = fixture();
+        const add = {
+            metadata: {
+                Area: "reference",
+                Keywords: ["added"],
+                Summary: "Added through the nested lake.",
+            },
+            body: "# Added\n\n### Facts\n\n- x.\n",
+        };
+
+        const result = await tool.execute({ add } as never, {} as never);
+        const written = join(nestedRoot, "reference/added.md");
+
+        assert.match(
+            String(result.content),
+            /^doclake:reference\/added\.md — created/m,
+        );
+        assert.equal(result.metadata?.written, true);
+        assert.equal(existsSync(written), true);
+        assert.equal(existsSync(join(outerRoot, "reference/added.md")), false);
+    });
+});
+
 describe("missing lake roots", () => {
     /** An existing repo lake plus a machine lake whose root is absent. */
     function toolOf(): {
