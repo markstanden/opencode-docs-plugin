@@ -159,6 +159,42 @@ Lake paths never follow symlinks: a symlinked doc is skipped by search and
 `check`, refused by `read`, and refused by `add`. The configured `root` itself
 may be a symlink; the content beneath it must be real.
 
+A lake root nested inside another lake's root is indexed once. The outer lake
+skips the nested root, so the doc is returned by the inner lake only — never
+twice, and never under both roots. Class and writability make no difference: a
+writable repo lake may sit inside a larger read-only wiki lake, and search,
+`read` and `add` all resolve to the writable inner lake. The outer lake's class
+only decides its own profile and defaults; `repo`, `machine`, `global` and
+`wiki` all skip a nested root the same way.
+
+```jsonc
+{
+    "plugins": [
+        {
+            "package": "@markstanden/opencode-docs-plugin",
+            "options": {
+                "lakes": [
+                    {
+                        "class": "wiki",
+                        "root": "~/reference-wiki",
+                        "name": "wiki",
+                    },
+                    {
+                        "class": "repo",
+                        "root": "~/reference-wiki/work/docs",
+                        "name": "work",
+                    },
+                ],
+            },
+        },
+    ],
+}
+```
+
+`class` is one of `repo`, `machine`, `global` or `wiki`; `root` and `name` are
+strings, and `writable` is a boolean that is fixed `false` for `wiki`. Do not
+add `root` alongside `lakes` — they are mutually exclusive.
+
 A missing lake root is flagged, never created. The lake stays dormant until the
 directory exists: `search` appends a note naming the lake and path, `help` marks
 it `— missing`, and `add` refuses with the path rather than bootstrapping a
