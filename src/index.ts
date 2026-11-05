@@ -2370,6 +2370,8 @@ export const REPO_LAKES_FILE = ".opencode/docs-lakes.json";
 export interface DocsPluginOptions {
     /** The single repo-lake override; mutually exclusive with `lakes`. */
     root?: unknown;
+    /** The `root` lake's name; defaults to the root folder name. Needs `root`. */
+    name?: unknown;
     /** Base lake declarations, merged after `lakesFile` and the repo file. */
     lakes?: unknown;
     /** A JSON file of base lakes (`{ "lakes": [...] }`). */
@@ -2646,6 +2648,12 @@ function assertLakesOptions(options: DocsPluginOptions): void {
                 "use 'root' for one repo lake or 'lakes' for the full list.",
         );
     }
+    if (options.name !== undefined && options.root === undefined) {
+        throw new Error(
+            "docs plugin option 'name' names the 'root' lake; " +
+                "set 'name' inside a 'lakes' entry instead.",
+        );
+    }
 }
 
 /** Map raw lake entries from a file to specs. */
@@ -2722,7 +2730,7 @@ export function resolveLakes(
     if (options.root !== undefined) {
         specs.push(
             lakeSpecFrom(
-                { class: "repo", root: options.root },
+                { class: "repo", root: options.root, name: options.name },
                 location,
                 false,
             ),

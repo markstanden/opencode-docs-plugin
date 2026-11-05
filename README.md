@@ -89,7 +89,21 @@ The simplest setup uses `root` — one repo lake:
 
 `root` expands `~`, resolves a relative path against the location, and defaults
 to `<location>/docs`. A blank value counts as unset. `root` declares a **repo**
-lake; for a personal or global lake, use `lakes` with the class instead.
+lake; for a personal or global lake, use `lakes` with the class instead. Its
+name follows the root folder unless you set the `name` option beside it:
+
+```jsonc
+{
+    "plugins": [
+        {
+            "package": "@markstanden/opencode-docs-plugin",
+            "options": { "root": "documentation", "name": "doclake" },
+        },
+    ],
+}
+```
+
+`name` only applies to `root`; inside `lakes`, set it on the entry.
 
 For several lakes, list them inline, in a base file, or both. The base file is
 usually a personal or managed file; the repo file adds local lakes:
@@ -158,6 +172,47 @@ Lake entries:
 Lake paths never follow symlinks: a symlinked doc is skipped by search and
 `check`, refused by `read`, and refused by `add`. The configured `root` itself
 may be a symlink; the content beneath it must be real.
+
+A lake root nested inside another lake's root is indexed once. The outer lake
+skips the nested root, so the doc is returned by the inner lake only — never
+twice, and never under both roots. Class and writability make no difference: a
+writable repo lake may sit inside a larger read-only wiki lake, and search,
+`read` and `add` all resolve to the writable inner lake. The outer lake's class
+only decides its own profile and defaults; `repo`, `machine`, `global` and
+`wiki` all skip a nested root the same way.
+
+The skip compares the configured roots as written, so reach the tree the same
+way from both declarations. If one lake names the real directory and the other
+reaches it through a symlink, junction or mapped drive, the two paths never
+match and the nested doc is indexed twice.
+
+```jsonc
+{
+    "plugins": [
+        {
+            "package": "@markstanden/opencode-docs-plugin",
+            "options": {
+                "lakes": [
+                    {
+                        "class": "wiki",
+                        "root": "~/reference-wiki",
+                        "name": "wiki",
+                    },
+                    {
+                        "class": "repo",
+                        "root": "~/reference-wiki/work/docs",
+                        "name": "work",
+                    },
+                ],
+            },
+        },
+    ],
+}
+```
+
+`class` is one of `repo`, `machine`, `global` or `wiki`; `root` and `name` are
+strings, and `writable` is a boolean that is fixed `false` for `wiki`. Do not
+add `root` alongside `lakes` — they are mutually exclusive.
 
 A missing lake root is flagged, never created. The lake stays dormant until the
 directory exists: `search` appends a note naming the lake and path, `help` marks
