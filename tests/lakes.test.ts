@@ -210,6 +210,28 @@ describe("resolveLakes", () => {
         assert.equal(lakes[0]?.writable, false);
     });
 
+    it("accepts a lakes file whose JSON is a bare array", () => {
+        // Arrange – a base file holding the bare array form.
+        const wiki = tempDir();
+        const base = join(tempDir(), "lakes.json");
+        writeFileSync(
+            base,
+            JSON.stringify([{ class: "wiki", root: wiki, name: "wiki" }]),
+        );
+
+        // Act
+        const lakes = resolveLakes({ lakesFile: base }, tempDir());
+
+        // Assert – same shape as the object form, implicit repo lake kept.
+        assert.deepEqual(
+            lakes.map((lake) => [lake.name, lake.class, lake.writable]),
+            [
+                ["wiki", "wiki", false],
+                ["docs", "repo", true],
+            ],
+        );
+    });
+
     it("refuses non-repo classes and roots outside the location in the repo file", () => {
         const location = tempDir();
         mkdirSync(join(location, ".opencode"), { recursive: true });
@@ -1044,6 +1066,22 @@ describe("link check", () => {
 
         assert.doesNotMatch(report, /broken link/);
     });
+
+    it("reports a malformed percent-encoding as a broken link, without throwing", () => {
+        // Arrange – a link target no decoder accepts (`%zz` is invalid).
+        const raw =
+            "---\nArea: aa\nKeywords: alpha\nSummary: S.\n---\n" +
+            "# Title\n\n### Facts\n\n- See [pct](a%zz.md).\n";
+        const entries = [toEntry("aa/a.md", raw, "2026-01-01")];
+
+        // Act
+        const report = checkDocs(entries, () => raw, [], {
+            exists: () => false,
+        });
+
+        // Assert – the raw target is reported; the URIError stays caught.
+        assert.match(report, /broken link to a%zz\.md/);
+    });
 });
 
 describe("soft length note", () => {
@@ -1348,6 +1386,17 @@ describe("summary and target edges", () => {
             "The real summary.\n";
 
         assert.equal(summaryOf(body), "The real summary.");
+    });
+
+    it("keeps an inline link's text and drops its URL from the summary", () => {
+        // Arrange – a wiki page whose first prose paragraph carries a link.
+        const body = "# Page\n\nSee [the guide](guide.md).\n";
+
+        // Act
+        const summary = summaryOf(body);
+
+        // Assert – the visible text stays, the destination goes.
+        assert.equal(summary, "See the guide.");
     });
 
     it("gathers inline and reference link targets outside fences", () => {

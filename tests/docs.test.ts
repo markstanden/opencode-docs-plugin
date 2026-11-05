@@ -1914,8 +1914,8 @@ describe("prepareAdd reconcile", () => {
 });
 
 describe("tool add", () => {
-    /** An in-memory write seam plus a record of what was written. */
-    function memoryFs(existing: string[] = []): {
+    /** An in-memory lake: seeded files, stored writes, and a write log. */
+    function memoryFs(files: Record<string, string> = {}): {
         seam: {
             exists: (path: string) => boolean;
             write: (path: string, contents: string) => void;
@@ -1923,16 +1923,18 @@ describe("tool add", () => {
         };
         written: { path: string; contents: string }[];
     } {
+        const stored = new Map(Object.entries(files));
         const written: { path: string; contents: string }[] = [];
         return {
             written,
             seam: {
                 exists: (path) =>
-                    existing.includes(path) ||
-                    written.some((w) => w.path === path),
-                write: (path, contents) =>
-                    void written.push({ path, contents }),
-                read: () => "",
+                    stored.has(path) || written.some((w) => w.path === path),
+                write: (path, contents) => {
+                    written.push({ path, contents });
+                    stored.set(path, contents);
+                },
+                read: (path) => stored.get(path) ?? "",
             },
         };
     }
@@ -1953,7 +1955,8 @@ describe("tool add", () => {
     });
 
     it("reports updated when the target exists", async () => {
-        const { seam, written } = memoryFs(["aa/fresh.md"]);
+        // Arrange – a lake that already holds the target doc.
+        const { seam, written } = memoryFs({ "aa/fresh.md": "# Existing\n" });
         const tool = createDocsTool({ collect: () => [], ...seam });
 
         const result = await tool.execute(
@@ -2047,14 +2050,12 @@ describe("tool add", () => {
     });
 
     it("leaves an existing doc byte-identical when a replacement is refused", async () => {
+        // Arrange – an existing doc and a claim-less replacement for it.
         const original = "---\nArea: aa\n---\n# Old\n\n### Facts\n\n- Kept.\n";
-        const { seam, written } = memoryFs(["aa/fresh.md"]);
-        const tool = createDocsTool({
-            collect: () => [],
-            ...seam,
-            read: () => original,
-        });
+        const { seam, written } = memoryFs({ "aa/fresh.md": original });
+        const tool = createDocsTool({ collect: () => [], ...seam });
 
+        // Act
         const result = await tool.execute(
             {
                 add: addRequest({
@@ -2065,11 +2066,17 @@ describe("tool add", () => {
             {} as never,
         );
 
+        // Assert – refused, never written, stored bytes untouched.
         assert.equal(result.metadata?.written, false);
         assert.equal(
             written.length,
             0,
             "the refusal must not reach the writer",
+        );
+        assert.equal(
+            seam.read("aa/fresh.md"),
+            original,
+            "a refused replacement must not change the stored bytes",
         );
     });
 });
