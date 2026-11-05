@@ -89,7 +89,21 @@ The simplest setup uses `root` — one repo lake:
 
 `root` expands `~`, resolves a relative path against the location, and defaults
 to `<location>/docs`. A blank value counts as unset. `root` declares a **repo**
-lake; for a personal or global lake, use `lakes` with the class instead.
+lake; for a personal or global lake, use `lakes` with the class instead. Its
+name follows the root folder unless you set the `name` option beside it:
+
+```jsonc
+{
+    "plugins": [
+        {
+            "package": "@markstanden/opencode-docs-plugin",
+            "options": { "root": "documentation", "name": "doclake" },
+        },
+    ],
+}
+```
+
+`name` only applies to `root`; inside `lakes`, set it on the entry.
 
 For several lakes, list them inline, in a base file, or both. The base file is
 usually a personal or managed file; the repo file adds local lakes:

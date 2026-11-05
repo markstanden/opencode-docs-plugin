@@ -117,6 +117,33 @@ describe("resolveLakes", () => {
         assert.equal(lakes[0]?.name, "docs");
     });
 
+    it("names the root lake when the name option is set", () => {
+        const location = tempDir();
+
+        const lakes = resolveLakes(
+            { root: "documentation", name: "doclake" },
+            location,
+        );
+
+        assert.equal(lakes[0]?.name, "doclake");
+        assert.equal(lakes[0]?.root, join(location, "documentation"));
+    });
+
+    it("names the root lake after its folder when the name is unset", () => {
+        const location = tempDir();
+
+        const lakes = resolveLakes({ root: "documentation" }, location);
+
+        assert.equal(lakes[0]?.name, "documentation");
+    });
+
+    it("throws when name is set without root", () => {
+        assert.throws(
+            () => resolveLakes({ name: "doclake" }, tempDir()),
+            /names the 'root' lake/,
+        );
+    });
+
     it("merges a base file, the repo file, and inline lakes", () => {
         const location = tempDir();
         const machine = tempDir();
