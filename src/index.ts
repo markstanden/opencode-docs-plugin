@@ -100,10 +100,20 @@ export const DOCS_INPUT = Schema.Struct({
     ),
     add: Schema.optional(
         Schema.Struct({
+            mode: Schema.Literals(["create", "replace"]).annotate({
+                description:
+                    "Required: create (new doc, never overwrites) or replace (wholesale-replaces the doc at path).",
+            }),
             path: Schema.optional(
                 Schema.String.annotate({
                     description:
-                        "Update target, e.g. `guides/getting-started.md`, relative to the lake root: replaces that doc wholesale, so omitted body content is lost, and skips the near-twin reconcile. Omit to create `<Area>/<slug>.md` from the H1.",
+                        "create: optional, derived from Area and the H1 when omitted. replace: required; the existing doc to replace.",
+                }),
+            ),
+            allowNearTwinReason: Schema.optional(
+                Schema.String.annotate({
+                    description:
+                        "create only: non-blank reason to write despite a same-area near-twin; bypasses only that guard.",
                 }),
             ),
             metadata: Schema.Struct({
@@ -120,19 +130,19 @@ export const DOCS_INPUT = Schema.Struct({
             }),
         }).annotate({
             description:
-                "The only mutating mode: writes a new knowledge doc, or wholesale-replaces the doc at `path`. Refused: blank metadata, path traversal, a non-.md or symlinked target, no claim section, and a same-area near-twin when `path` is omitted. Wiki lakes are read-only.",
+                "The mutating call. create: the target must not exist; an explicit path gets the same checks as a derived one. replace: path must name an existing doc — never creates. Refused: blank metadata, path traversal, a non-.md or symlinked target, no claim section, near-twins without allowNearTwinReason. Wiki lakes are read-only.",
         }),
     ),
     check: Schema.optional(
         Schema.Boolean.annotate({
             description:
-                "Validate every knowledge doc: front-matter, an H1, a claim section, no hand-maintained Date, a distinctive H1+Keywords identity, near-twins, broken relative links, a soft length note. Only writable knowledge lakes are validated; read-only lakes, wiki lakes and READMEs are not, and skipped lakes are named.",
+                "Validate every knowledge doc: front-matter, an H1, a claim section, no hand-maintained Date, a distinctive H1+Keywords identity, near-twins, broken relative links, a soft length note. Only writable knowledge lakes are validated; skipped lakes are named.",
         }),
     ),
     read: Schema.optional(
         Schema.String.annotate({
             description:
-                "A root-relative doc path, or `lake:path`: returns the doc verbatim, front-matter and body, so find-then-read is one call. Lake docs and wiki pages only; project READMEs use the built-in `read` tool.",
+                "A root-relative doc path, or `lake:path`: returns the doc verbatim, front-matter and body. Lake docs and wiki pages only; project READMEs use the built-in `read` tool.",
         }),
     ),
 });
@@ -145,11 +155,15 @@ export const DOCS_INPUT = Schema.Struct({
 export type DocsInput = Schema.Schema.Type<typeof DOCS_INPUT>;
 
 /**
- * The `add` mode's typed DTO: the single writer's whole input. Pass `path` to
- * update (`docs/<area>/<name>.md`); omit it to create `docs/<Area>/<slug>.md`
- * from the H1.
+ * The `add` mode's typed DTO: the single writer's whole input. `mode` picks
+ * the contract: `create` derives `<Area>/<slug>.md` from the H1 unless an
+ * explicit `path` is given, and never overwrites; `replace` requires the
+ * `path` of an existing doc and replaces it wholesale.
  */
 export type DocsAdd = NonNullable<DocsInput["add"]>;
+
+/** The two mutation modes of {@link DocsAdd}. */
+export type AddMode = DocsAdd["mode"];
 
 /** The typed metadata of a knowledge doc, serialised to front-matter. */
 export type DocMetadata = DocsAdd["metadata"];
@@ -1415,6 +1429,8 @@ export function slugify(text: string): string {
 export type AddOutcome =
     | {
           action: "write";
+          /** The mutation mode the write follows. */
+          mode: AddMode;
           /** Root-relative target. */
           path: string;
           /** The serialised file contents. */
@@ -1455,6 +1471,41 @@ function blankRequiredField(metadata: DocMetadata): string | null {
 }
 
 /**
+ * The mutation mode of an `add` request, guarded for direct core callers:
+ * the typed schema requires `mode`, but nothing stops a JS caller bypassing
+ * it, so the core refuses rather than guessing.
+ * @param add The typed request, as delivered.
+ * @returns The mode, or the refusal reason.
+ */
+function modeOf(add: DocsAdd): AddMode | { reason: string } {
+    if (add.mode === "create" || add.mode === "replace") {
+        return add.mode;
+    }
+    return {
+        reason:
+            'mode is required and must be "create" (write a new doc) or ' +
+            '"replace" (wholesale-replace the doc at path).',
+    };
+}
+
+/**
+ * Whether a create's deliberate near-twin override is present: a non-blank,
+ * non-empty explanation. It bypasses only the semantic near-twin guard, never
+ * the structural checks or the target state.
+ * @param add The typed request.
+ * @returns True when the override may be used in this mode.
+ */
+function overrideGiven(add: DocsAdd): boolean {
+    if (add.mode !== "create") {
+        return false;
+    }
+    return (
+        typeof add.allowNearTwinReason === "string" &&
+        add.allowNearTwinReason.trim() !== ""
+    );
+}
+
+/**
  * Validate an explicit `add` path: relative, inside the lake root, naming a
  * `.md` file.
  * @param given The trimmed, non-empty `path` the caller supplied.
@@ -1483,8 +1534,9 @@ function explicitTarget(given: string): { path: string } | { reason: string } {
 
 /**
  * The root-relative target path for an `add`, or the reason it is refused.
- * An explicit path must stay inside the lake root and name a `.md` file; an
- * omitted path derives `<Area>/<slug>.md` from the H1.
+ * An explicit path must stay inside the lake root and name a `.md` file; a
+ * create with no path derives `<Area>/<slug>.md` from the H1; a replace has
+ * no path to derive — its `path` is required.
  * @param add The typed request.
  * @returns The target path, or the refusal reason.
  */
@@ -1492,6 +1544,11 @@ function targetOf(add: DocsAdd): { path: string } | { reason: string } {
     const given = add.path?.trim() ?? "";
     if (given !== "") {
         return explicitTarget(given);
+    }
+    if (add.mode === "replace") {
+        return {
+            reason: "replace requires the path of the existing doc to replace.",
+        };
     }
     const slug = slugify(h1Of(add.body) ?? "");
     if (slug === "") {
@@ -1561,8 +1618,10 @@ export function nearTwins(
 }
 
 /**
- * The near-twin refusal for an `add`, or null when the write may proceed.
- * An explicit path is the update contract and skips reconcile.
+ * The near-twin refusal for a create, or null when the write may proceed.
+ * Every create reconciles — derived and explicit paths alike — unless the
+ * caller supplies a non-blank {@link DocsAdd.allowNearTwinReason}; replace is
+ * the deliberate update contract and has no create guard.
  * @param add The typed request.
  * @param entries The current docs.
  * @returns The refusal, or null.
@@ -1571,7 +1630,7 @@ function nearTwinRefusal(
     add: DocsAdd,
     entries: readonly DocEntry[],
 ): AddOutcome | null {
-    if ((add.path?.trim() ?? "") !== "") {
+    if (add.mode !== "create" || overrideGiven(add)) {
         return null;
     }
     const nearTwinDocs = nearTwins(
@@ -1586,23 +1645,92 @@ function nearTwinRefusal(
         action: "refuse",
         reason:
             `${REFUSE} ${add.metadata.Area} already holds a near-twin of ` +
-            "this doc. Pass its path to update it, or a different path " +
-            "to write anyway:\n\n" +
+            'this doc. Pass its path with mode:"replace" to replace it, ' +
+            "or a non-blank allowNearTwinReason to write a deliberate " +
+            "distinct doc:\n\n" +
             render(nearTwinDocs),
         candidates: nearTwinDocs,
     };
 }
 
 /**
+ * The refusal for a misused `allowNearTwinReason`, or null. Replace has no
+ * near-twin guard, so the field is meaningless there; a create must explain
+ * the override in non-blank prose.
+ * @param add The typed request.
+ * @returns The refusal reason, or null when the field is acceptable.
+ */
+function overrideRefusal(add: DocsAdd): string | null {
+    if (add.allowNearTwinReason === undefined) {
+        return null;
+    }
+    if (add.mode === "replace") {
+        return (
+            "allowNearTwinReason is create-only; replace has no " +
+            "near-twin guard to bypass."
+        );
+    }
+    if (
+        typeof add.allowNearTwinReason !== "string" ||
+        add.allowNearTwinReason.trim() === ""
+    ) {
+        return (
+            "allowNearTwinReason must be a non-blank explanation of why " +
+            "this doc is distinct from its near-twin."
+        );
+    }
+    return null;
+}
+
+/**
+ * The refusal for DTO content a knowledge doc may not carry: blank required
+ * metadata, an `Area` off the root, a missing `H1`, no claim section, or an
+ * identity too weak to reconcile.
+ * @param add The typed request.
+ * @returns The refusal reason, or null when the content is acceptable.
+ */
+function contentRefusal(add: DocsAdd): string | null {
+    const blank = blankRequiredField(add.metadata);
+    if (blank !== null) {
+        return `${blank} is required and must not be blank.`;
+    }
+    if (/[/\\]|\.\./.test(add.metadata.Area)) {
+        return "Area must be a single folder name under the lake root.";
+    }
+    if (h1Of(add.body) === undefined) {
+        return "The body must carry an H1 (`# Title`).";
+    }
+    // The same rule `check` applies, enforced before anything touches disk: a
+    // doc that `check` would flag on the next run should never be written.
+    if (!hasClaimSection(add.body)) {
+        return (
+            "the body carries no claim section; add an H2/H3 headed Facts, " +
+            "Inferred, Tested, Failed approaches or Open questions."
+        );
+    }
+    if (!hasDistinctiveIdentity(reconcileQuery(add))) {
+        return (
+            `the H1 and Keywords together carry no term of MIN_TERM_LENGTH ` +
+            `(${MIN_TERM_LENGTH}) or longer; add a distinctive term so ` +
+            "reconcile can tell this doc apart."
+        );
+    }
+    return null;
+}
+
+/**
  * Validate an `add` request and prepare it for writing — pure, no fs.
  *
- * Trust boundary: the caller is a model. Blank required metadata, a body
- * without an H1, a path or `Area` escaping the lake root, a non-`.md` target
- * and a title that yields no slug are all refused. With `path` omitted the
- * target is `<Area>/<slug>.md` and a same-area near-twin — a doc matching every
- * reconcile query term ({@link reconcileQuery}) — refuses the write with the
- * candidates attached; an explicit `path` is the update contract (wholesale
- * replacement) and skips reconcile.
+ * Trust boundary: the caller is a model. `mode` is required: `create` derives
+ * the target from `Area` and the H1 unless an explicit `path` is given, and
+ * reconciles against same-area near-twins either way; `replace` requires the
+ * path of an existing doc. Blank required metadata, a body without an H1, a
+ * path or `Area` escaping the lake root, a non-`.md` target and a title that
+ * yields no slug are all refused. A same-area near-twin — a doc matching every
+ * reconcile query term ({@link reconcileQuery}) — refuses a create unless a
+ * non-blank `allowNearTwinReason` explains the deliberate distinct doc.
+ * Target existence is the caller seam's to verify: creates must not overwrite
+ * and replaces must exist.
  * @param add The typed request.
  * @param entries The current docs, for reconcile and neighbours.
  * @param options Soft-limit configuration.
@@ -1620,30 +1748,17 @@ export function prepareAdd(
         candidates: [],
     });
 
-    const blank = blankRequiredField(add.metadata);
-    if (blank !== null) {
-        return refuse(`${blank} is required and must not be blank.`);
+    const mode = modeOf(add);
+    if (typeof mode !== "string") {
+        return refuse(mode.reason);
     }
-    if (/[/\\]|\.\./.test(add.metadata.Area)) {
-        return refuse("Area must be a single folder name under the lake root.");
+    const override = overrideRefusal(add);
+    if (override !== null) {
+        return refuse(override);
     }
-    if (h1Of(add.body) === undefined) {
-        return refuse("The body must carry an H1 (`# Title`).");
-    }
-    // The same rule `check` applies, enforced before anything touches disk: a
-    // doc that `check` would flag on the next run should never be written.
-    if (!hasClaimSection(add.body)) {
-        return refuse(
-            "the body carries no claim section; add an H2/H3 headed Facts, " +
-                "Inferred, Tested, Failed approaches or Open questions.",
-        );
-    }
-    if (!hasDistinctiveIdentity(reconcileQuery(add))) {
-        return refuse(
-            `the H1 and Keywords together carry no term of MIN_TERM_LENGTH ` +
-                `(${MIN_TERM_LENGTH}) or longer; add a distinctive term so ` +
-                "reconcile can tell this doc apart.",
-        );
+    const content = contentRefusal(add);
+    if (content !== null) {
+        return refuse(content);
     }
     const target = targetOf(add);
     if ("reason" in target) {
@@ -1662,6 +1777,7 @@ export function prepareAdd(
         .slice(0, MAX_RESULTS);
     return {
         action: "write",
+        mode,
         path: target.path,
         contents: serializeDoc(add.metadata, add.body),
         neighbours,
@@ -3207,25 +3323,95 @@ function checkLakes(
     return { content: assembleCheck(reports, skipped), checked };
 }
 
+/**
+ * The refusal for a write whose target is in the wrong state at the
+ * publication boundary: a create whose target exists (never an implicit
+ * overwrite), or a replace whose target vanished (never an implicit create).
+ * @param target The lake the write lands in.
+ * @param outcome The prepared write.
+ * @param outcome.mode The mutation mode the write follows.
+ * @param outcome.path The root-relative target path.
+ * @param lakes The configured lakes, for the qualified address.
+ * @returns The refusal, or null when the target state allows the write.
+ */
+function publicationRefusal(
+    target: Lake,
+    outcome: { mode: AddMode; path: string },
+    lakes: readonly Lake[],
+): string | null {
+    const labelled = address(target, outcome.path, lakes);
+    const present = target.exists(outcome.path);
+    if (outcome.mode === "create") {
+        return present
+            ? `${REFUSE} ${labelled} already exists — read it and pass ` +
+                  'mode:"replace" to overwrite it deliberately.'
+            : null;
+    }
+    return present
+        ? null
+        : `${REFUSE} no doc at ${labelled} — replace never creates; ` +
+              'pass mode:"create" for a new doc.';
+}
+
+/**
+ * The lake a write lands in, with its root verified present: the destination
+ * refusal ({@link writableLake}) plus the dormant-root refusal in one step, so
+ * a mistyped root never bootstraps a tree.
+ * @param lakes The configured lakes.
+ * @param lakeName The explicit lake selector, when given.
+ * @returns The verified lake, or the refusal reason.
+ */
+function writeTarget(
+    lakes: readonly Lake[],
+    lakeName: string | undefined,
+): Lake | { reason: string } {
+    const target = writableLake(lakes, lakeName);
+    if ("reason" in target) {
+        return target;
+    }
+    if (target.root !== "" && !existsSync(target.root)) {
+        return {
+            reason:
+                `${REFUSE} lake '${target.name}' root ${target.root} does ` +
+                "not exist — create it first.",
+        };
+    }
+    return target;
+}
+
+/**
+ * Publish a prepared write through the lake's seam, translating the seam's
+ * path-safety error into a refusal.
+ * @param target The lake the write lands in.
+ * @param outcome The prepared write.
+ * @param outcome.path The root-relative target path.
+ * @param outcome.contents The serialised file contents.
+ * @returns The refusal on an unsafe path, or null once written.
+ */
+function publish(
+    target: Lake,
+    outcome: { path: string; contents: string },
+): string | null {
+    try {
+        target.write(outcome.path, outcome.contents);
+    } catch (error) {
+        if (error instanceof UnsafePathError) {
+            return `${REFUSE} ${error.message}`;
+        }
+        throw error;
+    }
+    return null;
+}
+
 /** Add a doc to the target lake. */
 function addDoc(
     runtime: Runtime,
     add: DocsAdd,
     lakeName: string | undefined,
 ): { content: string; written: boolean } {
-    const target = writableLake(runtime.lakes, lakeName);
+    const target = writeTarget(runtime.lakes, lakeName);
     if ("reason" in target) {
         return { content: target.reason, written: false };
-    }
-    // A typo'd root must not bootstrap a new tree; the area directories below
-    // an existing root still create on write.
-    if (target.root !== "" && !existsSync(target.root)) {
-        return {
-            content:
-                `${REFUSE} lake '${target.name}' root ${target.root} does ` +
-                "not exist — create it first.",
-            written: false,
-        };
     }
     const entries = target.collect();
     const outcome = prepareAdd(add, entries, {
@@ -3234,22 +3420,23 @@ function addDoc(
     if (outcome.action === "refuse") {
         return { content: outcome.reason, written: false };
     }
-    let updated: boolean;
-    try {
-        updated = target.exists(outcome.path);
-        target.write(outcome.path, outcome.contents);
-    } catch (error) {
-        if (error instanceof UnsafePathError) {
-            return {
-                content: `${REFUSE} ${error.message}`,
-                written: false,
-            };
-        }
-        throw error;
+    // Publication boundary: the target's state is verified as late as the
+    // seams allow — see {@link publicationRefusal}.
+    const refusal = publicationRefusal(target, outcome, runtime.lakes);
+    if (refusal !== null) {
+        return { content: refusal, written: false };
     }
-    const head = `${address(target, outcome.path, runtime.lakes)} — ${
-        updated ? "updated" : "created"
-    }.`;
+    const unsafe = publish(target, outcome);
+    if (unsafe !== null) {
+        return { content: unsafe, written: false };
+    }
+    const head =
+        `${address(target, outcome.path, runtime.lakes)} — ${
+            outcome.mode === "replace" ? "replaced" : "created"
+        }.` +
+        (outcome.mode === "create" && overrideGiven(add)
+            ? " near-twin overridden."
+            : "");
     // The path and outcome are the answer; a list of same-area neighbours was
     // unsolicited context that grew with the area and was picked by collection
     // order, not relevance. Refusals still carry their candidates.
@@ -3523,8 +3710,9 @@ function addPrompt(subject: string): string {
     }
     return (
         "Record this as durable knowledge in the docs lakes: call the `docs` " +
-        "tool's `add` with a typed DTO (metadata Area/Keywords/Summary, body starting " +
-        "with an H1) for:\n\n" +
+        'tool\'s `add` with a typed DTO — mode:"create" for a new doc, ' +
+        "metadata (Area/Keywords/Summary) and a body starting with an H1 — " +
+        "for:\n\n" +
         subject
     );
 }

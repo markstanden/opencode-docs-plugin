@@ -1418,6 +1418,7 @@ describe("createDocsTool", () => {
         const added = await tool.execute(
             {
                 add: {
+                    mode: "create",
                     metadata: {
                         Area: "packages",
                         Keywords: ["widget"],
@@ -1619,6 +1620,7 @@ describe("ranking stability", () => {
 
 /** A well-formed `add` DTO, overridden per test. */
 function addRequest(overrides: Record<string, unknown> = {}): {
+    mode: "create" | "replace";
     metadata: {
         Area: string;
         Keywords: string[];
@@ -1626,8 +1628,10 @@ function addRequest(overrides: Record<string, unknown> = {}): {
     };
     body: string;
     path?: string;
+    allowNearTwinReason?: string;
 } {
     return {
+        mode: "create",
         metadata: { Area: "aa", Keywords: ["alpha"], Summary: "A fresh doc." },
         body: "# Fresh\n\n### Facts\n\n- Something verified.\n",
         ...overrides,
@@ -1876,7 +1880,30 @@ describe("prepareAdd reconcile", () => {
         assert.equal(outcome.action, "write");
     });
 
-    it("skips reconcile when an explicit path is given", async () => {
+    it("reconciles an explicit-path create against same-area twins", async () => {
+        // The old contract let an explicit path bypass reconcile — which made
+        // an explicit _new_ path an unprotected duplicate write. A create is
+        // reconciled whichever way its target is named; mode:replace is the
+        // deliberate update contract.
+        const entries = [
+            entry({
+                path: "aa/target.md",
+                area: "aa",
+                title: "Fresh",
+                keywords: ["alpha"],
+            }),
+        ];
+
+        const outcome = prepareAdd(
+            addRequest({ path: "aa/distinct.md" }),
+            entries,
+        );
+
+        assert.equal(outcome.action, "refuse");
+        assert.match(String(outcome.reason), /\baa\/target\.md/);
+    });
+
+    it("writes an explicit-path create past a near-twin with a non-blank reason", async () => {
         const entries = [
             entry({
                 path: "aa/target.md",
@@ -1886,11 +1913,16 @@ describe("prepareAdd reconcile", () => {
         ];
 
         const outcome = prepareAdd(
-            addRequest({ path: "aa/target.md" }),
+            addRequest({
+                path: "aa/distinct.md",
+                allowNearTwinReason:
+                    "Covers the operator workflow, not the design rationale.",
+            }),
             entries,
         );
 
         assert.equal(outcome.action, "write");
+        assert.equal(outcome.path, "aa/distinct.md");
     });
 
     it("reports same-area neighbours with the write", async () => {
@@ -1954,7 +1986,7 @@ describe("tool add", () => {
         assert.equal(result.metadata?.written, true);
     });
 
-    it("reports updated when the target exists", async () => {
+    it("refuses a create whose target exists, without writing", async () => {
         // Arrange – a lake that already holds the target doc.
         const { seam, written } = memoryFs({ "aa/fresh.md": "# Existing\n" });
         const tool = createDocsTool({ collect: () => [], ...seam });
@@ -1964,8 +1996,33 @@ describe("tool add", () => {
             {} as never,
         );
 
-        assert.match(String(result.content), /\baa\/fresh\.md — updated/);
+        // Assert – never an implicit overwrite; the existing bytes stand.
+        assert.equal(result.metadata?.written, false);
+        assert.match(String(result.content), /already exists/);
+        assert.match(String(result.content), /mode:"replace"/);
+        assert.equal(written.length, 0);
+    });
+
+    it("replaces an existing doc only through mode:replace", async () => {
+        // Arrange – the lake holds the target; the DTO carries mode:replace.
+        const existing =
+            "---\nArea: aa\nKeywords: alpha\nSummary: Old.\n---\n# Old\n";
+        const { seam, written } = memoryFs({ "aa/fresh.md": existing });
+        const tool = createDocsTool({ collect: () => [], ...seam });
+
+        const result = await tool.execute(
+            {
+                add: addRequest({ mode: "replace", path: "aa/fresh.md" }),
+            } as never,
+            {} as never,
+        );
+
+        // Assert – wholesale replacement: the old body is gone.
+        assert.match(String(result.content), /\baa\/fresh\.md — replaced/);
+        assert.equal(result.metadata?.written, true);
         assert.equal(written.length, 1);
+        assert.match(String(written[0]?.contents), /# Fresh/);
+        assert.doesNotMatch(String(written[0]?.contents), /# Old/);
     });
 
     it("refuses a near-twin without writing", async () => {
@@ -2937,6 +2994,7 @@ const corpus: DocEntry[] = (
 describe("reconcileQuery", () => {
     it("joins the H1 and the Keywords, not the Summary", () => {
         const query = reconcileQuery({
+            mode: "create",
             metadata: {
                 Area: "aa",
                 Keywords: ["alpha", "beta"],
@@ -2960,6 +3018,7 @@ describe("reconcile harness (fixture corpus)", () => {
             title?: string;
         } = {},
     ): {
+        mode: "create";
         path?: string;
         metadata: { Area: string; Keywords: string[]; Summary: string };
         body: string;
@@ -2972,10 +3031,12 @@ describe("reconcile harness (fixture corpus)", () => {
             title = "Probe doc",
         } = overrides;
         const request: {
+            mode: "create";
             path?: string;
             metadata: { Area: string; Keywords: string[]; Summary: string };
             body: string;
         } = {
+            mode: "create",
             metadata: { Area: area, Keywords: keywords, Summary: summary },
             body: `# ${title}\n\n### Facts\n\n- Harness fixture.\n`,
         };
@@ -3029,12 +3090,22 @@ describe("reconcile harness (fixture corpus)", () => {
             expect: "write",
         },
         {
-            name: "an explicit path skips reconcile and writes at the target",
+            name: "an explicit-path create reconciles like a derived one",
             request: dto({
                 Keywords: ["widget"],
                 Summary: "The widget install guide.",
                 title: "Widget install",
                 path: "guides/widget-install.md",
+            }),
+            expect: "refuse",
+        },
+        {
+            name: "a distinct explicit-path create writes at its target",
+            request: dto({
+                Keywords: ["unrelated"],
+                Summary: "A doc unrelated to every fixture entry.",
+                title: "Distinct topic probe",
+                path: "guides/distinct-topic.md",
             }),
             expect: "write",
         },
