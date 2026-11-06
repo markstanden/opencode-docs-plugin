@@ -1128,6 +1128,288 @@ describe("soft length note", () => {
     });
 });
 
+describe("call-time lake notes", () => {
+    /** A tool over one repo lake whose root does not exist yet. */
+    function lateLakeTool(): {
+        tool: ReturnType<typeof createDocsTool>;
+        root: string;
+    } {
+        const root = join(tempDir(), "late");
+        const lakes = createLakes([
+            {
+                name: "late",
+                class: "repo",
+                root,
+                profile: "knowledge",
+                writable: true,
+            },
+        ]);
+        return { tool: createDocsTool({ lakes }), root };
+    }
+
+    it("clears the missing-root note without a restart", async () => {
+        const { tool, root } = lateLakeTool();
+
+        const before = await tool.execute({ check: true }, {} as never);
+        const searchBefore = await tool.execute(
+            { search: "probe" },
+            {} as never,
+        );
+
+        mkdirSync(root, { recursive: true });
+        writeFileSync(
+            join(root, "probe.md"),
+            "---\nArea: probe\nKeywords: probe\nSummary: S.\n---\n# Probe\n\n### Facts\n\n- x.\n",
+        );
+
+        const after = await tool.execute({ check: true }, {} as never);
+        const searchAfter = await tool.execute(
+            { search: "probe" },
+            {} as never,
+        );
+
+        assert.match(String(before.content), /does not exist/);
+        assert.equal(before.metadata?.checked, 0);
+        assert.match(String(searchBefore.content), /does not exist/);
+        assert.doesNotMatch(String(after.content), /does not exist/);
+        assert.equal(after.metadata?.checked, 1);
+        assert.doesNotMatch(String(searchAfter.content), /does not exist/);
+        assert.match(String(searchAfter.content), /^probe\.md/m);
+    });
+
+    it("re-emits the note when a root disappears", async () => {
+        const { tool, root } = lateLakeTool();
+        mkdirSync(root, { recursive: true });
+        await tool.execute({ check: true }, {} as never);
+
+        rmSync(root, { recursive: true, force: true });
+        const result = await tool.execute({ check: true }, {} as never);
+
+        assert.match(String(result.content), /does not exist/);
+        assert.equal(result.metadata?.checked, 0);
+    });
+
+    it("clears the unversioned note when the root gains git", async () => {
+        const { tool, root } = lateLakeTool();
+        mkdirSync(root, { recursive: true });
+
+        const before = await tool.execute({ check: true }, {} as never);
+        git(root, ["init", "-q"]);
+        const after = await tool.execute({ check: true }, {} as never);
+
+        assert.match(String(before.content), /not inside a git work tree/);
+        assert.doesNotMatch(
+            String(after.content),
+            /not inside a git work tree/,
+        );
+    });
+
+    it("keeps help in agreement with check", async () => {
+        const { tool, root } = lateLakeTool();
+
+        const before = await tool.execute({ search: "help" }, {} as never);
+        mkdirSync(root, { recursive: true });
+        const after = await tool.execute({ search: "help" }, {} as never);
+
+        assert.match(String(before.content), /— missing/);
+        assert.doesNotMatch(String(after.content), /— missing/);
+    });
+});
+
+describe("nested lakes", () => {
+    /** An outer repo lake (read-only) with a writable lake nested inside. */
+    function nestedTool(): {
+        tool: ReturnType<typeof createDocsTool>;
+        innerRoot: string;
+    } {
+        const outerRoot = tempDir();
+        const innerRoot = join(outerRoot, "inner");
+        writeFileSync(
+            join(outerRoot, "outer.md"),
+            "---\nArea: outer\nKeywords: aurora\nSummary: Outer doc.\n---\n# Outer doc\n\n### Facts\n\n- x.\n",
+        );
+        writeFileSync(
+            join(outerRoot, "sibling.md"),
+            "---\nArea: outer\nKeywords: zephyr\nSummary: Sibling doc.\n---\n# Sibling doc\n\n### Facts\n\n- x.\n",
+        );
+        mkdirSync(innerRoot, { recursive: true });
+        writeFileSync(
+            join(innerRoot, "inner.md"),
+            "---\nArea: inner\nKeywords: borealis\nSummary: Inner doc.\n---\n# Inner doc\n\n### Facts\n\n- x.\n",
+        );
+        const lakes = createLakes([
+            {
+                name: "outer",
+                class: "repo",
+                root: outerRoot,
+                profile: "knowledge",
+                writable: false,
+            },
+            {
+                name: "inner",
+                class: "repo",
+                root: innerRoot,
+                profile: "knowledge",
+                writable: true,
+            },
+        ]);
+        return { tool: createDocsTool({ lakes }), innerRoot };
+    }
+
+    it("attributes the inner doc to the inner lake only", async () => {
+        const { tool } = nestedTool();
+
+        const checked = await tool.execute({ check: true }, {} as never);
+        const found = await tool.execute({ search: "inner" }, {} as never);
+
+        const content = String(checked.content);
+        assert.match(content, /outer:\nAll 2 docs comply\./);
+        assert.match(content, /inner:\nAll 1 docs comply\./);
+        assert.doesNotMatch(content, /outer:.*inner\.md/);
+        assert.equal(checked.metadata?.checked, 3);
+        assert.match(String(found.content), /^inner:inner\.md/m);
+        assert.doesNotMatch(String(found.content), /outer:.*inner\.md/);
+    });
+
+    it("keeps a sibling of the nested root in the outer lake", async () => {
+        const { tool } = nestedTool();
+
+        const found = await tool.execute({ search: "zephyr" }, {} as never);
+
+        assert.match(String(found.content), /^sibling\.md/m);
+        assert.doesNotMatch(String(found.content), /inner:sibling\.md/m);
+    });
+
+    it("keeps near-twin pairing inside each lake", async () => {
+        const outerRoot = tempDir();
+        const innerRoot = join(outerRoot, "inner");
+        const twin = (name: string): string =>
+            `---\nArea: trap\nKeywords: gateway\nSummary: Trap.\n---\n# Gateway trap\n\n### Facts\n\n- ${name}.\n`;
+        for (const name of ["a.md", "b.md"]) {
+            writeFileSync(join(outerRoot, name), twin(name));
+        }
+        mkdirSync(innerRoot, { recursive: true });
+        writeFileSync(join(innerRoot, "twin.md"), twin("inner"));
+        const lakes = createLakes([
+            {
+                name: "outer",
+                class: "repo",
+                root: outerRoot,
+                profile: "knowledge",
+                writable: false,
+            },
+            {
+                name: "inner",
+                class: "repo",
+                root: innerRoot,
+                profile: "knowledge",
+                writable: true,
+            },
+        ]);
+        const tool = createDocsTool({ lakes });
+
+        const result = await tool.execute({ check: true }, {} as never);
+        const content = String(result.content);
+
+        assert.match(content, /outer:\n[^]*a\.md and b\.md: near-twins/);
+        assert.match(content, /inner:\nAll 1 docs comply\./);
+        assert.doesNotMatch(content, /inner:\n[^]*near-twins/);
+    });
+
+    it("writes to the deepest writable lake when the outer is read-only", async () => {
+        const { tool, innerRoot } = nestedTool();
+
+        const result = await tool.execute(
+            {
+                add: {
+                    metadata: {
+                        Area: "new",
+                        Keywords: ["new"],
+                        Summary: "New.",
+                    },
+                    body: "# New\n\n### Facts\n\n- x.\n",
+                },
+            } as never,
+            {} as never,
+        );
+
+        assert.equal(result.metadata?.written, true);
+        assert.match(String(result.content), /^inner:new\/new\.md — created/);
+        assert.ok(existsSync(join(innerRoot, "new", "new.md")));
+    });
+
+    it("reads a bare path from the narrowest enclosing lake", async () => {
+        const outerRoot = tempDir();
+        const innerRoot = join(outerRoot, "inner");
+        const doc = (title: string): string =>
+            `---\nArea: shared\nKeywords: shared\nSummary: ${title}.\n---\n# ${title}\n`;
+        writeFileSync(join(outerRoot, "shared.md"), doc("Outer shared"));
+        mkdirSync(innerRoot, { recursive: true });
+        writeFileSync(join(innerRoot, "shared.md"), doc("Inner shared"));
+        const lakes = createLakes([
+            {
+                name: "outer",
+                class: "repo",
+                root: outerRoot,
+                profile: "knowledge",
+                writable: true,
+            },
+            {
+                name: "inner",
+                class: "repo",
+                root: innerRoot,
+                profile: "knowledge",
+                writable: true,
+            },
+        ]);
+        const tool = createDocsTool({ lakes });
+
+        const result = await tool.execute({ read: "shared.md" }, {} as never);
+
+        assert.match(String(result.content), /^inner:shared\.md — Inner/);
+    });
+
+    it("keeps a symlinked inner root contained on real paths", async () => {
+        const outerRoot = tempDir();
+        const innerReal = join(outerRoot, "inner");
+        const alias = join(tempDir(), "inner-alias");
+        writeFileSync(
+            join(outerRoot, "outer.md"),
+            "---\nArea: outer\nKeywords: outer\nSummary: Outer.\n---\n# Outer\n\n### Facts\n\n- x.\n",
+        );
+        mkdirSync(innerReal, { recursive: true });
+        writeFileSync(
+            join(innerReal, "inner.md"),
+            "---\nArea: inner\nKeywords: inner\nSummary: Inner.\n---\n# Inner\n\n### Facts\n\n- x.\n",
+        );
+        symlinkSync(innerReal, alias, "dir");
+        const lakes = createLakes([
+            {
+                name: "outer",
+                class: "repo",
+                root: outerRoot,
+                profile: "knowledge",
+                writable: true,
+            },
+            {
+                name: "inner",
+                class: "repo",
+                root: alias,
+                profile: "knowledge",
+                writable: true,
+            },
+        ]);
+        const tool = createDocsTool({ lakes });
+
+        const checked = await tool.execute({ check: true }, {} as never);
+        const found = await tool.execute({ search: "inner" }, {} as never);
+
+        assert.match(String(checked.content), /inner:\nAll 1 docs comply\./);
+        assert.equal(checked.metadata?.checked, 2);
+        assert.match(String(found.content), /^inner:inner\.md/m);
+        assert.doesNotMatch(String(found.content), /^outer:inner\/inner\.md/m);
+    });
+});
 describe("config validation", () => {
     it("rejects a non-array lakes option", () => {
         assert.throws(
