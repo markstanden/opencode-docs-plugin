@@ -52,9 +52,9 @@ authoritative):
 Record through the typed `add`: metadata (`Area`, `Keywords`, `Summary`) plus a
 body with an `H1` and a claim section — Facts, Inferred, Tested, Failed approaches, Open questions. `mode:"create"` writes a new doc (never overwrites; near-twins refuse unless `allowNearTwinReason` explains the distinction). `mode:"replace"` wholesale-replaces the doc at `path` against your `expectedRevision` (omitted content is lost; a missing target or stale token refuses, never creates). Refused always: blank metadata, traversal, a non-`.md` or symlinked target, no claim section.
 
-A doc is current or deleted; no `Status` or `Supersedes`. A failed attempt is
-valid knowledge: what was tried, why it failed, what is true now, what not to
-retry.
+A doc is current or deleted; a failed attempt is valid knowledge (what was
+tried, why it failed, what is true now). Knowledge reads and writes end with a
+`docs: revision` line: the replace token.
 
 Lead with the actionable fact, its reason, limits and evidence; drop
 chronology and empty sections. Keep the
@@ -69,11 +69,11 @@ variable, never the value — and no personal data in Organisation or Wiki.
 `check` audits the **writable** knowledge lakes: front-matter, an `H1`, a claim
 section, no hand-maintained `Date`, a distinctive identity, near-twins and broken
 relative links. Obsolete fields, long docs (`maxDocLines`, default 200, `0`
-disables) and missing roots are **notes**, not findings. Validation follows
-writability — read-only lakes, wiki lakes and READMEs are not validated, and
-skipped lakes are named; a very large report is capped with an `and N more
-lines not shown` tail. `add` enforces the structural rules at the write
-boundary; cross-document audits stay with `check`.
+disables) and missing roots are **notes**, not findings. Read-only lakes, wiki
+lakes and READMEs are searched but not validated; skipped lakes are named, a
+very large report is capped with an `and N more lines not shown` tail. `add`
+enforces the structural rules at the write boundary; cross-document audits
+stay with `check`.
 
 Run the project's tests and typecheck before proposing a commit; prepare it
 and **wait for explicit approval** — recording is not approval. Never push.

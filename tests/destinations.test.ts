@@ -591,6 +591,308 @@ describe("write destination selection", () => {
             /^alpha:aa\/beta-note\.md — created/,
         );
     });
+
+    it("counts every writable candidate even across nested branches (D02, D03)", async () => {
+        // Arrange – an outer lake with two nested writable branches plus one
+        // unrelated writable machine lake: candidate depths 0, 1, 1, 2.
+        const outer = spec("outer", "repo");
+        const branchA = spec("branch-a", "repo");
+        const branchB = spec("branch-b", "repo");
+        const personal = spec("personal", "machine");
+        branchA.root = join(outer.root, "branch-a");
+        branchB.root = join(outer.root, "peel/branch-b");
+        mkdirSync(branchA.root, { recursive: true });
+        mkdirSync(branchB.root, { recursive: true });
+        const tool = toolOf([outer, branchA, branchB, personal]);
+        const before = [
+            snapshot(outer.root),
+            snapshot(branchA.root),
+            snapshot(branchB.root),
+            snapshot(personal.root),
+        ];
+
+        const result = await tool.execute(
+            { add: addPayload("Ambiguous") } as never,
+            {} as never,
+        );
+
+        // Assert – the refusal lists all four, not just maximum-depth ones;
+        // no docs or area directories appear anywhere.
+        assert.equal(result.metadata?.written, false);
+        const content = String(result.content);
+        for (const name of ["outer", "branch-a", "branch-b", "personal"]) {
+            assert.match(
+                content,
+                new RegExp(`- ${name} \\(`),
+                `candidate ${name} missing from the refusal`,
+            );
+        }
+        assert.doesNotMatch(content, /1 writable knowledge lake could/);
+        for (const [index, root] of [
+            outer.root,
+            branchA.root,
+            branchB.root,
+            personal.root,
+        ].entries()) {
+            assert.deepEqual(snapshot(root), before[index]);
+        }
+    });
+
+    it("keeps a nested pairing ambiguous despite the nesting relation (D02)", async () => {
+        // Arrange – exactly outer + inner writable lakes.
+        const outer = spec("outer", "repo");
+        const inner = spec("inner", "repo");
+        inner.root = join(outer.root, "inner");
+        mkdirSync(inner.root, { recursive: true });
+        const tool = toolOf([outer, inner]);
+        const before = snapshot(outer.root);
+
+        const result = await tool.execute(
+            { add: addPayload("Ambiguous") } as never,
+            {} as never,
+        );
+
+        assert.equal(result.metadata?.written, false);
+        const content = String(result.content);
+        assert.match(content, /- outer \(/);
+        assert.match(content, /- inner \(/);
+        assert.deepEqual(snapshot(outer.root), before);
+        assert.equal(existsSync(join(inner.root, "aa")), false);
+    });
+
+    it("keeps a missing deepest candidate in the ambiguity list (D04)", async () => {
+        // Arrange – outer healthy writable, nested branch writable but its
+        // root does not exist yet, plus the unrelated personal lake.
+        const outer = spec("outer", "repo");
+        const branch = spec("branch", "repo");
+        const personal = spec("personal", "machine");
+        branch.root = join(outer.root, "absent-branch");
+        const tool = toolOf([outer, branch, personal]);
+        const before = [snapshot(outer.root), snapshot(personal.root)];
+
+        const result = await tool.execute(
+            { add: addPayload("Ambiguous") } as never,
+            {} as never,
+        );
+
+        assert.equal(result.metadata?.written, false);
+        const content = String(result.content);
+        assert.match(content, /branch \(Repository \[repo\]\).*— missing root/);
+        assert.match(content, /- outer \(/);
+        assert.match(content, /- personal \(/);
+        assert.deepEqual(snapshot(outer.root), before[0]);
+        assert.deepEqual(snapshot(personal.root), before[1]);
+        assert.equal(existsSync(branch.root), false);
+    });
+
+    it("writes only the explicitly selected lake in a nested+personal config (D07)", async () => {
+        const outer = spec("outer", "repo");
+        const inner = spec("inner", "repo");
+        const personal = spec("personal", "machine");
+        inner.root = join(outer.root, "inner");
+        mkdirSync(inner.root, { recursive: true });
+        const tool = toolOf([outer, inner, personal]);
+
+        const outerBefore = [snapshot(outer.root), snapshot(inner.root)];
+        const outerWrite = await tool.execute(
+            { lake: "outer", add: addPayload("Ambiguous") } as never,
+            {} as never,
+        );
+        // Assert – the outer selection lands in the outer tree only.
+        assert.equal(outerWrite.metadata?.written, true);
+        assert.equal(outerWrite.metadata?.lake, "outer");
+        assert.ok(existsSync(join(outer.root, "aa/ambiguous.md")));
+        assert.deepEqual(snapshot(inner.root), outerBefore[1]);
+
+        const innerBefore = snapshot(personal.root);
+        const innerWrite = await tool.execute(
+            { lake: "inner", add: addPayload("Ambiguous") } as never,
+            {} as never,
+        );
+        assert.equal(innerWrite.metadata?.written, true);
+        assert.equal(innerWrite.metadata?.lake, "inner");
+        assert.ok(existsSync(join(inner.root, "aa/ambiguous.md")));
+        assert.deepEqual(snapshot(personal.root), innerBefore);
+
+        const personalWrite = await tool.execute(
+            { lake: "personal", add: addPayload("Ambiguous") } as never,
+            {} as never,
+        );
+        assert.equal(personalWrite.metadata?.written, true);
+        assert.equal(personalWrite.metadata?.lake, "personal");
+        assert.ok(existsSync(join(personal.root, "aa/ambiguous.md")));
+    });
+
+    it("runs the twin and native with the same schema/core (D09)", async () => {
+        // Arrange – the D02 nested ambiguity, and a separate D06 config whose
+        // only writable lake is personal beside read-only company.
+        const outer = spec("outer", "repo");
+        const inner = spec("inner", "repo");
+        const wiki = spec("wiki", "wiki");
+        const archive = spec("archive", "repo", { writable: false });
+        inner.root = join(outer.root, "inner");
+        mkdirSync(inner.root, { recursive: true });
+        const ambiguous = createLakes([outer, inner, wiki, archive]);
+        const native = createDocsTool({ lakes: ambiguous });
+        const twin = createDocsTool(
+            { lakes: ambiguous },
+            { name: "docs_search", codemode: true },
+        );
+
+        // Assert – the ambiguous omission and the explicit unknown refuse
+        // identically through both surfaces (same config, no mutation).
+        for (const input of [
+            { add: addPayload("Ambiguous") },
+            { lake: "ghost", add: addPayload("Ambiguous") },
+        ] as Array<Parameters<typeof native.execute>[0]>) {
+            const nativeResult = await native.execute(
+                input as never,
+                {} as never,
+            );
+            const twinResult = await twin.execute(input as never, {} as never);
+            assert.equal(
+                String(nativeResult.content),
+                String(twinResult.content),
+            );
+            assert.deepEqual(nativeResult.metadata, twinResult.metadata);
+            assert.equal(nativeResult.metadata?.written, false);
+        }
+
+        // Assert – a write runs through both surfaces of the shared core: the
+        // twin replaces using the token it obtained from the native create's
+        // surfaced result.
+        const sole = createLakes([spec("personal", "machine"), wiki, archive]);
+        const soleReadOnlyA = createDocsTool({ lakes: sole });
+        const soleTwin = createDocsTool(
+            { lakes: sole },
+            { name: "docs_search", codemode: true },
+        );
+        const createInput = { add: addPayload("Sole note") } as never;
+        const nativeCreate = await soleReadOnlyA.execute(
+            createInput,
+            {} as never,
+        );
+        assert.equal(nativeCreate.metadata?.written, true);
+        assert.equal(nativeCreate.metadata?.lake, "personal");
+        const surfaced = (nativeCreate.metadata as { revision?: string })
+            .revision;
+        assert.match(
+            String(nativeCreate.content),
+            /docs: revision [0-9a-f]{64} —/,
+            "the token is visible in the result text, not only in metadata",
+        );
+        const twinReplace = await soleTwin.execute(
+            {
+                add: {
+                    mode: "replace",
+                    path: "aa/sole-note.md",
+                    expectedRevision: surfaced,
+                    metadata: {
+                        Area: "aa",
+                        Keywords: ["Sole note"],
+                        Summary: "Sole note summary.",
+                    },
+                    body: "# Sole note\n\n### Facts\n\n- Replaced by the twin.\n",
+                },
+            } as never,
+            {} as never,
+        );
+        assert.equal(twinReplace.metadata?.written, true);
+        assert.equal(twinReplace.metadata?.lake, "personal");
+        assert.equal(twinReplace.metadata?.path, "aa/sole-note.md");
+        const personalRoot = sole[0]?.root ?? "";
+        assert.match(
+            readFileSync(join(personalRoot, "aa/sole-note.md"), "utf8"),
+            /Replaced by the twin/,
+        );
+    });
+
+    it("keeps refusals stable and complete across repeated reorders (D05)", async () => {
+        // Arrange – one configuration, its reverse, and a rotation; the
+        // omitted selector refuses each time with the same candidate set.
+        const outer = spec("outer", "repo");
+        const branch = spec("branch", "repo");
+        const personal = spec("personal", "machine");
+        branch.root = join(outer.root, "branch");
+        mkdirSync(branch.root, { recursive: true });
+        const payload = addPayload("Ordered");
+
+        const orders = [
+            [outer, branch, personal],
+            [personal, branch, outer],
+            [branch, personal, outer],
+        ];
+        const contents: string[] = [];
+        for (const order of orders) {
+            const result = await toolOf(order).execute(
+                { add: payload } as never,
+                {} as never,
+            );
+            assert.equal(result.metadata?.written, false);
+            contents.push(String(result.content));
+        }
+        const names = (text: string): string[] =>
+            [...text.matchAll(/^- (\w+) \(/gm)].map((match) => match[1] ?? "");
+        // Same refusal semantics every time, and the same complete candidate
+        // set listed every time, whatever the configuration order (the order
+        // inside the list follows the configuration).
+        const sets = new Set(
+            contents.map((text) => names(text).toSorted().join("|")),
+        );
+        assert.equal(sets.size, 1);
+        assert.deepEqual(names(contents[0] ?? "").toSorted(), [
+            "branch",
+            "outer",
+            "personal",
+        ]);
+    });
+
+    it("keeps the sole writable default working beside read-only lakes (D06)", async () => {
+        const outer = spec("outer", "repo", { writable: false });
+        const personal = spec("personal", "machine");
+        const wiki = spec("wiki", "wiki");
+        const archive = spec("archive", "repo", { writable: false });
+        const tool = toolOf([outer, personal, wiki, archive]);
+        const before = [snapshot(outer.root), snapshot(archive.root)];
+
+        const result = await tool.execute(
+            { add: addPayload("Sole note") } as never,
+            {} as never,
+        );
+
+        assert.equal(result.metadata?.written, true);
+        assert.equal(result.metadata?.lake, "personal");
+        assert.ok(existsSync(join(personal.root, "aa/sole-note.md")));
+        assert.deepEqual(snapshot(outer.root), before[0]);
+        assert.deepEqual(snapshot(archive.root), before[1]);
+    });
+
+    it("refuses an explicit unknown, read-only or missing-root destination (D08)", async () => {
+        // Arrange – three writable lakes; each explicit selection unusable.
+        const outer = spec("outer", "repo");
+        const personal = spec("personal", "machine");
+        const gone = spec("ghost", "machine", { missing: true });
+        const archive = spec("archive", "repo", { writable: false });
+        const tool = toolOf([outer, personal, gone, archive]);
+        const add = addPayload("D08");
+        const before = [snapshot(outer.root), snapshot(personal.root)];
+
+        const cases = await Promise.all([
+            tool.execute({ lake: "nowhere", add } as never, {} as never),
+            tool.execute({ lake: "archive", add } as never, {} as never),
+            tool.execute({ lake: "ghost", add } as never, {} as never),
+        ]);
+
+        for (const result of cases) {
+            assert.equal(result.metadata?.written, false);
+        }
+        assert.match(String(cases[0]?.content), /no lake named 'nowhere'/);
+        assert.match(String(cases[1]?.content), /read-only/);
+        assert.match(String(cases[2]?.content), /does not exist/);
+        assert.deepEqual(snapshot(outer.root), before[0]);
+        assert.deepEqual(snapshot(personal.root), before[1]);
+        assert.equal(existsSync(gone.root), false);
+    });
 });
 
 describe("placement evaluation fixture", () => {
