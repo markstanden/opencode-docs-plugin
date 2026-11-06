@@ -1,0 +1,390 @@
+[
+    {
+        "id": "E01",
+        "claim": "This docs plugin omits free prose from knowledge indexing to keep search noise down.",
+        "evidence": "The indexing code and its tests; a design note in the PR that introduced it.",
+        "destinations": [
+            {
+                "name": "docs",
+                "class": "repo",
+                "description": "This repository's decisions and traps."
+            },
+            {
+                "name": "doclake",
+                "class": "machine",
+                "description": "Personal devices and tooling preferences."
+            },
+            {
+                "name": "wiki",
+                "class": "wiki",
+                "description": "Human-facing reference."
+            }
+        ],
+        "expected": "Repository",
+        "accepts": [
+            "An implementation decision of this codebase; any maintainer of the repo needs it."
+        ],
+        "temptingWrong": [
+            "Personal because the author decided it at their workstation.",
+            "A knowledge-lake write at global scope because other projects could index prose too."
+        ]
+    },
+    {
+        "id": "E02",
+        "claim": "Kylo (this workstation) needs the specific Secure Boot chain enabled because of its firmware constraints.",
+        "evidence": "Firmware setup logs from the machine; the reinstall notes that fixed boot.",
+        "destinations": [
+            {
+                "name": "docs",
+                "class": "repo",
+                "description": "This repository's decisions and traps."
+            },
+            {
+                "name": "doclake",
+                "class": "machine",
+                "description": "Personal machines: Kylo, other workstations."
+            }
+        ],
+        "expected": "Personal",
+        "accepts": [
+            "A fact about one named host; machine-scoped context is valid personal knowledge."
+        ],
+        "temptingWrong": [
+            "Repository because the fact was learned while working in the repo.",
+            "Organisation because colleagues might have the same laptop model."
+        ]
+    },
+    {
+        "id": "E03",
+        "claim": "The individual's editor keymap and theme preferences travel across their laptops via a dotfiles repo.",
+        "evidence": "The dotfiles repo and the sync script.",
+        "destinations": [
+            {
+                "name": "docs",
+                "class": "repo",
+                "description": "This repository's decisions and traps."
+            },
+            {
+                "name": "doclake",
+                "class": "machine",
+                "description": "Personal devices, accounts and preferences."
+            }
+        ],
+        "expected": "Personal",
+        "accepts": [
+            "Depends on one person's devices and preferences, not on any repository."
+        ],
+        "temptingWrong": [
+            "Repository of the dotfiles repo because the files live there.",
+            "Organisation because a team could standardise keymaps."
+        ]
+    },
+    {
+        "id": "E04",
+        "claim": "Deployments to the organisation's maintained services authenticate through the platform team's workload identity federation.",
+        "evidence": "The platform team's published integration guide; working pipeline configurations in several repos.",
+        "destinations": [
+            {
+                "name": "docs",
+                "class": "repo",
+                "description": "This repository's decisions and traps."
+            },
+            {
+                "name": "global",
+                "class": "global",
+                "description": "Standards and integrations owned by the platform team."
+            }
+        ],
+        "expected": "Organisation",
+        "accepts": [
+            "An established shared integration owned by a named team; state the boundary."
+        ],
+        "temptingWrong": [
+            "Repository because the pipeline that uses it lives in one repo.",
+            "Personal because the author configured one pipeline themselves."
+        ]
+    },
+    {
+        "id": "E05",
+        "claim": "The retry loop must cap at three attempts because the SDK re-issues duplicate events otherwise; the author suspects this affects all Node projects using the SDK.",
+        "evidence": "A reproduced trace in this repository; no reproduction elsewhere.",
+        "destinations": [
+            {
+                "name": "docs",
+                "class": "repo",
+                "description": "This repository's decisions and traps."
+            },
+            {
+                "name": "global",
+                "class": "global",
+                "description": "Organisation-wide standards."
+            }
+        ],
+        "expected": "Repository",
+        "accepts": [
+            "Record the workaround with its observed conditions here; mark the broader claim as inferred, not established."
+        ],
+        "temptingWrong": [
+            "Global because the suspicion says 'all Node projects'.",
+            "Two docs, one per scope, when only one has evidence."
+        ]
+    },
+    {
+        "id": "E06",
+        "claim": "Exact steps to run this package's test suite and typecheck.",
+        "evidence": "package.json scripts; the repo README.",
+        "destinations": [
+            {
+                "name": "docs",
+                "class": "repo",
+                "description": "This repository's decisions and traps."
+            },
+            {
+                "name": "doclake",
+                "class": "machine",
+                "description": "Personal tooling."
+            }
+        ],
+        "expected": "Instructions",
+        "accepts": [
+            "Operational steps belong beside the code (README workflow); do not write a knowledge doc just to bypass README restrictions."
+        ],
+        "temptingWrong": [
+            "A knowledge doc in the repo lake duplicating npm test.",
+            "Personal because the author has a shell alias for it."
+        ]
+    },
+    {
+        "id": "E07",
+        "claim": "The regression was caused by X; the diagnostic one-liner and its output pin it down.",
+        "evidence": "The command and its result, run in the repo checkout.",
+        "destinations": [
+            {
+                "name": "docs",
+                "class": "repo",
+                "description": "This repository's decisions and traps."
+            }
+        ],
+        "expected": "Repository",
+        "accepts": [
+            "A knowledge doc may keep the minimal diagnostic command and result that substantiate the claim; link to the maintained runbook for repeated use."
+        ],
+        "temptingWrong": [
+            "Instructions because a command is involved.",
+            "Splitting the command into README and the cause into docs when one short doc carries both."
+        ]
+    },
+    {
+        "id": "E08",
+        "claim": "A human-facing onboarding narrative for the organisation wiki needs updating.",
+        "evidence": "The wiki page's outdated paragraphs.",
+        "destinations": [
+            {
+                "name": "wiki",
+                "class": "wiki",
+                "description": "Human-readable reference, read-only to the tool."
+            },
+            {
+                "name": "docs",
+                "class": "repo",
+                "description": "This repository's decisions."
+            }
+        ],
+        "expected": "Wiki",
+        "accepts": [
+            "Follow the wiki's own owner workflow; the tool's read-only profile is not a reason to substitute a writable knowledge lake."
+        ],
+        "temptingWrong": [
+            "Repo lake because add cannot write the wiki.",
+            "Leaving a report instead of routing it to the wiki owners."
+        ]
+    },
+    {
+        "id": "E09",
+        "claim": "The organisation mandates signed commits; this one service cannot sign because of its build runner, documented with an approved exception.",
+        "evidence": "The organisation policy page; the service's exception approval.",
+        "destinations": [
+            {
+                "name": "global",
+                "class": "global",
+                "description": "Organisation-wide standards."
+            },
+            {
+                "name": "docs",
+                "class": "repo",
+                "description": "This repository's decisions and deltas."
+            }
+        ],
+        "expected": "linked: Organisation + Repository",
+        "accepts": [
+            "Two linked docs: the rule at organisation scope, the delta in the repo, neither duplicating the other."
+        ],
+        "temptingWrong": [
+            "One repo doc restating the whole rule plus its exception.",
+            "One organisation doc listing every repo exception."
+        ]
+    },
+    {
+        "id": "E10",
+        "claim": "One repo bug: its cause, the evidence, and the workaround that failed.",
+        "evidence": "Reproduction, failed attempt notes, the fix.",
+        "destinations": [
+            {
+                "name": "docs",
+                "class": "repo",
+                "description": "This repository's decisions and traps."
+            }
+        ],
+        "expected": "Repository",
+        "accepts": [
+            "One focused repo doc covering cause, evidence and failed workaround for the single bug; do not split each observation."
+        ],
+        "temptingWrong": [
+            "Three docs: cause, evidence, failed-attempt.",
+            "An omnibus 'bugs' doc collecting several unrelated bugs."
+        ]
+    },
+    {
+        "id": "E11",
+        "claim": "Workstation window-manager setup versus the household's device inventory.",
+        "evidence": "Both live in the personal lake today, described in its configuration.",
+        "destinations": [
+            {
+                "name": "workstation",
+                "class": "machine",
+                "description": "This workstation's desktop setup and tooling."
+            },
+            {
+                "name": "household",
+                "class": "machine",
+                "description": "Household devices, warranties and network."
+            }
+        ],
+        "expected": "Personal",
+        "accepts": [
+            "Both are personal; choose the destination by the configured descriptions, not the class alone."
+        ],
+        "temptingWrong": [
+            "Either lake, chosen at random because both are 'machine' class."
+        ]
+    },
+    {
+        "id": "E12",
+        "claim": "A finding about the individual's own laptop setup, but only repo and organisation lakes are configured.",
+        "evidence": "The finding concerns the person's device only.",
+        "destinations": [
+            {
+                "name": "docs",
+                "class": "repo",
+                "description": "This repository's decisions."
+            },
+            {
+                "name": "global",
+                "class": "global",
+                "description": "Organisation standards."
+            }
+        ],
+        "expected": "clarify",
+        "accepts": [
+            "No silent substitute: keep it as an explicit unresolved proposal and ask, or note the missing personal destination."
+        ],
+        "temptingWrong": [
+            "Writing to the repo lake because it is writable.",
+            "Promoting it to organisation 'because it must go somewhere'."
+        ]
+    },
+    {
+        "id": "E13",
+        "claim": "The deployment policy applies only to the payments team and its repositories.",
+        "evidence": "The policy's own scope statement.",
+        "destinations": [
+            {
+                "name": "global",
+                "class": "global",
+                "description": "Standards with their owning team boundary stated."
+            }
+        ],
+        "expected": "Organisation",
+        "accepts": [
+            "Organisation scope with the payments-team boundary stated explicitly; not a false every-team rule."
+        ],
+        "temptingWrong": [
+            "Each payments repo's doc repeating the policy.",
+            "Refusing organisation scope because it does not apply to every team."
+        ]
+    },
+    {
+        "id": "E14",
+        "claim": "A deployment failed during repo work because the individual's local CLI session had expired.",
+        "evidence": "The CLI error output; re-login fixed it.",
+        "destinations": [
+            {
+                "name": "docs",
+                "class": "repo",
+                "description": "This repository's decisions and traps."
+            },
+            {
+                "name": "doclake",
+                "class": "machine",
+                "description": "Personal accounts and sessions."
+            }
+        ],
+        "expected": "Personal",
+        "accepts": [
+            "The cause is the person's session state, not the repo; record without account identifiers — name the login step, never the token."
+        ],
+        "temptingWrong": [
+            "Repository because the investigation happened inside the repo.",
+            "Recording the expired account name or session token as evidence."
+        ]
+    },
+    {
+        "id": "E15",
+        "claim": "This repo deliberately pins a non-default editor formatter setting for its own tree.",
+        "evidence": "The repo's editor config and the commit explaining why.",
+        "destinations": [
+            {
+                "name": "docs",
+                "class": "repo",
+                "description": "This repository's decisions."
+            },
+            {
+                "name": "doclake",
+                "class": "machine",
+                "description": "Personal editor preferences."
+            }
+        ],
+        "expected": "Repository",
+        "accepts": [
+            "The setting belongs to this repo's tree regardless of the word 'editor'; classify by ownership, not by vocabulary."
+        ],
+        "temptingWrong": [
+            "Personal because editor settings are 'usually' personal."
+        ]
+    },
+    {
+        "id": "E16",
+        "claim": "A setting differs from the default; it is unclear whether an individual chose it or the team mandates it.",
+        "evidence": "None that distinguishes individual preference from policy.",
+        "destinations": [
+            {
+                "name": "doclake",
+                "class": "machine",
+                "description": "Personal setup."
+            },
+            {
+                "name": "global",
+                "class": "global",
+                "description": "Organisation standards."
+            }
+        ],
+        "expected": "clarify",
+        "accepts": [
+            "Keep one unresolved proposal and ask a focused question; do not invent policy, do not split one uncertain claim into two docs."
+        ],
+        "temptingWrong": [
+            "Writing both a personal and an organisation doc 'to cover it'.",
+            "Guessing organisation scope because shared would be more useful."
+        ]
+    }
+]

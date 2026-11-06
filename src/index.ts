@@ -95,7 +95,7 @@ export const DOCS_INPUT = Schema.Struct({
     lake: Schema.optional(
         Schema.String.annotate({
             description:
-                "Optional lake name: search and check are limited to it, read and add target it. Omit to search every lake, read the unique match, or add to the first writable repo lake.",
+                "Optional lake name: search and check are limited to it; read and add target it. Omit to search every lake or read the unique match; add writes to the sole writable knowledge lake and refuses with candidates when several could take it.",
         }),
     ),
     add: Schema.optional(
@@ -912,11 +912,15 @@ export interface LakeInfo {
     validated: boolean;
     /** Whether the root is absent, so the lake contributes nothing yet. */
     missing?: boolean;
+    /** What belongs there, as configured; absent lakes use the class guidance. */
+    description?: string;
 }
 
 /**
  * Describe the configured lakes, then the ranking. The agent learns where
- * knowledge lives without loading the full convention.
+ * knowledge lives without loading the full convention. Each line pairs the
+ * human scope label with its config value, and carries the lake's description
+ * (or the class guidance) so a write destination is chosen deliberately.
  * @param lakes The configured lakes.
  * @returns The help text.
  */
@@ -926,14 +930,25 @@ export function helpText(lakes: readonly LakeInfo[]): string {
         const access = lake.writable ? "writable" : "read-only";
         const checked = lake.validated ? "checked" : "not checked";
         const missing = lake.missing === true ? " — missing" : "";
+        const label =
+            lake.class in CLASS_LABELS
+                ? `${CLASS_LABELS[lake.class as LakeClass]} [${lake.class}]`
+                : lake.class;
+        const description =
+            lake.description ?? classGuidance(lake.class as LakeClass);
         lines.push(
-            `- ${lake.name} (${lake.class}, ${access}, ${checked}): ${lake.root}${missing}`,
+            `- ${lake.name} (${label}, ${access}, ${checked}): ${lake.root}${missing}`,
         );
+        lines.push(`  ${description}`);
     }
     lines.push(
         "- instructions (read-only, not checked): nested project README.md " +
             "files; results are prefixed `instructions:` and read with the " +
             "built-in read tool",
+    );
+    lines.push(
+        "add writes to the sole writable knowledge lake when `lake` is " +
+            "omitted; with several, pass lake — one of the names above.",
     );
     return `${lines.join("\n")}\n\n${explainRanking()}`;
 }
@@ -2181,12 +2196,13 @@ export const RECORD_NUDGE =
     "behaviour), add one `Record with docs add:` block per durable topic and " +
     "scope — coalesce related findings rather than one block per observation, " +
     "never one session dump, and never one mixed-scope doc. Each block names " +
-    "its class (repo, machine or global), `Area`, `H1` title and `Keywords`, and " +
-    "keeps what was learned, why it matters, the evidence or status, any " +
-    "unresolved uncertainty and the intended scope, so the next agent can " +
-    "reconcile before writing. Reference a finding already recorded by path " +
-    "rather than restating it, and assume persistence only where the session " +
-    "confirms it.";
+    "its scope (Repository/Personal/Organisation — config repo, machine or " +
+    "global), `Area`, `H1` title and `Keywords`, and keeps what was learned, " +
+    "why it matters, the evidence or status, any unresolved uncertainty and " +
+    "the intended scope, so the next agent can reconcile before writing and " +
+    "confirm the destination fits. Reference a finding already recorded by " +
+    "path rather than restating it, and assume persistence only where the " +
+    "session confirms it.";
 
 /**
  * Resolve the plugin's `nudge` option: unset means on; a boolean passes
@@ -2219,6 +2235,13 @@ export interface LakeSpec {
     profile: LakeProfile;
     /** Whether `add` may write to it. */
     writable: boolean;
+    /**
+     * What belongs in this particular destination, as configured. Absent lakes
+     * fall back to the class guidance ({@link classGuidance}); it is
+     * descriptive data shown in help and refusal candidate lists, never
+     * indexed for search.
+     */
+    description?: string;
 }
 
 /**
@@ -2393,6 +2416,35 @@ export function createLakes(specs: readonly LakeSpec[]): Lake[] {
 /** The lake classes the configuration accepts. */
 export const LAKE_CLASSES = ["repo", "machine", "global", "wiki"] as const;
 
+/**
+ * The human-facing scope label per class, shown beside the config value in
+ * help and candidate lists so agents can connect the two. Configuration
+ * values never change: `repo`, `machine`, `global`, `wiki`.
+ */
+export const CLASS_LABELS: Readonly<Record<LakeClass, string>> = {
+    repo: "Repository",
+    machine: "Personal",
+    global: "Organisation",
+    wiki: "Wiki",
+};
+
+/**
+ * The ownership guidance for a class, used when a lake carries no configured
+ * description. Generic by design: domain-specific ownership is never inferred
+ * from a path or a name.
+ * @param lakeClass The lake's class.
+ * @returns The concise default guidance.
+ */
+export function classGuidance(lakeClass: LakeClass): string {
+    const guidance: Record<LakeClass, string> = {
+        repo: "knowledge needed to understand or maintain this repository",
+        machine: "knowledge tied to one person's devices, accounts and setup",
+        global: "organisation-wide standards, services and integrations",
+        wiki: "human-facing reference and narrative",
+    };
+    return guidance[lakeClass];
+}
+
 /** The repo-local lake additions file, relative to the location. */
 export const REPO_LAKES_FILE = ".opencode/docs-lakes.json";
 
@@ -2402,6 +2454,8 @@ export interface DocsPluginOptions {
     root?: unknown;
     /** The `root` lake's name; defaults to the root folder name. Needs `root`. */
     name?: unknown;
+    /** The `root` lake's description; what belongs there. Needs `root`. */
+    description?: unknown;
     /** Base lake declarations, merged after `lakesFile` and the repo file. */
     lakes?: unknown;
     /** A JSON file of base lakes (`{ "lakes": [...] }`). */
@@ -2511,6 +2565,7 @@ interface RawLake {
     root?: unknown;
     name?: unknown;
     writable?: unknown;
+    description?: unknown;
 }
 
 /** Narrow an unknown lake declaration to its raw shape. */
@@ -2630,6 +2685,27 @@ function lakeWritableOf(
 }
 
 /**
+ * Resolve a lake description: trimmed when present, absent when blank. A
+ * non-string fails loudly — a mistyped description must not become lake prose.
+ * @param entry The raw declaration.
+ * @param name The resolved lake name, for the error.
+ * @returns The trimmed description, or undefined when absent.
+ */
+function lakeDescriptionOf(entry: RawLake, name: string): string | undefined {
+    if (entry.description === undefined) {
+        return undefined;
+    }
+    if (typeof entry.description !== "string") {
+        throw new Error(
+            `docs plugin lake '${name}' description must be a string, ` +
+                `got ${JSON.stringify(entry.description)}.`,
+        );
+    }
+    const trimmed = entry.description.trim();
+    return trimmed === "" ? undefined : trimmed;
+}
+
+/**
  * Validate one raw lake declaration and resolve its defaults.
  * @param raw The raw entry from a config file or inline option.
  * @param location The project directory the plugin loaded in.
@@ -2646,12 +2722,14 @@ function lakeSpecFrom(
     const lakeClass = lakeClassOf(entry, fromRepoFile);
     const root = lakeRootOf(entry, lakeClass, location, fromRepoFile);
     const name = lakeNameOf(entry, root, lakeClass);
+    const description = lakeDescriptionOf(entry, name);
     return {
         name,
         class: lakeClass,
         root,
         profile: lakeClass === "wiki" ? "wiki" : "knowledge",
         writable: lakeWritableOf(entry, lakeClass, name),
+        ...(description !== undefined ? { description } : {}),
     };
 }
 
@@ -2682,6 +2760,12 @@ function assertLakesOptions(options: DocsPluginOptions): void {
         throw new Error(
             "docs plugin option 'name' names the 'root' lake; " +
                 "set 'name' inside a 'lakes' entry instead.",
+        );
+    }
+    if (options.description !== undefined && options.root === undefined) {
+        throw new Error(
+            "docs plugin option 'description' describes the 'root' lake; " +
+                "set 'description' inside a 'lakes' entry instead.",
         );
     }
 }
@@ -2760,7 +2844,12 @@ export function resolveLakes(
     if (options.root !== undefined) {
         specs.push(
             lakeSpecFrom(
-                { class: "repo", root: options.root, name: options.name },
+                {
+                    class: "repo",
+                    root: options.root,
+                    name: options.name,
+                    description: options.description,
+                },
                 location,
                 false,
             ),
@@ -2887,7 +2976,34 @@ function nestingDepth(lake: Lake, lakes: readonly Lake[]): number {
     }).length;
 }
 
-/** The lake `add` writes to, or the refusal reason. */
+/**
+ * One candidate line for a destination refusal: name, scope label beside the
+ * config value, root, availability, and the configured description or the
+ * class guidance — everything an agent needs to choose deliberately.
+ * @param lake The candidate lake.
+ * @returns The rendered line.
+ */
+function candidateLine(lake: Lake): string {
+    const label = `${CLASS_LABELS[lake.class]} [${lake.class}]`;
+    const missing = lakeMissing(lake) ? " — missing root" : "";
+    const description = lake.description ?? classGuidance(lake.class);
+    return `- ${lake.name} (${label}): ${lake.root}${missing} — ${description}`;
+}
+
+/**
+ * The lake `add` writes to, or the refusal reason.
+ *
+ * An explicit name selects that exact lake or refuses — read-only, unknown
+ * and (later, in `addDoc`) missing-root lakes never fall back elsewhere.
+ * With `lake` omitted the write needs exactly one deliberate destination:
+ * a sole writable knowledge lake is the documented convenience default, nested
+ * lakes resolve to the narrowest enclosing owner, and any other ambiguity —
+ * including a candidate whose root is currently missing — refuses with the
+ * candidate list rather than guessing by configuration order.
+ * @param lakes The configured lakes.
+ * @param name The explicit lake selector, when given.
+ * @returns The target lake, or the refusal reason.
+ */
 function writableLake(
     lakes: readonly Lake[],
     name: string | undefined,
@@ -2904,34 +3020,32 @@ function writableLake(
         }
         return lake;
     }
-    // The narrowest writable knowledge lake wins: with nested roots the inner
-    // lake owns the file, so an outer read-only lake must not hijack the write.
-    const repos = lakes.filter(
-        (lake) => lake.class === "repo" && lake.writable,
+    const pool = lakes.filter(
+        (lake) => lake.profile === "knowledge" && lake.writable,
     );
-    const pool =
-        repos.length > 0
-            ? repos
-            : lakes.filter(
-                  (lake) => lake.profile === "knowledge" && lake.writable,
-              );
     if (pool.length === 0) {
         return {
             reason:
                 `${REFUSE} no writable knowledge lake is configured; ` +
-                "add a repo, machine, or global lake.",
+                "wiki and read-only lakes are never written — add a repo, " +
+                "machine or global lake.",
         };
     }
-    let target = pool[0] as Lake;
-    let depth = nestingDepth(target, lakes);
-    for (const candidate of pool.slice(1)) {
-        const candidateDepth = nestingDepth(candidate, lakes);
-        if (candidateDepth > depth) {
-            target = candidate;
-            depth = candidateDepth;
-        }
+    const deepest = pool.map((lake) => ({
+        lake,
+        depth: nestingDepth(lake, lakes),
+    }));
+    const max = Math.max(...deepest.map((item) => item.depth));
+    const winners = deepest.filter((item) => item.depth === max);
+    if (winners.length === 1) {
+        return (winners[0] as { lake: Lake }).lake;
     }
-    return target;
+    return {
+        reason:
+            `${REFUSE} ${winners.length} writable knowledge lakes could take ` +
+            "this write; pass lake — one of:\n" +
+            winners.map((item) => candidateLine(item.lake)).join("\n"),
+    };
 }
 
 /** Qualify a path with its lake when more than one lake is configured. */
@@ -3266,6 +3380,9 @@ function lakeInfo(lakes: readonly Lake[]): LakeInfo[] {
         writable: lake.writable,
         validated: lakeValidated(lake),
         missing: lakeMissing(lake),
+        ...(lake.description !== undefined
+            ? { description: lake.description }
+            : {}),
     }));
 }
 
@@ -3673,9 +3790,9 @@ export default Plugin.define({
                     "Entry point to the configured knowledge lakes " +
                     "(repo, machine, global, read-only wiki) and nested project " +
                     "README.md files: find and read the right doc, then record " +
-                    "focused knowledge at the narrowest true scope. Use before " +
-                    "searching the codebase for how-to knowledge, or when a " +
-                    "session learns something durable.",
+                    "focused knowledge at the narrowest justified scope. Use " +
+                    "before searching the codebase for how-to knowledge, or " +
+                    "when a session learns something durable.",
                 path: AbsolutePath.make(fileURLToPath(skillURL)),
                 content: skill,
             });

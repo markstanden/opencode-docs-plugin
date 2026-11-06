@@ -64,6 +64,29 @@ describe("convention alignment", () => {
                     `${file} does not state ${floor}`,
                 );
             });
+
+            it("pairs every scope label with its config value", () => {
+                const pairs = [
+                    ["Repository", "repo"],
+                    ["Personal", "machine"],
+                    ["Organisation", "global"],
+                    ["Wiki", "wiki"],
+                ] as const;
+                for (const [label, value] of pairs) {
+                    assert.ok(
+                        text.includes(label),
+                        `${file} does not name the ${label} scope`,
+                    );
+                    assert.ok(
+                        text.includes(`\`${value}\``),
+                        `${file} does not state the ${label} config value`,
+                    );
+                }
+            });
+
+            it("does not dismiss placement debate as insufficient focus", () => {
+                assert.doesNotMatch(text, /placement\s+debate/);
+            });
         });
     }
 });

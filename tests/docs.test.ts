@@ -2819,7 +2819,7 @@ describe("record nudge", () => {
         // the skill tells the agent to look for, the DTO fields a block must
         // name, and the two things it must forbid. Wording is review's job.
         assert.match(RECORD_NUDGE, /`Record with docs add:`/);
-        for (const field of ["class", "`Area`", "`H1`", "`Keywords`"]) {
+        for (const field of ["scope", "`Area`", "`H1`", "`Keywords`"]) {
             assert.ok(
                 RECORD_NUDGE.includes(field),
                 `the nudge does not name ${field}`,
@@ -2828,6 +2828,7 @@ describe("record nudge", () => {
         assert.match(RECORD_NUDGE, /never one session dump/);
         assert.match(RECORD_NUDGE, /mixed-scope/);
         assert.match(RECORD_NUDGE, /reconcile before writing/);
+        assert.match(RECORD_NUDGE, /confirm the destination fits/);
     });
 });
 

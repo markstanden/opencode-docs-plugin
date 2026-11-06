@@ -627,11 +627,11 @@ describe("multi-lake tool", () => {
 
         assert.match(
             String(result.content),
-            /repo \(repo, writable, checked\)/,
+            /repo \(Repository \[repo\], writable, checked\)/,
         );
         assert.match(
             String(result.content),
-            /wiki \(wiki, read-only, not checked\)/,
+            /wiki \(Wiki \[wiki\], read-only, not checked\)/,
         );
     });
 });
@@ -737,7 +737,7 @@ describe("check validation scope", () => {
         // Assert
         assert.match(
             String(result.content),
-            /scope \(repo, read-only, not checked\)/,
+            /scope \(Repository \[repo\], read-only, not checked\)/,
         );
     });
 
@@ -1155,7 +1155,7 @@ describe("missing lake roots", () => {
 
         assert.match(
             String(result.content),
-            /doclake \(machine, writable, checked\): .* — missing/,
+            /doclake \(Personal \[machine\], writable, checked\): .* — missing/,
         );
     });
 });

@@ -5,20 +5,25 @@ knowledge **lakes** it can actually use: a `docs` tool and a `/docs` command
 over configured Markdown trees, nested `README.md` files in the project, and the
 writing convention those docs follow.
 
-Docs are grouped by **class**:
+Docs are grouped by **scope** (config values never change; labels are how the
+tool presents them):
 
-| Class              | Where                           | Use it for                              | Writes        |
-| ------------------ | ------------------------------- | --------------------------------------- | ------------- |
-| **Instructions**   | nested `README.md`              | build, run, test, deploy this code      | never         |
-| **RepoContext**    | `<repo>/docs` by default        | this repo's traps, decisions, landmines | yes           |
-| **MachineContext** | personal lake, e.g. `~/doclake` | tooling and traps across your machines  | yes           |
-| **GlobalContext**  | organisation lake               | standards and integrations across repos | yes, reviewed |
-| **Wiki**           | human-readable wiki checkout    | narrative for humans                    | read-only     |
+| Scope            | Config value                | Where                           | Use it for                                      | Writes        |
+| ---------------- | --------------------------- | ------------------------------- | ----------------------------------------------- | ------------- |
+| **Repository**   | `repo` / nested `README.md` | `<repo>/docs` by default        | this repo's traps, decisions, landmines         | yes           |
+| **Personal**     | `machine`                   | personal lake, e.g. `~/doclake` | a person's devices, accounts and setup          | yes           |
+| **Organisation** | `global`                    | organisation lake               | standards and integrations, with their boundary | yes, reviewed |
+| **Instructions** | implicit                    | nested `README.md`              | build, run, test, deploy this code              | never         |
+| **Wiki**         | `wiki`                      | human-readable wiki checkout    | narrative for humans                            | read-only     |
 
-Place knowledge at the narrowest scope where the whole claim is true. A doc that
-spans scopes is split into focused docs, one per class. The full rulebook is
-[CONVENTION.md](CONVENTION.md); the registered `docs` skill carries the working
-version.
+Place knowledge at the **narrowest justified scope**. Identify the claim and
+what it depends on: this repo → Repository; a person's device, account or
+setup → Personal; an established shared rule → Organisation, stating its
+actual team boundary; operational steps → the README workflow; human
+narrative → the wiki's owners. Reusability alone is not organisational
+ownership, and unresolved ownership stays an explicit question — never a
+guessed destination. The full rulebook is [CONVENTION.md](CONVENTION.md); the
+registered `docs` skill carries the working version.
 
 ## The tool and command
 
@@ -89,21 +94,27 @@ The simplest setup uses `root` — one repo lake:
 
 `root` expands `~`, resolves a relative path against the location, and defaults
 to `<location>/docs`. A blank value counts as unset. `root` declares a **repo**
-lake; for a personal or global lake, use `lakes` with the class instead. Its
-name follows the root folder unless you set the `name` option beside it:
+lake; for a personal or organisation lake, use `lakes` with the class instead.
+Its name follows the root folder unless you set the `name` option beside it,
+and `description` documents what belongs there the same way:
 
 ```jsonc
 {
     "plugins": [
         {
             "package": "@markstanden/opencode-docs-plugin",
-            "options": { "root": "documentation", "name": "doclake" },
+            "options": {
+                "root": "documentation",
+                "name": "doclake",
+                "description": "This repository's decisions and traps.",
+            },
         },
     ],
 }
 ```
 
-`name` only applies to `root`; inside `lakes`, set it on the entry.
+`name` and `description` only apply to `root`; inside `lakes`, set them on the
+entry.
 
 For several lakes, list them inline, in a base file, or both. The base file is
 usually a personal or managed file; the repo file adds local lakes:
@@ -129,7 +140,12 @@ usually a personal or managed file; the repo file adds local lakes:
 ```jsonc
 {
     "lakes": [
-        { "class": "machine", "root": "~/doclake", "name": "doclake" },
+        {
+            "class": "machine",
+            "root": "~/doclake",
+            "name": "doclake",
+            "description": "Personal devices, workstation configuration and individual tooling preferences.",
+        },
         { "class": "global", "root": "~/org-docs", "name": "global" },
         { "class": "wiki", "root": "~/org-wiki", "name": "wiki" },
     ],
@@ -162,12 +178,13 @@ docs live elsewhere.
 
 Lake entries:
 
-| Field      | Meaning                                                                                          |
-| ---------- | ------------------------------------------------------------------------------------------------ |
-| `class`    | `repo`, `machine`, `global` or `wiki`; default `repo`.                                           |
-| `root`     | The lake root. Required for `machine`/`global`/`wiki`; defaults to `<location>/docs` for `repo`. |
-| `name`     | Lower-case dashes; defaults to the root folder name. `instructions` is reserved.                 |
-| `writable` | Defaults true for knowledge classes, fixed false for `wiki`.                                     |
+| Field         | Meaning                                                                                                                                                                                                             |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `class`       | `repo`, `machine`, `global` or `wiki`; default `repo`. Presented as Repository, Personal, Organisation, Wiki.                                                                                                       |
+| `root`        | The lake root. Required for `machine`/`global`/`wiki`; defaults to `<location>/docs` for `repo`.                                                                                                                    |
+| `name`        | Lower-case dashes; defaults to the root folder name. `instructions` is reserved.                                                                                                                                    |
+| `description` | Optional. What belongs in this particular destination; shown in `help` and refusal candidate lists. Trimmed, blank counts as absent, non-string fails at startup. Descriptive data only — never indexed for search. |
+| `writable`    | Defaults true for knowledge classes, fixed false for `wiki`.                                                                                                                                                        |
 
 Validation follows writability: `check` validates a writable knowledge lake
 only. A read-only knowledge lake, and every `wiki` lake, is indexed for search
@@ -232,6 +249,24 @@ directory exists: `search` appends a note naming the lake and path, `help` marks
 it `— missing`, and `add` refuses with the path rather than bootstrapping a
 tree. Create the directory deliberately. Area folders beneath an existing root
 are still created on write.
+
+### Choosing a write destination
+
+`add` writes through the `lake` selector deliberately; it never guesses.
+
+- An explicit `lake` selects exactly that lake: an unknown, read-only, or
+  missing-root lake refuses — it never falls back to another.
+- With exactly one configured writable knowledge lake, an omitted `lake` uses
+  it. That is a convenience, not a classification: check the destination fits
+  before writing.
+- With several writable knowledge lakes (two `machine` lakes included), an
+  omitted `lake` refuses before writing and lists the candidates — name, scope
+  label and config value, root, availability, description. Nested lakes
+  resolve to the narrowest enclosing owner without a selector.
+- With no writable knowledge lake, `add` refuses; wiki and read-only lakes are
+  never written. A temporarily missing root still counts as a candidate, so
+  dormancy cannot silently change the destination.
+- Searching and checking never need a destination; they run across all lakes.
 
 Root and git notes are computed per call, not captured at startup: a root that
 appears, disappears or gains a git checkout is reflected by the next `check`,
