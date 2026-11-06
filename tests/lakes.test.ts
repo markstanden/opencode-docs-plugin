@@ -664,37 +664,61 @@ describe("check validation scope", () => {
     }
 
     it("reports findings in a writable knowledge lake", async () => {
+        // Arrange
         const result = await fixture(true).execute(
             { check: true },
             {} as never,
         );
+
+        // Act
         const content = String(result.content);
 
+        // Assert
         assert.match(content, /\bbad\.md/);
+        assert.doesNotMatch(content, /\bgood\.md/);
         assert.match(content, /H1/);
         assert.equal(result.metadata?.checked, 2);
     });
 
     it("skips a read-only knowledge lake and names it", async () => {
+        // Act
         const result = await fixture(false).execute(
             { check: true },
             {} as never,
         );
         const content = String(result.content);
 
+        // Assert
         assert.doesNotMatch(content, /\bbad\.md/);
         assert.doesNotMatch(content, /H1/);
         assert.match(content, /^scope: read-only, not validated\.$/m);
         assert.equal(result.metadata?.checked, 0);
     });
 
+    it("skips a read-only knowledge lake selected by name", async () => {
+        // Act
+        const result = await fixture(false).execute(
+            { check: true, lake: "scope" },
+            {} as never,
+        );
+
+        // Assert
+        assert.match(
+            String(result.content),
+            /^scope: read-only, not validated\.$/m,
+        );
+        assert.equal(result.metadata?.checked, 0);
+    });
+
     it("never validates a wiki lake", async () => {
+        // Act
         const result = await fixture(false, "wiki").execute(
             { check: true },
             {} as never,
         );
         const content = String(result.content);
 
+        // Assert
         assert.doesNotMatch(content, /\bbad\.md/);
         assert.match(
             content,
@@ -704,11 +728,13 @@ describe("check validation scope", () => {
     });
 
     it("marks a read-only knowledge lake not checked in help", async () => {
+        // Act
         const result = await fixture(false).execute(
             { search: "help" },
             {} as never,
         );
 
+        // Assert
         assert.match(
             String(result.content),
             /scope \(repo, read-only, not checked\)/,
@@ -716,6 +742,7 @@ describe("check validation scope", () => {
     });
 
     it("names every skipped lake when none are writable", async () => {
+        // Arrange
         const lakes = createLakes(
             ["one", "two"].map((name) => ({
                 name,
@@ -726,12 +753,14 @@ describe("check validation scope", () => {
             })),
         );
 
+        // Act
         const result = await createDocsTool({ lakes }).execute(
             { check: true },
             {} as never,
         );
         const content = String(result.content);
 
+        // Assert
         assert.match(content, /^one: read-only, not validated\.$/m);
         assert.match(content, /^two: read-only, not validated\.$/m);
         assert.doesNotMatch(content, /comply/);
@@ -739,40 +768,103 @@ describe("check validation scope", () => {
     });
 
     it("still searches a read-only lake in full", async () => {
+        // Act
         const result = await fixture(false).execute(
             { search: "bad" },
             {} as never,
         );
 
+        // Assert
         assert.match(String(result.content), /^bad\.md/m);
     });
 
-    it("caps a finding-heavy report with an and N more tail", async () => {
+    it("shows findings up to the cap before the tail", async () => {
+        // Arrange
         const root = tempDir();
+        git(root, ["init", "-q"]);
         const count = Math.ceil(MAX_CHECK_CHARS / 40) + 20;
         for (let index = 0; index < count; index += 1) {
             writeFileSync(join(root, `bad-${index}.md`), broken);
+        }
+        const lakes = createLakes([
+            {
+                name: "scope",
+                class: "repo",
+                root,
+                profile: "knowledge",
+                writable: true,
+            },
+        ]);
+        const tool = createDocsTool({ lakes });
+
+        // Act
+        const result = await tool.execute({ check: true }, {} as never);
+        const content = String(result.content);
+        const tail = content.match(/… and (\d+) more lines not shown/);
+        const lake = lakes[0];
+
+        // Assert
+        assert.ok(tail !== null);
+        assert.ok(lake !== undefined);
+        assert.match(content, /\bbad-0\.md/);
+        assert.ok(Number(tail[1]) > 0);
+        assert.ok(content.length > MAX_CHECK_CHARS - 200);
+        assert.ok(content.length < MAX_CHECK_CHARS + 200);
+        assert.match(content, /Narrow it per lake with the `lake` selector/);
+
+        const full = checkDocs(lake.collect(), lake.read, [], {
+            exists: lake.exists,
+        });
+        const kept = content.split("\n\n… and ")[0]?.split("\n").length ?? 0;
+        assert.equal(Number(tail[1]), full.split("\n").length - kept);
+    });
+
+    it("keeps a skipped lake visible when the writable report is capped", async () => {
+        // Arrange
+        const writableRoot = tempDir();
+        const readOnlyRoot = tempDir();
+        const count = Math.ceil(MAX_CHECK_CHARS / 40) + 20;
+        for (let index = 0; index < count; index += 1) {
+            writeFileSync(join(writableRoot, `bad-${index}.md`), broken);
         }
         const tool = createDocsTool({
             lakes: createLakes([
                 {
                     name: "scope",
                     class: "repo",
-                    root,
+                    root: writableRoot,
                     profile: "knowledge",
                     writable: true,
+                },
+                {
+                    name: "readonly",
+                    class: "repo",
+                    root: readOnlyRoot,
+                    profile: "knowledge",
+                    writable: false,
                 },
             ]),
         });
 
+        // Act
         const result = await tool.execute({ check: true }, {} as never);
         const content = String(result.content);
-        const tail = content.match(/… and (\d+) more lines not shown/);
 
-        assert.ok(tail !== null);
-        assert.ok(Number(tail[1]) > 0);
-        assert.ok(content.length < MAX_CHECK_CHARS + 200);
-        assert.match(content, /Narrow it per lake with the `lake` selector/);
+        // Assert
+        assert.match(content, /… and \d+ more lines not shown/);
+        assert.match(content, /^readonly: read-only, not validated\.$/m);
+    });
+
+    it("reports when no lakes are configured", async () => {
+        // Act
+        const result = await createDocsTool({ lakes: [] }).execute(
+            { check: true },
+            {} as never,
+        );
+
+        // Assert
+        assert.equal(String(result.content), "No knowledge lakes configured.");
+        assert.equal(result.metadata?.checked, 0);
     });
 });
 
