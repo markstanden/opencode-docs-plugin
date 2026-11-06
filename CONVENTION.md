@@ -59,12 +59,17 @@ personal, organisation and wiki lakes.
 
 Lakes are named, and several per class are supported. A root nested inside
 another lake's root belongs to the **narrowest enclosing lake**: the outer lake
-skips it, search returns the inner lake's entry, a bare `read` resolves there,
-and `add` writes to the deepest writable knowledge lake. Nesting is decided on
-real paths, so reaching one root through a symlink cannot defeat containment.
-Two lakes that do not nest holding the same relative path stay a refusal —
-pass `lake`. Near-twin checks apply inside one lake and never pair across the
-nesting boundary.
+skips it, search returns the inner lake's entry, and a bare `read` resolves
+there. Nesting resolves the physical owner of an already identified target; it
+never infers the semantic owner of a new claim — `add` without a `lake`
+selector requires exactly one configured writable knowledge lake, and any
+other number refuses with the candidate list. Nesting is decided on
+real paths, so reaching one root through a symlink cannot defeat containment,
+and a write addressed through an outer route that physically resolves inside
+a nested lake's tree refuses and names its physical owner. Two lakes that do
+not nest holding the same relative path stay a refusal — pass `lake`.
+Near-twin checks apply inside one lake and never pair across the nesting
+boundary.
 
 Lake notes — a missing root, or a root outside version control — are computed
 per call, not captured at startup: create, remove or version a root and the
@@ -173,8 +178,9 @@ git. Optional invisible metadata may be added later; it is not required.
 ## Lifecycle
 
 A doc is current or deleted. Correct a wrong doc by replacing it in place with
-`mode: "replace"`, the doc's path, and the revision token your last read
-returned — a stale token refuses rather than overwriting a newer edit. Delete
+`mode: "replace"`, the doc's path, and the revision token your last read or
+write returned in its result text — a stale token refuses rather than
+overwriting a newer edit. Delete
 an obsolete doc through the shell with
 explicit approval; there is no `delete` verb. A failed attempt is still valid
 knowledge when it records the outcome and the current truth.

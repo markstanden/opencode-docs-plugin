@@ -18,7 +18,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
     createDocsTool,
     createLakes,
@@ -84,18 +84,29 @@ function replacePayload(
 
 /** No lock files or temp files survive a publication attempt. */
 function assertClean(root: string): void {
-    const lockDir = join(root, ".docs-lock");
-    if (existsSync(lockDir)) {
-        assert.deepEqual(readdirSync(lockDir), [], "lock files left behind");
-    }
-    for (const area of readdirSync(root, { withFileTypes: true })) {
-        if (!area.isDirectory() || area.name === ".docs-lock") {
-            continue;
+    const walk = (dir: string): void => {
+        for (const item of readdirSync(dir, { withFileTypes: true })) {
+            const path = join(dir, item.name);
+            if (item.isDirectory()) {
+                if (item.name === ".docs-lock") {
+                    assert.deepEqual(
+                        readdirSync(path),
+                        [],
+                        `lock files left behind in ${path}`,
+                    );
+                } else {
+                    walk(path);
+                }
+                continue;
+            }
+            assert.ok(
+                !item.name.endsWith(".tmp"),
+                `stray temp file at ${path}`,
+            );
         }
-        const leftovers = readdirSync(join(root, area.name)).filter((name) =>
-            name.endsWith(".tmp"),
-        );
-        assert.deepEqual(leftovers, [], "temp files left behind");
+    };
+    if (existsSync(root)) {
+        walk(root);
     }
 }
 
@@ -447,8 +458,9 @@ describe("stale-replacement protection", () => {
     });
 
     it("refuses busy when another writer holds the lock (R16)", async () => {
-        // Arrange – a lock file at the exact path the protocol keys for this
-        // target, owned by this (live) process.
+        // Arrange – a lock file at the exact location the protocol now keys
+        // for this target — beside the physical target — owned by this (live)
+        // process.
         const lake = spec();
         const raw = seed(lake.root, "aa/doc.md");
         const tool = toolOf([lake]);
@@ -456,8 +468,14 @@ describe("stale-replacement protection", () => {
         const key = createHash("sha256")
             .update(realpathSync(target), "utf8")
             .digest("hex");
-        const lockPath = join(lake.root, ".docs-lock", `${key}.lock`);
-        mkdirSync(join(lake.root, ".docs-lock"), { recursive: true });
+        const lockPath = join(
+            dirname(realpathSync(target)),
+            ".docs-lock",
+            `${key}.lock`,
+        );
+        mkdirSync(join(dirname(realpathSync(target)), ".docs-lock"), {
+            recursive: true,
+        });
         writeFileSync(
             lockPath,
             JSON.stringify({ pid: process.pid, acquiredAt: "now" }),

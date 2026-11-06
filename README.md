@@ -211,11 +211,13 @@ declarations may reach the tree by different routes and the nested doc is
 still indexed once.
 
 A doc belongs to the **narrowest enclosing lake**. With nested roots, `search`
-returns the inner lake's entry and a bare `read` resolves to it; `add` writes
-to the deepest writable knowledge lake, so an outer read-only wrapper never
-hijacks the write. Two lakes that do not nest holding the same relative path
-stay a refusal — pass `lake`. Near-twin checks apply inside one lake and never
-pair across the nesting boundary.
+returns the inner lake's entry and a bare `read` resolves to it. `add` never
+infers a destination from nesting: an omitted `lake` needs exactly one
+configured writable knowledge lake (see below), and a write addressed through
+an outer route that physically resolves inside a nested lake's tree refuses,
+naming its physical owner. Two lakes that do not nest holding the same
+relative path stay a refusal — pass `lake`. Near-twin checks apply inside one
+lake and never pair across the nesting boundary.
 
 ```jsonc
 {
@@ -261,9 +263,11 @@ are still created on write.
   it. That is a convenience, not a classification: check the destination fits
   before writing.
 - With several writable knowledge lakes (two `machine` lakes included), an
-  omitted `lake` refuses before writing and lists the candidates — name, scope
-  label and config value, root, availability, description. Nested lakes
-  resolve to the narrowest enclosing owner without a selector.
+  omitted `lake` refuses before writing and lists **every** writable
+  candidate — name, scope label and config value, root, availability,
+  description. Nesting, class, configuration order and missing roots change
+  nothing: folder depth cannot infer the semantic owner of a claim, and no
+  candidate is auto-selected for being the deepest.
 - With no writable knowledge lake, `add` refuses; wiki and read-only lakes are
   never written. A temporarily missing root still counts as a candidate, so
   dormancy cannot silently change the destination.
@@ -332,10 +336,13 @@ earlier versions is intentionally unsupported.
 }
 ```
 
-A `read` of a lake doc carries the token in its metadata alongside the
-resolved target — `{ read, lake, path, revision }` — and a successful create
-or replace returns the new content's revision the same way. Wiki reads carry
-no revision: they promise no write-capable workflow.
+A `read` of a knowledge lake doc carries the token in its metadata alongside
+the resolved target — `{ read, lake, path, revision }` — and a successful
+create or replace returns the new content's revision the same way. The result
+text also ends with a `docs: revision …` line, so the token is visible to a
+model call and to Code Mode JavaScript, not only in the stored metadata a
+host may treat as UI-only. Wiki reads carry no revision: they promise no
+write-capable workflow.
 
 - **Create never overwrites.** A target that already exists refuses, even with
   an `allowNearTwinReason`; pass `mode: "replace"` deliberately.
@@ -354,21 +361,36 @@ no revision: they promise no write-capable workflow.
 
 ## Concurrency limits
 
-Publications of one target are serialised by a per-target lock file under the
-lake's `.docs-lock/` directory, keyed on the target's physical path — two
-configurations reaching the same tree by different routes share the lock. A
-replacement re-reads and re-checks the revision under the lock and publishes
-through an atomic whole-file swap; a create publishes through an exclusive
-open, so a losing create cannot overwrite the winner.
+Publications of one target are serialised by a per-target lock file in a
+hidden `.docs-lock/` directory **beside the target's directory on the real
+filesystem**, keyed on the target's canonical physical path: two
+configurations reaching the same tree by different routes — including a
+permitted symlinked configured root — resolve the same lock location, however
+each runtime's lakes are configured. The lock directory is only ever created
+inside an already-existing ancestor, existing symlinked or non-directory
+objects refuse without being touched, and abandoned locks are never stolen
+automatically (confirm the owner is gone, then remove the named file). Older
+plugin versions lock at the configured root instead: quiesce or restart them
+before relying on this protocol — no automatic migration, and any unknown
+existing locks are left alone.
 
-The guarantee covers **cooperating plugin writers** — the native tool, the
-Code Mode twin and `/docs` all use the same guarded route. A manual editor or
-an unrelated program that ignores the protocol can still race a publication;
-changes visible before the guarded commit are detected, but this is not a
-filesystem-wide compare-and-swap. A busy lock refuses with its recorded owner
-instead of waiting indefinitely; a lock left by an interrupted process is
-never stolen automatically — confirm the owner process is gone, then remove
-the named file by hand.
+A replacement re-reads and re-checks the revision under the lock and publishes
+through a **temp file this operation exclusively creates** (an ordinary
+pathname create that never follows a pre-existing symlink or truncates a
+foreign file) and an atomic whole-file rename; a create publishes through an
+exclusive open, so a losing create cannot overwrite the winner. A physically
+addressed write that reaches a nested lake's tree through an outer route is
+refused with that lake named, so a writable outer lake cannot make read-only
+nested content writable.
+
+The guarantee covers **cooperating plugin writers** and pre-existing
+operational-path symlinks — the native tool, the Code Mode twin and `/docs`
+all use the same guarded route. It is not armour against an arbitrary local
+attacker who can swap directories between individual syscalls, and a manual
+editor or unrelated program that ignores the protocol can still race a
+publication; changes visible before the guarded commit are detected, but this
+is not a filesystem-wide compare-and-swap. A busy lock refuses with its
+recorded owner instead of waiting indefinitely.
 
 ## Status
 

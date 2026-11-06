@@ -169,7 +169,7 @@ export const DOCS_INPUT = Schema.Struct({
     read: Schema.optional(
         Schema.String.annotate({
             description:
-                "A root-relative doc path, or `lake:path`: returns the doc verbatim, front-matter and body. Lake and wiki pages only; project READMEs use the built-in `read` tool.",
+                "Root-relative path, or `lake:path`: the doc verbatim. Lake and wiki pages only; project READMEs use the built-in `read` tool. Knowledge reads end with a revision line, the replace token.",
         }),
     ),
 });
@@ -990,6 +990,10 @@ export function helpText(lakes: readonly LakeInfo[]): string {
     lines.push(
         "add writes to the sole writable knowledge lake when `lake` is " +
             "omitted; with several, pass lake — one of the names above.",
+    );
+    lines.push(
+        "reads of knowledge docs end with a docs: revision line — pass its " +
+            "hash as expectedRevision when replacing that doc.",
     );
     return `${lines.join("\n")}\n\n${explainRanking()}`;
 }
@@ -2541,18 +2545,21 @@ interface TargetLock {
     release: () => void;
 }
 
-/** The module-level temp-file counter: unique publication temps per process. */
-let publishTempCounter = 0;
-
 /**
- * The physical identity of a target: its deepest existing ancestor,
- * real-pathed, plus the exact remaining segments. Two configured roots that
- * reach the same tree by different routes resolve to one key, so their locks
- * cannot silently diverge.
+ * The physical identity of a target: its deepest existing ancestor, real-pathed,
+ * plus the exact remaining segments. Two configured roots that reach the same
+ * tree by different routes resolve to one prefix and one tail, so their locks
+ * and identities cannot silently diverge. The key is stable across the
+ * target-or-parent-creation transition: real-pathing the existing prefix and
+ * joining the missing tail yields the same absolute path before and after the
+ * missing segments appear.
  * @param target The absolute target path.
- * @returns The real-path key.
+ * @returns The existing real prefix and the missing tail.
  */
-function physicalTargetKey(target: string): string {
+function physicalRouteOf(target: string): {
+    realPrefix: string;
+    tail: readonly string[];
+} {
     const tail: string[] = [];
     let head = target;
     while (!existsSync(head)) {
@@ -2563,22 +2570,107 @@ function physicalTargetKey(target: string): string {
         }
         head = parent;
     }
-    return join(realpathSync(head), ...tail);
+    return { realPrefix: realpathSync(head), tail };
 }
 
 /**
- * The lock file for a target: a hidden directory at the lake root, keyed by
- * the target's physical identity. Search and check skip dot-directories, so
- * the lock dir is never mistaken for content.
- * @param root The configured lake root.
+ * The canonical on-disk identity of a target: its resolved existing prefix
+ * plus the missing tail joined. Every configured route to the same file
+ * produces this one string.
+ * @param target The absolute target path.
+ * @returns The real-path key.
+ */
+export function physicalTargetKey(target: string): string {
+    const { realPrefix, tail } = physicalRouteOf(target);
+    return join(realPrefix, ...tail);
+}
+
+/**
+ * The lock directory for a target: a hidden `.docs-lock` inside the deepest
+ * existing ancestor that can hold it — the target's own directory once the
+ * target exists, its existing parent otherwise. Siting the lock beside the
+ * physical target keeps all configured routes (and separately configured
+ * processes) on one directory: aliasing roots resolve the same real prefix,
+ * and nothing about the lock location depends on the current runtime's lake
+ * list. Search and `check` skip dot-directories at every level, so the lock
+ * directory is never mistaken for content.
+ * @param target The absolute target path.
+ * @returns The lock directory path.
+ */
+export function targetLockDirectory(target: string): string {
+    const { realPrefix, tail } = physicalRouteOf(target);
+    // The existing prefix is real-pathed already: for an existing target it
+    // is the file itself (lock beside it), for a missing target it is the
+    // deepest existing ancestor directory.
+    return join(
+        tail.length === 0 ? dirname(realPrefix) : realPrefix,
+        ".docs-lock",
+    );
+}
+
+/**
+ * The lock file for a target: keyed by the target's canonical physical key and
+ * sited beside it (see {@link targetLockDirectory}). Exported for diagnostics
+ * and tests: refusals name the manual recovery path, and tests must consult
+ * the real protocol's location rather than re-deriving it.
  * @param target The absolute target path.
  * @returns The lock file path.
  */
-function targetLockPath(root: string, target: string): string {
-    const key = createHash("sha256")
-        .update(physicalTargetKey(target), "utf8")
-        .digest("hex");
-    return join(root, ".docs-lock", `${key}.lock`);
+export function targetLockPath(target: string): string {
+    return join(
+        targetLockDirectory(target),
+        `${createHash("sha256")
+            .update(physicalTargetKey(target), "utf8")
+            .digest("hex")}.lock`,
+    );
+}
+
+/**
+ * Prepare the lock directory without touching anything but what is ours: an
+ * existing directory is kept, any other object (including a symlink) refuses
+ * without being read, followed, truncated or removed, and a missing directory
+ * is created one level inside the already-existing ancestor. Bounded — one
+ * creation attempt, then a post-EEXIST re-stat; no spin, no cleanup of
+ * foreign objects.
+ * @param lockDir The computed lock directory.
+ * @returns undefined when the directory is usable, or the refusal reason.
+ */
+function ensureLockDirectory(lockDir: string): { error: string } | undefined {
+    try {
+        const stats = lstatSync(lockDir);
+        if (stats.isDirectory()) {
+            return undefined;
+        }
+        return {
+            error:
+                `the lock directory ${lockDir} is occupied by a ` +
+                `${stats.isSymbolicLink() ? "symlink" : "non-directory"}; ` +
+                "nothing was written. Remove or repair it deliberately.",
+        };
+    } catch {
+        // Absent — create it, contended creation tolerated below.
+    }
+    try {
+        mkdirSync(lockDir);
+        return undefined;
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+            return {
+                error: `could not create the lock directory ${lockDir}: ${String(error)}.`,
+            };
+        }
+        try {
+            return lstatSync(lockDir).isDirectory()
+                ? undefined
+                : {
+                      error: `the lock directory ${lockDir} appeared and is not a directory.`,
+                  };
+        } catch {
+            return {
+                error: `the lock directory ${lockDir} vanished while locking.`,
+            };
+        }
+    }
 }
 
 /**
@@ -2586,20 +2678,19 @@ function targetLockPath(root: string, target: string): string {
  * refuses busy with its recorded owner; it is never stolen, however old —
  * an interrupted process is recovered by a human confirming the owner is
  * gone and removing the file.
- * @param root The configured lake root.
  * @param target The absolute target path.
  * @returns The held lock, or the busy reason.
  */
-function acquireTargetLock(
-    root: string,
-    target: string,
-): TargetLock | { busy: string } {
-    const lockPath = targetLockPath(root, target);
-    mkdirSync(dirname(lockPath), { recursive: true });
+function acquireTargetLock(target: string): TargetLock | { busy: string } {
+    const lockPath = targetLockPath(target);
+    const problem = ensureLockDirectory(dirname(lockPath));
+    if (problem !== undefined) {
+        return { busy: problem.error };
+    }
     try {
         const fd = openSync(lockPath, "wx");
         try {
-            writeSync(
+            writeFullBytes(
                 fd,
                 JSON.stringify({
                     pid: process.pid,
@@ -2641,25 +2732,128 @@ function acquireTargetLock(
 }
 
 /**
- * Verify and swap one whole document under a held lock: the replace target
- * must be a regular file (a vanished target is a conflict, never an implicit
- * create), its current bytes must match the caller's token, and the new bytes
- * publish through a temp file and an atomic rename — a reader sees all of the
- * old bytes or all of the new ones.
+ * Write the whole byte sequence through an open descriptor. A short write is
+ * looped — regular files rarely short-write, but nothing here reports a
+ * revision for bytes it did not fully store: a mid-loop failure propagates
+ * and the publication never renames.
+ * @param fd The descriptor to write through, positioned by the OS.
+ * @param contents The full serialised document.
+ * @param write The single write primitive; injected for short-write tests.
+ */
+export function writeFullBytes(
+    fd: number,
+    contents: string,
+    write: typeof writeSync = writeSync,
+): void {
+    const buffer = Buffer.from(contents, "utf8");
+    let offset = 0;
+    while (offset < buffer.length) {
+        const written = write(fd, buffer, offset, buffer.length - offset);
+        if (typeof written !== "number" || written <= 0) {
+            throw new Error(
+                `write stalled after ${offset} of ${buffer.length} bytes`,
+            );
+        }
+        offset += written;
+    }
+}
+
+/** A temp file this operation exclusively created and owns. */
+interface OwnedTemp {
+    /** The exclusive-create descriptor; all writes go through it. */
+    fd: number;
+    /** The temp's path, for the atomic rename. */
+    path: string;
+}
+
+/**
+ * The exclusive temp-name selection seam: create one new regular file at a
+ * name this operation owns, or throw `EEXIST` when a foreign object already
+ * occupies the candidate. It is never reopened by pathname for writing — the
+ * returned descriptor is the only write route — and a pre-existing symlink,
+ * regular file or directory is never followed, truncated or removed.
+ */
+export type TempFactory = (target: string) => OwnedTemp;
+
+/** The attempts made on distinct exclusive temp names before giving up. */
+export const MAX_TEMP_ATTEMPTS = 8;
+
+/** The module-level temp-file counter: unique publication temps per process. */
+let publishTempCounter = 0;
+
+/**
+ * The default temp selection: `${target}.${pid}.${counter}.tmp` created
+ * exclusively. A pre-existing object at a candidate name — including a
+ * symlink seeded in advance — makes the create fail without touching it, and
+ * the retry loop below moves to the next fresh name. The counter never
+ * repeats within a process, so ordinary contention cannot exhaust the bound.
+ * @param target The absolute target path.
+ * @returns The owned temp descriptor and path.
+ */
+const defaultTempFactory: TempFactory = (target) => {
+    const path = `${target}.${process.pid}.${publishTempCounter++}.tmp`;
+    const fd = openSync(path, "wx");
+    return { fd, path };
+};
+
+/**
+ * The publication seams: the narrow, injectable primitives the guarded
+ * publication uses, exercised by default against the real filesystem. Tests
+ * inject them to make collisions and mid-publication failures deterministic;
+ * production code never reopens a claimed temp, and every seam default
+ * satisfies the exclusive-create and full-write contracts.
+ */
+export interface PublicationSeams {
+    /** Exclusive temp selection; defaults to {@link defaultTempFactory}. */
+    temp?: TempFactory;
+    /** The full-write primitive; defaults to {@link writeFullBytes}. */
+    writeFull?: (fd: number, contents: string) => void;
+    /** The atomic rename; defaults to `renameSync`. */
+    rename?: (temp: string, target: string) => void;
+    /** Stage observation for coordination and failure injection. */
+    onStage?: (stage: PublicationStage) => void;
+}
+
+/** The observations a guarded publication announces. */
+export type PublicationStage = "locked" | "verified" | "published";
+
+/**
+ * The bounded retry over exclusive temp names: each attempt is a fresh name
+ * the factory must exclusively create; an `EEXIST` retry is bounded and never
+ * touches the foreign object it collided with.
+ * @param make The temp seam in use.
+ * @param target The absolute target path, for the candidate names.
+ * @returns An owned temp, or null when every attempt collided.
+ */
+function acquireTemp(make: TempFactory, target: string): OwnedTemp | null {
+    for (let remaining = MAX_TEMP_ATTEMPTS; remaining > 0; remaining -= 1) {
+        try {
+            return { ...make(target) };
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+                throw error;
+            }
+        }
+    }
+    return null;
+}
+
+/**
+ * Verify the replace contract while the target lock is held: the target must
+ * be a regular file (a vanished target is a conflict, never an implicit
+ * create) and its current bytes must match the caller's token, so two
+ * differently routed replace calls verify the same physical bytes under the
+ * same lock.
  * @param target The absolute, guarded target path.
- * @param contents The serialised file contents.
- * @param temp The temp file path to publish through.
  * @param options Publication options.
  * @param options.expectedRevision The replace's stale-write token.
  * @param options.label The qualified target label, for refusals.
- * @returns The new revision, or the refusal reason.
+ * @returns null when the write may proceed, else the refusal reason.
  */
-function swapUnderLock(
+function verifyUnderLock(
     target: string,
-    contents: string,
-    temp: string,
     options: { expectedRevision?: string | undefined; label: string },
-): { revision: string } | { reason: string } {
+): string | null {
     let present: boolean;
     try {
         present = lstatSync(target).isFile();
@@ -2667,27 +2861,23 @@ function swapUnderLock(
         present = false;
     }
     if (!present) {
-        return {
-            reason:
-                `${REFUSE} no doc at ${options.label} — replace never ` +
-                'creates; pass mode:"create" for a new doc.',
-        };
+        return (
+            `${REFUSE} no doc at ${options.label} — replace never ` +
+            'creates; pass mode:"create" for a new doc.'
+        );
     }
     const found = revisionOf(readFileSync(target, "utf8"));
     if (found !== options.expectedRevision) {
         const short = (value: string | undefined): string =>
             (value ?? "none").slice(0, 12);
-        return {
-            reason:
-                `${REFUSE} ${options.label} changed since you read it ` +
-                `(expected ${short(options.expectedRevision)}, found ` +
-                `${short(found)}). Read it again, reconcile, and ` +
-                "resubmit the replacement deliberately.",
-        };
+        return (
+            `${REFUSE} ${options.label} changed since you read it ` +
+            `(expected ${short(options.expectedRevision)}, found ` +
+            `${short(found)}). Read it again, reconcile, and ` +
+            "resubmit the replacement deliberately."
+        );
     }
-    writeFileSync(temp, contents);
-    renameSync(temp, target);
-    return { revision: revisionOf(contents) };
+    return null;
 }
 
 /**
@@ -2721,13 +2911,25 @@ function publicationErrorRefusal(
 }
 
 /**
- * The guarded publication route: verify-and-publish one whole document under
- * a per-target lock. Creates publish through an exclusive open — a losing
- * create cannot overwrite the winner's bytes; replacements compare the
- * current document's revision under the lock and swap atomically, so a reader
- * or another process sees all of the old bytes or all of the new ones, never
- * a mixture. The guarantee covers cooperating plugin writers; a manual editor
- * can still race any filesystem operation.
+ * The publication state/ownership sketch (one replace call):
+ *
+ *   acquire lock    exclusive create beside the physical target
+ *   onStage locked
+ *   verify          current bytes re-read under the lock (stale refusal)
+ *   onStage verified
+ *   create temp     exclusive create beside the target; owned fd retained
+ *   write full      through the fd only; short writes loop or fail
+ *   rename          atomic temp → target; the file published is ours
+ *   onStage published
+ *   release lock
+ *   cleanup duties: on any ordinary failure, unlink ONLY the temp this
+ *   operation created; the lock release in the outer finally; never a
+ *   foreign temp, lock or document path.
+ *
+ * The guarantee covers cooperating plugin writers; a manual editor can still
+ * race any filesystem operation, and a local attacker able to swap
+ * directories between individual syscalls is outside this threat model
+ * (documented, not fought with privileged machinery).
  * @param spec The lake spec.
  * @param target The absolute, guarded target path.
  * @param contents The serialised file contents.
@@ -2735,58 +2937,279 @@ function publicationErrorRefusal(
  * @param options.mode The mutation mode.
  * @param options.expectedRevision The replace's stale-write token.
  * @param options.label The qualified target label, for refusals.
+ * @param options.seams The injectable publication primitives.
+ * @returns The new revision, or the refusal reason.
+ */
+/** The resources one guarded publication has claimed so far. */
+interface PublicationLedger {
+    /** The temp this operation exclusively created, while unpublished. */
+    owned: OwnedTemp | null;
+    /** Whether the submitted bytes are durably at the target. */
+    published: boolean;
+    /** Whether the target file is this operation's own `wx` create. */
+    createdTarget: boolean;
+}
+
+/**
+ * The guarded create: exclusive open, full write through the descriptor, no
+ * overwrite. Sets the ledger on the way through; throws on failure so the
+ * caller's cleanup owns the partial file.
+ * @param target The absolute, guarded target path.
+ * @param contents The serialised file contents.
+ * @param ledger The claimed resources, updated in place.
+ * @param writeFull The full-write primitive.
+ * @param onStage Stage observation.
+ */
+function publishCreate(
+    target: string,
+    contents: string,
+    ledger: PublicationLedger,
+    writeFull: (fd: number, contents: string) => void,
+    onStage: (stage: PublicationStage) => void,
+): void {
+    mkdirSync(dirname(target), { recursive: true });
+    const fd = openSync(target, "wx");
+    // From here the file at the target is this operation's own exclusive
+    // create: a failure owns and removes it, never a rival's `EEXIST` loss.
+    ledger.createdTarget = true;
+    try {
+        writeFull(fd, contents);
+    } finally {
+        closeSync(fd);
+    }
+    // The whole sequence succeeded: the no-overwrite create contract, now
+    // with a full-write guarantee.
+    ledger.published = true;
+    onStage("published");
+}
+
+/**
+ * The guarded replace under the held lock: re-verify the token, exclusively
+ * create a fresh temp, write the whole sequence through its descriptor and
+ * swap atomically.
+ * @param target The absolute, guarded target path.
+ * @param contents The serialised file contents.
+ * @param ledger The claimed resources, updated in place.
+ * @param options Publication options.
+ * @param options.expectedRevision The replace's stale-write token.
+ * @param options.label The qualified target label, for refusals.
+ * @param seams The publication seams.
+ * @returns null when the bytes are published, else the refusal reason.
+ */
+function publishReplace(
+    target: string,
+    contents: string,
+    ledger: PublicationLedger,
+    options: { expectedRevision?: string | undefined; label: string },
+    seams: PublicationSeams,
+): string | null {
+    const refusal = verifyUnderLock(target, options);
+    if (refusal !== null) {
+        return refusal;
+    }
+    seams.onStage?.("verified");
+    const temp = acquireTemp(seams.temp ?? defaultTempFactory, target);
+    if (temp === null) {
+        return (
+            `${REFUSE} could not publish ${options.label}: every ` +
+            "candidate temp name was occupied by an object this " +
+            "operation does not own; nothing was changed."
+        );
+    }
+    ledger.owned = temp;
+    try {
+        (seams.writeFull ?? writeFullBytes)(temp.fd, contents);
+    } finally {
+        closeSync(temp.fd);
+    }
+    (seams.rename ?? renameSync)(temp.path, target);
+    // From here the temp path no longer holds our bytes.
+    ledger.owned = null;
+    ledger.published = true;
+    seams.onStage?.("published");
+    return null;
+}
+
+/**
+ * The publication state/ownership sketch (one call):
+ *
+ *   acquire lock    exclusive create beside the physical target
+ *   onStage locked
+ *   verify          replace: current bytes re-read under the lock
+ *   onStage verified
+ *   create temp     exclusive create beside the target; owned fd retained
+ *   write full      through the fd only; short writes loop or fail
+ *   rename          atomic temp → target; the file published is ours
+ *   onStage published
+ *   release lock
+ *   cleanup duties: on any ordinary failure, unlink ONLY the temp this
+ *   operation created (and its own partial create target); the lock release
+ *   in the outer finally; never a foreign temp, lock or document path.
+ *
+ * The guarantee covers cooperating plugin writers; a manual editor can still
+ * race any filesystem operation, and a local attacker able to swap
+ * directories between individual syscalls is outside this threat model
+ * (documented, not fought with privileged machinery).
+ * @param target The absolute, guarded target path. (The lake's identity is
+ * implied by the guard.)
+ * @param contents The serialised file contents.
+ * @param options Publication options.
+ * @param options.mode The mutation mode.
+ * @param options.expectedRevision The replace's stale-write token.
+ * @param options.label The qualified target label, for refusals.
+ * @param options.seams The injectable publication primitives.
  * @returns The new revision, or the refusal reason.
  */
 function publishTarget(
-    spec: LakeSpec,
     target: string,
     contents: string,
     options: {
         mode: AddMode;
         expectedRevision?: string | undefined;
         label: string;
+        seams?: PublicationSeams;
     },
 ): { revision: string } | { reason: string } {
-    const lock = acquireTargetLock(spec.root, target);
+    const seams = options.seams ?? {};
+    const lock = acquireTargetLock(target);
     if ("busy" in lock) {
         return { reason: `${REFUSE} ${lock.busy}` };
     }
-    const temp =
-        options.mode === "replace"
-            ? `${target}.${process.pid}.${publishTempCounter++}.tmp`
-            : null;
+    // The resource ledger: only the temp this operation exclusively created
+    // is ever unlinked (and only while unpublished), and only a target file
+    // this operation created itself is removed on a create failure — never a
+    // rival's `EEXIST` loss.
+    const ledger: PublicationLedger = {
+        owned: null,
+        published: false,
+        createdTarget: false,
+    };
+    const onStage = (stage: PublicationStage): void => {
+        seams.onStage?.(stage);
+    };
     try {
+        onStage("locked");
         if (options.mode === "create") {
-            mkdirSync(dirname(target), { recursive: true });
-            const fd = openSync(target, "wx");
-            try {
-                writeSync(fd, contents);
-            } finally {
-                closeSync(fd);
+            publishCreate(
+                target,
+                contents,
+                ledger,
+                seams.writeFull ?? writeFullBytes,
+                onStage,
+            );
+        } else {
+            const refusal = publishReplace(
+                target,
+                contents,
+                ledger,
+                options,
+                seams,
+            );
+            if (refusal !== null) {
+                return { reason: refusal };
             }
-            return { revision: revisionOf(contents) };
         }
-        return swapUnderLock(target, contents, temp as string, options);
+        return { revision: revisionOf(contents) };
     } catch (error) {
-        if (temp !== null) {
-            try {
-                unlinkSync(temp);
-            } catch {
-                // The temp may never have been created.
-            }
-        }
-        const refusal = publicationErrorRefusal(
-            options.label,
-            options.mode,
-            error,
-        );
-        if (refusal !== null) {
-            return { reason: refusal };
+        const handled = publicationFailure(target, ledger, options, error);
+        if (handled !== null) {
+            return { reason: handled };
         }
         throw error;
     } finally {
+        if (ledger.owned !== null) {
+            try {
+                unlinkSync(ledger.owned.path);
+            } catch {
+                // Owned temp may already be gone with its rename.
+            }
+        }
         lock.release();
     }
+}
+
+/**
+ * Handle one caught publication error: remove the partial file this
+ * operation created itself, translate the mapped refusal codes, and leave
+ * everything else for the caller to rethrow.
+ * @param target The absolute, guarded target path.
+ * @param ledger The claimed resources.
+ * @param options Publication options.
+ * @param options.label The qualified target label, for refusals.
+ * @param options.mode The mutation mode the write follows.
+ * @param error The caught error.
+ * @returns The refusal reason, or null to rethrow.
+ */
+function publicationFailure(
+    target: string,
+    ledger: PublicationLedger,
+    options: { label: string; mode: AddMode },
+    error: unknown,
+): string | null {
+    if (ledger.createdTarget && !ledger.published) {
+        // A create that opened `wx` then failed owns its own partial file;
+        // remove it, and never the rival's.
+        try {
+            unlinkSync(target);
+        } catch {
+            // Best effort; the failure already reports itself.
+        }
+    }
+    return publicationErrorRefusal(options.label, options.mode, error);
+}
+
+/** One other configured lake, for publishing's physical containment checks. */
+export interface Containment {
+    /** The other lake's identity and writability. */
+    lake: { name: string; root: string; writable: boolean };
+    /** The other lake's real (symlink-resolved) root. */
+    realRoot: string;
+}
+
+/**
+ * The refusal for a public write whose physical target reaches a nested
+ * lake's tree through the selected lake's route, or null. The owner is the
+ * deepest enclosing configured lake: addressing content physically inside
+ * another lake's root through an outer alias would mutate a subtree the outer
+ * lake never indexes, and a read-only owner's tree must not become writable
+ * by reaching it through a writable outer lake. Naming the correct owner
+ * leaves the caller one explicit re-address away.
+ * @param spec The selected lake being published through.
+ * @param target The absolute, guarded target path.
+ * @param others The other configured lakes' real roots.
+ * @returns The refusal reason, or null when the selected lake owns the tree.
+ */
+function containmentRefusal(
+    spec: LakeSpec,
+    target: string,
+    others: readonly Containment[],
+): string | null {
+    const own = realPathOf(spec.root);
+    const key = physicalTargetKey(target);
+    let deepest: Containment | undefined;
+    for (const other of others) {
+        if (other.realRoot === own) {
+            continue;
+        }
+        if (
+            isUnder(other.realRoot, own) &&
+            isUnder(key, other.realRoot) &&
+            (deepest === undefined || isUnder(other.realRoot, deepest.realRoot))
+        ) {
+            deepest = other;
+        }
+    }
+    if (deepest === undefined) {
+        return null;
+    }
+    const access = deepest.lake.writable
+        ? `address it through lake:'${deepest.lake.name}' so it lands in the tree that indexes that address`
+        : `its owner lake '${deepest.lake.name}' is read-only, so this content cannot be written`;
+    return (
+        `${REFUSE} the addressed file physically resolves inside lake ` +
+        `'${deepest.lake.name}' (${deepest.lake.root}; ` +
+        `${deepest.lake.writable ? "writable" : "read-only"}) — ${access}.`
+    );
 }
 
 /**
@@ -2795,11 +3218,20 @@ function publishTarget(
  * @param options Runtime options.
  * @param options.skip Absolute roots of other lakes, so a nested lake is not
  * collected twice.
+ * @param options.containment The other lakes' real roots, for the publish
+ * containment guard; omitted by direct callers that carry one lake only.
+ * @param options.seams Injectable publication primitives; the real
+ * filesystem defaults are used when absent, and tests inject them to make
+ * collisions and failures deterministic.
  * @returns The lake the tool serves.
  */
 export function createLake(
     spec: LakeSpec,
-    options: { skip?: readonly string[] } = {},
+    options: {
+        skip?: readonly string[];
+        containment?: readonly Containment[];
+        seams?: PublicationSeams;
+    } = {},
 ): Lake {
     const guarded = (path: string): string => {
         const target = safeLakeTarget(spec.root, path);
@@ -2836,27 +3268,49 @@ export function createLake(
             mkdirSync(dirname(target), { recursive: true });
             writeFileSync(target, contents);
         },
-        publish: (path, contents, options) => {
+        publish: (path, contents, publishOptions) => {
             const target = guarded(path);
             if (!existsSync(spec.root)) {
                 return {
                     reason: `lake '${spec.name}' root ${spec.root} does not exist; create it first.`,
                 };
             }
-            return publishTarget(spec, target, contents, options);
+            if (options.containment !== undefined) {
+                const refusal = containmentRefusal(
+                    spec,
+                    target,
+                    options.containment,
+                );
+                if (refusal !== null) {
+                    return { reason: refusal };
+                }
+            }
+            return publishTarget(target, contents, {
+                ...publishOptions,
+                ...(options.seams !== undefined
+                    ? { seams: options.seams }
+                    : {}),
+            });
         },
     };
 }
 
 /**
  * Build every configured lake, each aware of the others so a nested root is
- * collected once. Nesting is decided on real paths, so a symlinked root cannot
- * defeat containment: the skip paths handed to the walker are re-anchored
- * under the collecting lake's configured root.
+ * collected once and never published through an outer alias. Nesting is
+ * decided on real paths, so a symlinked root cannot defeat containment: the
+ * skip paths handed to the walker are re-anchored under the collecting lake's
+ * configured root.
  * @param specs The configured lakes.
+ * @param options Runtime options.
+ * @param options.seams The publication seams observed by every lake's
+ * guarded publication.
  * @returns The runtime lakes.
  */
-export function createLakes(specs: readonly LakeSpec[]): Lake[] {
+export function createLakes(
+    specs: readonly LakeSpec[],
+    options: { seams?: PublicationSeams } = {},
+): Lake[] {
     const realRoots = specs.map((spec) => realPathOf(spec.root));
     return specs.map((spec, index) => {
         const own = realRoots[index] ?? spec.root;
@@ -2869,7 +3323,28 @@ export function createLakes(specs: readonly LakeSpec[]): Lake[] {
                 ? [join(spec.root, relative(own, otherRoot))]
                 : [];
         });
-        return createLake(spec, { skip });
+        const containment: Containment[] = specs.flatMap(
+            (other, otherIndex) => {
+                if (otherIndex === index) {
+                    return [];
+                }
+                return [
+                    {
+                        lake: {
+                            name: other.name,
+                            root: other.root,
+                            writable: other.writable,
+                        },
+                        realRoot: realRoots[otherIndex] ?? other.root,
+                    },
+                ];
+            },
+        );
+        return createLake(spec, {
+            skip,
+            ...(containment.length > 0 ? { containment } : {}),
+            ...(options.seams !== undefined ? { seams: options.seams } : {}),
+        });
     });
 }
 
@@ -3455,11 +3930,14 @@ function candidateLine(lake: Lake): string {
  *
  * An explicit name selects that exact lake or refuses — read-only, unknown
  * and (later, in `addDoc`) missing-root lakes never fall back elsewhere.
- * With `lake` omitted the write needs exactly one deliberate destination:
- * a sole writable knowledge lake is the documented convenience default, nested
- * lakes resolve to the narrowest enclosing owner, and any other ambiguity —
- * including a candidate whose root is currently missing — refuses with the
- * candidate list rather than guessing by configuration order.
+ * With `lake` omitted the write needs exactly one deliberate destination: the
+ * sole configured writable knowledge lake. When two or more writable
+ * knowledge lakes are configured the omission refuses with every candidate —
+ * nesting, class, configuration order and current root existence change
+ * nothing, because folder depth cannot infer the semantic owner of a claim.
+ * Nesting still resolves the physical owner of an already named target (see
+ * {@link uniqueHolder} and the publication containment guard); destination
+ * choice and physical ownership are deliberately separate decisions.
  * @param lakes The configured lakes.
  * @param name The explicit lake selector, when given.
  * @returns The target lake, or the refusal reason.
@@ -3491,21 +3969,15 @@ function writableLake(
                 "machine or global lake.",
         };
     }
-    const deepest = pool.map((lake) => ({
-        lake,
-        depth: nestingDepth(lake, lakes),
-    }));
-    const max = Math.max(...deepest.map((item) => item.depth));
-    const winners = deepest.filter((item) => item.depth === max);
-    if (winners.length === 1) {
-        return (winners[0] as { lake: Lake }).lake;
+    if (pool.length > 1) {
+        return {
+            reason:
+                `${REFUSE} ${pool.length} writable knowledge lakes could ` +
+                "take this write; pass lake — one of:\n" +
+                pool.map((lake) => candidateLine(lake)).join("\n"),
+        };
     }
-    return {
-        reason:
-            `${REFUSE} ${winners.length} writable knowledge lakes could take ` +
-            "this write; pass lake — one of:\n" +
-            winners.map((item) => candidateLine(item.lake)).join("\n"),
-    };
+    return pool[0] as Lake;
 }
 
 /** Qualify a path with its lake when more than one lake is configured. */
@@ -3834,6 +4306,47 @@ function successMetadata(
 }
 
 /**
+ * Publish a prepared write through the target lake's route: real lakes use
+ * the guarded {@link publishTarget} protocol (lock, re-verify, atomic
+ * publish); legacy closure lakes fall back to the plain seam with the same
+ * contracts, in-process only.
+ * @param target The verified destination lake.
+ * @param outcome The prepared write.
+ * @param outcome.mode The mutation mode the write follows.
+ * @param outcome.path The root-relative target path.
+ * @param outcome.contents The serialised file contents.
+ * @param expected The caller's revision token, when replacing.
+ * @param label The qualified target label, for refusals.
+ * @returns The new revision, or the refusal reason.
+ */
+function publishPrepared(
+    target: Lake,
+    outcome: {
+        /** The mutation mode the write follows. */
+        mode: AddMode;
+        /** The root-relative target path. */
+        path: string;
+        /** The serialised file contents. */
+        contents: string;
+    },
+    expected: string | undefined,
+    label: string,
+): { revision?: string; reason?: string } {
+    if (target.publish !== undefined) {
+        const result = guardedPublish(target.publish, outcome, expected, label);
+        return "reason" in result
+            ? { reason: result.reason }
+            : { revision: result.revision };
+    }
+    const legacy = legacyPublicationRefusal(target, outcome, expected, label);
+    if (legacy !== null) {
+        return { reason: legacy };
+    }
+    const unsafe = publishLegacy(target, outcome);
+    return unsafe === null ? {} : { reason: unsafe };
+}
+
+/**
  * Add a doc to the target lake through its publication route: real lakes use
  * the guarded {@link publishTarget} protocol (lock, re-verify, atomic
  * publish); legacy closure lakes fall back to the plain seam with the same
@@ -3865,28 +4378,11 @@ function addDoc(
     }
     const label = address(target, outcome.path, runtime.lakes);
     const expected = add.expectedRevision?.trim();
-    let revision: string | undefined;
-    if (target.publish !== undefined) {
-        const result = guardedPublish(target.publish, outcome, expected, label);
-        if ("reason" in result) {
-            return { content: result.reason, written: false };
-        }
-        revision = result.revision;
-    } else {
-        const refusal = legacyPublicationRefusal(
-            target,
-            outcome,
-            expected,
-            label,
-        );
-        if (refusal !== null) {
-            return { content: refusal, written: false };
-        }
-        const unsafe = publishLegacy(target, outcome);
-        if (unsafe !== null) {
-            return { content: unsafe, written: false };
-        }
+    const published = publishPrepared(target, outcome, expected, label);
+    if (published.reason !== undefined) {
+        return { content: published.reason, written: false };
     }
+    const revision = published.revision;
     const head = successHead(
         outcome,
         label,
@@ -3898,7 +4394,9 @@ function addDoc(
     const notes =
         outcome.notes.length > 0 ? `\n\n${outcome.notes.join("\n")}` : "";
     return {
-        content: `${head}${notes}`,
+        content:
+            `${head}${notes}` +
+            (revision !== undefined ? revisionNote(revision, true) : ""),
         written: true,
         metadata: successMetadata(target, outcome, revision),
     };
@@ -4017,17 +4515,43 @@ function readDoc(
     const raw = selected.read(guarded.path);
     const { body } = parseFrontMatter(raw);
     const label = address(selected, guarded.path, runtime.lakes);
+    const revision =
+        selected.profile === "knowledge" ? revisionOf(raw) : undefined;
     return {
-        content: `${label} — ${titleOf(guarded.path, body)}\n\n${raw}`,
+        content:
+            `${label} — ${titleOf(guarded.path, body)}\n\n${raw}` +
+            (revision !== undefined ? revisionNote(revision, false) : ""),
         read: label,
         lake: selected.name,
         path: guarded.path,
         // Wiki pages are read-only reference and promise no write-capable
         // revision workflow; knowledge docs carry their content hash.
-        ...(selected.profile === "knowledge"
-            ? { revision: revisionOf(raw) }
-            : {}),
+        ...(revision !== undefined ? { revision } : {}),
     };
+}
+
+/**
+ * The model-facing revision note: the one line that makes an optimistic-
+ * concurrency token visible through every real host path, stored per-call
+ * metadata kept alongside it for UI and programmatic callers. Host evidence
+ * (opencode v2.2.5): a plugin tool's result reaches the model only through its
+ * `content` — `Session.Tool.Success` persists metadata as optional UI data,
+ * the model-facing lowering (`to-llm-message.ts` → `toolResult()`) serialises
+ * only `content`, and the Code Mode twin's `resultValue()` drops `metadata`
+ * for tools without an output schema. Content text is the one channel both
+ * surfaces forward, so the token rides it. The note sits after an explicit
+ * blank separator, never inside the verbatim document body.
+ * @param revision The content's SHA-256 revision.
+ * @param fresh False for a caller's read; true when a replacement just
+ * published these bytes.
+ * @returns The note text with its leading blank-line separator.
+ */
+function revisionNote(revision: string, fresh: boolean): string {
+    return (
+        `\n\ndocs: revision ${revision} — ` +
+        (fresh ? "the newly published bytes" : "these bytes") +
+        "; cite it as expectedRevision when replacing (a stale token refuses)."
+    );
 }
 
 /** The lake help view shared by the tool and command. */
@@ -4155,12 +4679,12 @@ export function createDocsTool(
         description: codemode
             ? TWIN_DESCRIPTION
             : "Search the configured knowledge lakes and nested project " +
-              "`README.md` files before a broad grep for how-to knowledge, " +
-              "decisions or known problems. A blank search lists recent docs; " +
-              "`help` shows the lakes and ranking. `read` returns a lake doc " +
-              "verbatim plus its revision; `instructions:` results open with " +
-              "the built-in read tool. `add` creates or replaces a knowledge " +
-              "doc (replace needs a current revision); `check` audits " +
+              "`README.md` files before a broad grep for how-to knowledge. " +
+              "A blank search lists recent docs; `help` shows the lakes and " +
+              "ranking. `read` returns a lake doc verbatim plus its " +
+              "revision token; `instructions:` results open with the " +
+              "built-in read tool. `add` creates or replaces a knowledge " +
+              "doc (replace needs that revision); `check` audits " +
               "convention compliance.",
         input: DOCS_INPUT,
         options: codemode

@@ -331,7 +331,7 @@
         ],
         "expected": "Personal",
         "accepts": [
-            "The cause is the person's session state, not the repo; record without account identifiers — name the login step, never the token."
+            "The cause is the person's session state, not the repo; record without account identifiers \u2014 name the login step, never the token."
         ],
         "temptingWrong": [
             "Repository because the investigation happened inside the repo.",
@@ -385,6 +385,37 @@
         "temptingWrong": [
             "Writing both a personal and an organisation doc 'to cover it'.",
             "Guessing organisation scope because shared would be more useful."
+        ]
+    },
+    {
+        "id": "E17",
+        "claim": "A build-script trap is documented in the repository docs lake, which nests inside a writable outer repo lake that also holds an unrelated personal lake; a create omits the lake selector and the model must decide where the claim lands.",
+        "evidence": "The claim depends only on this repository's build script; the nested repo lake's description names repository knowledge; the unrelated lake holds nothing relevant.",
+        "destinations": [
+            {
+                "name": "docs",
+                "class": "repo",
+                "description": "This repository's traps and decisions."
+            },
+            {
+                "name": "outer",
+                "class": "repo",
+                "description": "A wider tree that encloses the repo lake."
+            },
+            {
+                "name": "personal",
+                "class": "machine",
+                "description": "A person's devices and setup."
+            }
+        ],
+        "expected": "Repository",
+        "accepts": [
+            "Pass lake:'docs' and record in the nested repository lake; when the omission would be ambiguous the tool refuses and the next attempt names the repository lake."
+        ],
+        "temptingWrong": [
+            "Writing into the enclosing outer tree because the claim physically sits there",
+            "Selecting the unrelated personal lake for convenience",
+            "Guessing the deepest lake without reading its description"
         ]
     }
 ]
