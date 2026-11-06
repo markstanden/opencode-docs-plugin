@@ -1,5 +1,6 @@
 import { Plugin, Skill } from "@opencode/plugin";
 import { AbsolutePath } from "@opencode/schema/schema";
+import { createHash } from "node:crypto";
 import type {
     CommandDefinition,
     CommandInvocation,
@@ -7,15 +8,20 @@ import type {
 import type { Info, Result } from "@opencode/plugin/promise/tool";
 import { spawnSync } from "node:child_process";
 import {
+    closeSync,
     type Dirent,
     existsSync,
     lstatSync,
     mkdirSync,
+    openSync,
     readFileSync,
     readdirSync,
     realpathSync,
+    renameSync,
     statSync,
+    unlinkSync,
     writeFileSync,
+    writeSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import {
@@ -49,6 +55,21 @@ import { Schema } from "effect";
 
 /** The doc classes the plugin serves. `instructions` is the implicit README source. */
 export type DocClass = "instructions" | "repo" | "machine" | "global" | "wiki";
+
+/** The shape of a content revision: SHA-256, hex-encoded. */
+export const REVISION_PATTERN = /^[0-9a-f]{64}$/;
+
+/**
+ * A doc's content revision: the SHA-256 of the exact stored UTF-8 bytes,
+ * front-matter and newline bytes included. It represents the bytes, not an
+ * edit history — the same bytes hash to the same revision — and it is never
+ * persisted into the doc.
+ * @param raw The exact file contents.
+ * @returns The hex digest.
+ */
+export function revisionOf(raw: string): string {
+    return createHash("sha256").update(raw, "utf8").digest("hex");
+}
 
 /** The classes that can be a configured lake. */
 export type LakeClass = Exclude<DocClass, "instructions">;
@@ -89,25 +110,25 @@ export const DOCS_INPUT = Schema.Struct({
     search: Schema.optional(
         Schema.String.annotate({
             description:
-                "Case-insensitive search over title, path, keywords, headings, code spans, area, summary and wiki prose. Blank lists the most recently changed docs; a partial match returns the closest.",
+                "Case-insensitive search over title, path, keywords, headings, code spans, area, summary and wiki prose. Blank lists recent docs; a partial match returns the closest.",
         }),
     ),
     lake: Schema.optional(
         Schema.String.annotate({
             description:
-                "Optional lake name: search and check are limited to it; read and add target it. Omit to search every lake or read the unique match; add writes to the sole writable knowledge lake and refuses with candidates when several could take it.",
+                "Optional lake name: search and check are limited to it; read and add target it. Omit to search or read the unique match; add writes the sole writable lake, refusing with candidates otherwise.",
         }),
     ),
     add: Schema.optional(
         Schema.Struct({
             mode: Schema.Literals(["create", "replace"]).annotate({
                 description:
-                    "Required: create (new doc, never overwrites) or replace (wholesale-replaces the doc at path).",
+                    "Required: create (a new doc; never overwrites) or replace (wholesale-replaces the doc at path).",
             }),
             path: Schema.optional(
                 Schema.String.annotate({
                     description:
-                        "create: optional, derived from Area and the H1 when omitted. replace: required; the existing doc to replace.",
+                        "create: optional; derived from Area and the H1 when omitted. replace: required; the doc to replace.",
                 }),
             ),
             allowNearTwinReason: Schema.optional(
@@ -116,33 +137,39 @@ export const DOCS_INPUT = Schema.Struct({
                         "create only: non-blank reason to write despite a same-area near-twin; bypasses only that guard.",
                 }),
             ),
+            expectedRevision: Schema.optional(
+                Schema.String.annotate({
+                    description:
+                        "replace only: the revision token from your last read or write; stale or missing refuses.",
+                }),
+            ),
             metadata: Schema.Struct({
                 Area: Schema.String,
                 Keywords: Schema.Array(Schema.String),
                 Summary: Schema.String,
             }).annotate({
                 description:
-                    "Front-matter metadata; serialised, never copied. All three are required and must not be blank.",
+                    "Front-matter metadata, serialised; all three required, never blank.",
             }),
             body: Schema.String.annotate({
                 description:
-                    "Markdown body: an H1 title, plus at least one claim section as an H2/H3 — Facts, Inferred, Tested, Failed approaches, Open questions.",
+                    "Markdown body: an H1 title plus a claim section as an H2/H3 — Facts, Inferred, Tested, Failed approaches, Open questions.",
             }),
         }).annotate({
             description:
-                "The mutating call. create: the target must not exist; an explicit path gets the same checks as a derived one. replace: path must name an existing doc — never creates. Refused: blank metadata, path traversal, a non-.md or symlinked target, no claim section, near-twins without allowNearTwinReason. Wiki lakes are read-only.",
+                "create: the target must not exist; explicit paths get the same checks as derived ones. replace: path names an existing doc whose bytes must match expectedRevision — never creates. Refused: blank metadata, traversal, a non-.md or symlinked target, no claim section, unreconciled near-twins. Wiki lakes are read-only.",
         }),
     ),
     check: Schema.optional(
         Schema.Boolean.annotate({
             description:
-                "Validate every knowledge doc: front-matter, an H1, a claim section, no hand-maintained Date, a distinctive H1+Keywords identity, near-twins, broken relative links, a soft length note. Only writable knowledge lakes are validated; skipped lakes are named.",
+                "Validate knowledge docs: front-matter, an H1, a claim section, no hand-maintained Date, a distinctive identity, near-twins, broken relative links, a soft length note. Only writable knowledge lakes are validated; skipped lakes are named.",
         }),
     ),
     read: Schema.optional(
         Schema.String.annotate({
             description:
-                "A root-relative doc path, or `lake:path`: returns the doc verbatim, front-matter and body. Lake docs and wiki pages only; project READMEs use the built-in `read` tool.",
+                "A root-relative doc path, or `lake:path`: returns the doc verbatim, front-matter and body. Lake and wiki pages only; project READMEs use the built-in `read` tool.",
         }),
     ),
 });
@@ -1683,6 +1710,37 @@ function overrideRefusal(add: DocsAdd): string | null {
 }
 
 /**
+ * The refusal for a misused `expectedRevision`, or null. Replace requires the
+ * revision token of the doc being replaced — its stale-write guard; create
+ * carries a not-exists precondition instead and rejects the field outright.
+ * @param add The typed request.
+ * @returns The refusal reason, or null when the field is acceptable.
+ */
+function revisionRefusal(add: DocsAdd): string | null {
+    if (add.mode === "create") {
+        return add.expectedRevision === undefined
+            ? null
+            : "expectedRevision is replace-only; a create's precondition is " +
+                  "that the target does not exist.";
+    }
+    const given = add.expectedRevision?.trim() ?? "";
+    if (given === "") {
+        return (
+            "replace requires expectedRevision — the revision returned with " +
+            "your last read or write of the doc, so a stale whole-doc " +
+            "replacement refuses instead of overwriting a newer edit."
+        );
+    }
+    if (!REVISION_PATTERN.test(given)) {
+        return (
+            "expectedRevision must be the SHA-256 hex digest returned with " +
+            "the doc you read; reread it and resubmit."
+        );
+    }
+    return null;
+}
+
+/**
  * The refusal for DTO content a knowledge doc may not carry: blank required
  * metadata, an `Area` off the root, a missing `H1`, no claim section, or an
  * identity too weak to reconcile.
@@ -1755,6 +1813,10 @@ export function prepareAdd(
     const override = overrideRefusal(add);
     if (override !== null) {
         return refuse(override);
+    }
+    const revision = revisionRefusal(add);
+    if (revision !== null) {
+        return refuse(revision);
     }
     const content = contentRefusal(add);
     if (content !== null) {
@@ -2385,6 +2447,21 @@ export interface Lake extends LakeSpec {
      */
     write: (path: string, contents: string) => void;
     /**
+     * The guarded publication route for real lakes: lock, re-verify, and
+     * publish the whole document — a no-overwrite create, or an atomic
+     * whole-file replacement against `expectedRevision`. Legacy closure lakes
+     * omit it and fall back to the plain `write` seam.
+     */
+    publish?: (
+        path: string,
+        contents: string,
+        options: {
+            mode: AddMode;
+            expectedRevision?: string | undefined;
+            label: string;
+        },
+    ) => { revision: string } | { reason: string };
+    /**
      * Legacy seam notes only. Real lakes compute their environment notes at
      * call time — a root that appears, disappears or gains a git checkout is
      * re-probed on the next `check`, `search` and help, never captured here.
@@ -2455,6 +2532,264 @@ function safeLakeTarget(root: string, path: string): string | null {
 }
 
 /**
+ * A held target lock. Release it on every ordinary exit; a lock left by an
+ * interrupted process is never stolen automatically — the refusal names its
+ * owner and the recovery is manual.
+ */
+interface TargetLock {
+    /** Removes the lock file; best effort. */
+    release: () => void;
+}
+
+/** The module-level temp-file counter: unique publication temps per process. */
+let publishTempCounter = 0;
+
+/**
+ * The physical identity of a target: its deepest existing ancestor,
+ * real-pathed, plus the exact remaining segments. Two configured roots that
+ * reach the same tree by different routes resolve to one key, so their locks
+ * cannot silently diverge.
+ * @param target The absolute target path.
+ * @returns The real-path key.
+ */
+function physicalTargetKey(target: string): string {
+    const tail: string[] = [];
+    let head = target;
+    while (!existsSync(head)) {
+        tail.unshift(basename(head));
+        const parent = dirname(head);
+        if (parent === head) {
+            break;
+        }
+        head = parent;
+    }
+    return join(realpathSync(head), ...tail);
+}
+
+/**
+ * The lock file for a target: a hidden directory at the lake root, keyed by
+ * the target's physical identity. Search and check skip dot-directories, so
+ * the lock dir is never mistaken for content.
+ * @param root The configured lake root.
+ * @param target The absolute target path.
+ * @returns The lock file path.
+ */
+function targetLockPath(root: string, target: string): string {
+    const key = createHash("sha256")
+        .update(physicalTargetKey(target), "utf8")
+        .digest("hex");
+    return join(root, ".docs-lock", `${key}.lock`);
+}
+
+/**
+ * Acquire a target's publication lock with an exclusive create. A held lock
+ * refuses busy with its recorded owner; it is never stolen, however old —
+ * an interrupted process is recovered by a human confirming the owner is
+ * gone and removing the file.
+ * @param root The configured lake root.
+ * @param target The absolute target path.
+ * @returns The held lock, or the busy reason.
+ */
+function acquireTargetLock(
+    root: string,
+    target: string,
+): TargetLock | { busy: string } {
+    const lockPath = targetLockPath(root, target);
+    mkdirSync(dirname(lockPath), { recursive: true });
+    try {
+        const fd = openSync(lockPath, "wx");
+        try {
+            writeSync(
+                fd,
+                JSON.stringify({
+                    pid: process.pid,
+                    acquiredAt: new Date().toISOString(),
+                }),
+            );
+        } finally {
+            closeSync(fd);
+        }
+        return {
+            release: (): void => {
+                try {
+                    unlinkSync(lockPath);
+                } catch {
+                    // Best effort: a later refusal names the surviving lock.
+                }
+            },
+        };
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+            throw error;
+        }
+        let owner = "details unreadable";
+        try {
+            const raw = readFileSync(lockPath, "utf8").trim();
+            if (raw !== "") {
+                owner = raw;
+            }
+        } catch {
+            // Keep the fallback text.
+        }
+        return {
+            busy:
+                `another writer holds the target lock (${owner}); retry ` +
+                `later, or after confirming that process is gone remove ` +
+                `${lockPath}.`,
+        };
+    }
+}
+
+/**
+ * Verify and swap one whole document under a held lock: the replace target
+ * must be a regular file (a vanished target is a conflict, never an implicit
+ * create), its current bytes must match the caller's token, and the new bytes
+ * publish through a temp file and an atomic rename — a reader sees all of the
+ * old bytes or all of the new ones.
+ * @param target The absolute, guarded target path.
+ * @param contents The serialised file contents.
+ * @param temp The temp file path to publish through.
+ * @param options Publication options.
+ * @param options.expectedRevision The replace's stale-write token.
+ * @param options.label The qualified target label, for refusals.
+ * @returns The new revision, or the refusal reason.
+ */
+function swapUnderLock(
+    target: string,
+    contents: string,
+    temp: string,
+    options: { expectedRevision?: string | undefined; label: string },
+): { revision: string } | { reason: string } {
+    let present: boolean;
+    try {
+        present = lstatSync(target).isFile();
+    } catch {
+        present = false;
+    }
+    if (!present) {
+        return {
+            reason:
+                `${REFUSE} no doc at ${options.label} — replace never ` +
+                'creates; pass mode:"create" for a new doc.',
+        };
+    }
+    const found = revisionOf(readFileSync(target, "utf8"));
+    if (found !== options.expectedRevision) {
+        const short = (value: string | undefined): string =>
+            (value ?? "none").slice(0, 12);
+        return {
+            reason:
+                `${REFUSE} ${options.label} changed since you read it ` +
+                `(expected ${short(options.expectedRevision)}, found ` +
+                `${short(found)}). Read it again, reconcile, and ` +
+                "resubmit the replacement deliberately.",
+        };
+    }
+    writeFileSync(temp, contents);
+    renameSync(temp, target);
+    return { revision: revisionOf(contents) };
+}
+
+/**
+ * The refusal for a caught publication error, or null when the error is not
+ * one the caller should see as a refusal: a losing create's EEXIST, or an
+ * unwritable lake's EACCES/EPERM. Everything else propagates.
+ * @param label The qualified target label, for refusals.
+ * @param mode The mutation mode the write follows.
+ * @param error The caught error.
+ * @returns The refusal reason, or null to rethrow.
+ */
+function publicationErrorRefusal(
+    label: string,
+    mode: AddMode,
+    error: unknown,
+): string | null {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (mode === "create" && code === "EEXIST") {
+        return (
+            `${REFUSE} ${label} already exists — read it and pass ` +
+            'mode:"replace" to overwrite it deliberately.'
+        );
+    }
+    if (code === "EACCES" || code === "EPERM") {
+        return (
+            `${REFUSE} could not publish ${label}: ${String(error)}. ` +
+            "The lake or its directories are not writable by this process."
+        );
+    }
+    return null;
+}
+
+/**
+ * The guarded publication route: verify-and-publish one whole document under
+ * a per-target lock. Creates publish through an exclusive open — a losing
+ * create cannot overwrite the winner's bytes; replacements compare the
+ * current document's revision under the lock and swap atomically, so a reader
+ * or another process sees all of the old bytes or all of the new ones, never
+ * a mixture. The guarantee covers cooperating plugin writers; a manual editor
+ * can still race any filesystem operation.
+ * @param spec The lake spec.
+ * @param target The absolute, guarded target path.
+ * @param contents The serialised file contents.
+ * @param options Publication options.
+ * @param options.mode The mutation mode.
+ * @param options.expectedRevision The replace's stale-write token.
+ * @param options.label The qualified target label, for refusals.
+ * @returns The new revision, or the refusal reason.
+ */
+function publishTarget(
+    spec: LakeSpec,
+    target: string,
+    contents: string,
+    options: {
+        mode: AddMode;
+        expectedRevision?: string | undefined;
+        label: string;
+    },
+): { revision: string } | { reason: string } {
+    const lock = acquireTargetLock(spec.root, target);
+    if ("busy" in lock) {
+        return { reason: `${REFUSE} ${lock.busy}` };
+    }
+    const temp =
+        options.mode === "replace"
+            ? `${target}.${process.pid}.${publishTempCounter++}.tmp`
+            : null;
+    try {
+        if (options.mode === "create") {
+            mkdirSync(dirname(target), { recursive: true });
+            const fd = openSync(target, "wx");
+            try {
+                writeSync(fd, contents);
+            } finally {
+                closeSync(fd);
+            }
+            return { revision: revisionOf(contents) };
+        }
+        return swapUnderLock(target, contents, temp as string, options);
+    } catch (error) {
+        if (temp !== null) {
+            try {
+                unlinkSync(temp);
+            } catch {
+                // The temp may never have been created.
+            }
+        }
+        const refusal = publicationErrorRefusal(
+            options.label,
+            options.mode,
+            error,
+        );
+        if (refusal !== null) {
+            return { reason: refusal };
+        }
+        throw error;
+    } finally {
+        lock.release();
+    }
+}
+
+/**
  * Attach the filesystem seams to a lake spec.
  * @param spec The configured lake.
  * @param options Runtime options.
@@ -2500,6 +2835,15 @@ export function createLake(
             }
             mkdirSync(dirname(target), { recursive: true });
             writeFileSync(target, contents);
+        },
+        publish: (path, contents, options) => {
+            const target = guarded(path);
+            if (!existsSync(spec.root)) {
+                return {
+                    reason: `lake '${spec.name}' root ${spec.root} does not exist; create it first.`,
+                };
+            }
+            return publishTarget(spec, target, contents, options);
         },
     };
 }
@@ -3324,22 +3668,25 @@ function checkLakes(
 }
 
 /**
- * The refusal for a write whose target is in the wrong state at the
- * publication boundary: a create whose target exists (never an implicit
- * overwrite), or a replace whose target vanished (never an implicit create).
+ * The refusal for a legacy-seam write whose target is in the wrong state:
+ * a create whose target exists (never an implicit overwrite), a replace whose
+ * target vanished (never an implicit create), or a replace whose current
+ * bytes no longer match the caller's `expectedRevision`. Legacy closure
+ * seams cannot exclude other processes, so this route is in-process only.
  * @param target The lake the write lands in.
  * @param outcome The prepared write.
  * @param outcome.mode The mutation mode the write follows.
  * @param outcome.path The root-relative target path.
- * @param lakes The configured lakes, for the qualified address.
+ * @param expected The caller's revision token, when replacing.
+ * @param labelled The qualified target label, for refusals.
  * @returns The refusal, or null when the target state allows the write.
  */
-function publicationRefusal(
+function legacyPublicationRefusal(
     target: Lake,
     outcome: { mode: AddMode; path: string },
-    lakes: readonly Lake[],
+    expected: string | undefined,
+    labelled: string,
 ): string | null {
-    const labelled = address(target, outcome.path, lakes);
     const present = target.exists(outcome.path);
     if (outcome.mode === "create") {
         return present
@@ -3347,10 +3694,19 @@ function publicationRefusal(
                   'mode:"replace" to overwrite it deliberately.'
             : null;
     }
-    return present
+    if (!present) {
+        return (
+            `${REFUSE} no doc at ${labelled} — replace never creates; ` +
+            'pass mode:"create" for a new doc.'
+        );
+    }
+    const found = revisionOf(target.read(outcome.path));
+    return found === expected
         ? null
-        : `${REFUSE} no doc at ${labelled} — replace never creates; ` +
-              'pass mode:"create" for a new doc.';
+        : `${REFUSE} ${labelled} changed since you read it (expected ` +
+              `${(expected ?? "none").slice(0, 12)}, found ` +
+              `${found.slice(0, 12)}). Read it again, reconcile, and ` +
+              "resubmit the replacement deliberately.";
 }
 
 /**
@@ -3380,15 +3736,15 @@ function writeTarget(
 }
 
 /**
- * Publish a prepared write through the lake's seam, translating the seam's
- * path-safety error into a refusal.
+ * Publish a prepared write through a legacy lake's plain write seam,
+ * translating the seam's path-safety error into a refusal.
  * @param target The lake the write lands in.
  * @param outcome The prepared write.
  * @param outcome.path The root-relative target path.
  * @param outcome.contents The serialised file contents.
  * @returns The refusal on an unsafe path, or null once written.
  */
-function publish(
+function publishLegacy(
     target: Lake,
     outcome: { path: string; contents: string },
 ): string | null {
@@ -3403,12 +3759,99 @@ function publish(
     return null;
 }
 
-/** Add a doc to the target lake. */
+/**
+ * Publish through a lake's guarded protocol seam, translating its path-safety
+ * error into a refusal.
+ * @param publish The lake's publication seam.
+ * @param outcome The prepared write.
+ * @param outcome.mode The mutation mode the write follows.
+ * @param outcome.path The root-relative target path.
+ * @param outcome.contents The serialised file contents.
+ * @param expected The caller's revision token, when replacing.
+ * @param label The qualified target label, for refusals.
+ * @returns The new revision, or the refusal reason.
+ */
+function guardedPublish(
+    publish: NonNullable<Lake["publish"]>,
+    outcome: { mode: AddMode; path: string; contents: string },
+    expected: string | undefined,
+    label: string,
+): { revision: string } | { reason: string } {
+    try {
+        return publish(outcome.path, outcome.contents, {
+            mode: outcome.mode,
+            expectedRevision: expected,
+            label,
+        });
+    } catch (error) {
+        if (error instanceof UnsafePathError) {
+            return { reason: `${REFUSE} ${error.message}` };
+        }
+        throw error;
+    }
+}
+
+/**
+ * The one-line success report: the qualified target, the outcome, and an
+ * override note when a near-twin was crossed deliberately.
+ * @param outcome The prepared write.
+ * @param outcome.mode The mutation mode the write follows.
+ * @param label The qualified target label.
+ * @param overridden Whether a near-twin override was used.
+ * @returns The report head.
+ */
+function successHead(
+    outcome: { mode: AddMode },
+    label: string,
+    overridden: boolean,
+): string {
+    return (
+        `${label} — ${outcome.mode === "replace" ? "replaced" : "created"}.` +
+        (overridden ? " near-twin overridden." : "")
+    );
+}
+
+/**
+ * The success metadata: the written flag, the resolved lake and path, and the
+ * new content revision when the route produced one.
+ * @param target The lake the write landed in.
+ * @param outcome The prepared write.
+ * @param outcome.path The root-relative target path.
+ * @param revision The new revision, when the route produced one.
+ * @returns The metadata object.
+ */
+function successMetadata(
+    target: Lake,
+    outcome: { path: string },
+    revision: string | undefined,
+): Record<string, unknown> {
+    return {
+        written: true,
+        lake: target.name,
+        path: outcome.path,
+        ...(revision !== undefined ? { revision } : {}),
+    };
+}
+
+/**
+ * Add a doc to the target lake through its publication route: real lakes use
+ * the guarded {@link publishTarget} protocol (lock, re-verify, atomic
+ * publish); legacy closure lakes fall back to the plain seam with the same
+ * contracts, in-process only.
+ * @param runtime The resolved runtime.
+ * @param add The typed request.
+ * @param lakeName The explicit lake selector, when given.
+ * @returns The result content, written flag and success metadata.
+ */
 function addDoc(
     runtime: Runtime,
     add: DocsAdd,
     lakeName: string | undefined,
-): { content: string; written: boolean } {
+): {
+    content: string;
+    written: boolean;
+    metadata?: Record<string, unknown>;
+} {
     const target = writeTarget(runtime.lakes, lakeName);
     if ("reason" in target) {
         return { content: target.reason, written: false };
@@ -3420,29 +3863,45 @@ function addDoc(
     if (outcome.action === "refuse") {
         return { content: outcome.reason, written: false };
     }
-    // Publication boundary: the target's state is verified as late as the
-    // seams allow — see {@link publicationRefusal}.
-    const refusal = publicationRefusal(target, outcome, runtime.lakes);
-    if (refusal !== null) {
-        return { content: refusal, written: false };
+    const label = address(target, outcome.path, runtime.lakes);
+    const expected = add.expectedRevision?.trim();
+    let revision: string | undefined;
+    if (target.publish !== undefined) {
+        const result = guardedPublish(target.publish, outcome, expected, label);
+        if ("reason" in result) {
+            return { content: result.reason, written: false };
+        }
+        revision = result.revision;
+    } else {
+        const refusal = legacyPublicationRefusal(
+            target,
+            outcome,
+            expected,
+            label,
+        );
+        if (refusal !== null) {
+            return { content: refusal, written: false };
+        }
+        const unsafe = publishLegacy(target, outcome);
+        if (unsafe !== null) {
+            return { content: unsafe, written: false };
+        }
     }
-    const unsafe = publish(target, outcome);
-    if (unsafe !== null) {
-        return { content: unsafe, written: false };
-    }
-    const head =
-        `${address(target, outcome.path, runtime.lakes)} — ${
-            outcome.mode === "replace" ? "replaced" : "created"
-        }.` +
-        (outcome.mode === "create" && overrideGiven(add)
-            ? " near-twin overridden."
-            : "");
+    const head = successHead(
+        outcome,
+        label,
+        outcome.mode === "create" && overrideGiven(add),
+    );
     // The path and outcome are the answer; a list of same-area neighbours was
     // unsolicited context that grew with the area and was picked by collection
     // order, not relevance. Refusals still carry their candidates.
     const notes =
         outcome.notes.length > 0 ? `\n\n${outcome.notes.join("\n")}` : "";
-    return { content: `${head}${notes}`, written: true };
+    return {
+        content: `${head}${notes}`,
+        written: true,
+        metadata: successMetadata(target, outcome, revision),
+    };
 }
 
 /** A parsed read request: the lake (when known) and the path. */
@@ -3523,7 +3982,13 @@ function readDoc(
     runtime: Runtime,
     given: string,
     lakeName: string | undefined,
-): { content: string; read: string | null } {
+): {
+    content: string;
+    read: string | null;
+    lake?: string;
+    path?: string;
+    revision?: string;
+} {
     const target = readTargetOf(runtime, given, lakeName);
     if (target.reason !== undefined) {
         return { content: target.reason, read: null };
@@ -3555,6 +4020,13 @@ function readDoc(
     return {
         content: `${label} — ${titleOf(guarded.path, body)}\n\n${raw}`,
         read: label,
+        lake: selected.name,
+        path: guarded.path,
+        // Wiki pages are read-only reference and promise no write-capable
+        // revision workflow; knowledge docs carry their content hash.
+        ...(selected.profile === "knowledge"
+            ? { revision: revisionOf(raw) }
+            : {}),
     };
 }
 
@@ -3612,7 +4084,7 @@ function executeRequest(runtime: Runtime, input: DocsInput): Result {
         const result = addDoc(runtime, request.add, request.lake);
         return {
             content: result.content,
-            metadata: { written: result.written },
+            metadata: result.metadata ?? { written: result.written },
         };
     }
     if (request.verb === "check") {
@@ -3626,7 +4098,14 @@ function executeRequest(runtime: Runtime, input: DocsInput): Result {
         const result = readDoc(runtime, request.read, request.lake);
         return {
             content: result.content,
-            metadata: { read: result.read },
+            metadata: {
+                read: result.read,
+                ...(result.lake !== undefined ? { lake: result.lake } : {}),
+                ...(result.path !== undefined ? { path: result.path } : {}),
+                ...(result.revision !== undefined
+                    ? { revision: result.revision }
+                    : {}),
+            },
         };
     }
     if (request.verb === "help") {
@@ -3679,9 +4158,10 @@ export function createDocsTool(
               "`README.md` files before a broad grep for how-to knowledge, " +
               "decisions or known problems. A blank search lists recent docs; " +
               "`help` shows the lakes and ranking. `read` returns a lake doc " +
-              "verbatim; project `instructions:` results open with the built-in " +
-              "read tool. `add` writes or replaces a knowledge doc; `check` " +
-              "audits convention compliance.",
+              "verbatim plus its revision; `instructions:` results open with " +
+              "the built-in read tool. `add` creates or replaces a knowledge " +
+              "doc (replace needs a current revision); `check` audits " +
+              "convention compliance.",
         input: DOCS_INPUT,
         options: codemode
             ? { namespace: "docs", codemode: true }

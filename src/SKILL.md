@@ -22,7 +22,7 @@ wiki's owners. Split only for claims with different owners; unresolved
 ownership stays an explicit proposal, never a guessed destination.
 
 `help` lists each lake's scope and description; `add` writes the sole writable
-lake when `lake` is omitted, else refuses with candidates — pass `lake`.
+lake without `lake`, else refuses with candidates — pass `lake`.
 
 ## Find it
 
@@ -35,7 +35,7 @@ Open the match with `read` (root-relative, or `lake:path`); a README
 result is `instructions:path` for the built-in `read`. Consult
 matching docs before a broad grep; a tie ranks repo, instructions, global,
 machine, wiki. Knowledge lakes exclude `plans/`, `requirements/` and `wiki/`
-at the root; wiki lakes exclude only dot-directories and `node_modules`.
+at the root; wiki lakes only dot-directories and `node_modules`.
 
 ## Record it
 
@@ -45,12 +45,12 @@ authoritative):
 1. **Read first, never duplicate:** the same area, keyword hits on its
    entities, or links from touched docs.
 2. **Choose one scope** from the table — the narrowest that holds the claim;
-   one artifact per topic and scope, never one dump.
+   one artifact per topic and scope.
 3. **Reconcile, then add:** edit before add; merge near-twins; split per topic,
    repoint references, delete the emptied doc — no superseded stubs.
 
 Record through the typed `add`: metadata (`Area`, `Keywords`, `Summary`) plus a
-body with an `H1` and a claim section — Facts, Inferred, Tested, Failed approaches, Open questions. `mode:"create"` writes a new doc (never overwrites; near-twins refuse unless `allowNearTwinReason` explains the distinction). `mode:"replace"` wholesale-replaces the doc at `path` (omitted content is lost; a missing target refuses, never creates). Refused always: blank metadata, traversal, a non-`.md` or symlinked target, no claim section.
+body with an `H1` and a claim section — Facts, Inferred, Tested, Failed approaches, Open questions. `mode:"create"` writes a new doc (never overwrites; near-twins refuse unless `allowNearTwinReason` explains the distinction). `mode:"replace"` wholesale-replaces the doc at `path` against your `expectedRevision` (omitted content is lost; a missing target or stale token refuses, never creates). Refused always: blank metadata, traversal, a non-`.md` or symlinked target, no claim section.
 
 A doc is current or deleted; no `Status` or `Supersedes`. A failed attempt is
 valid knowledge: what was tried, why it failed, what is true now, what not to
@@ -76,5 +76,4 @@ lines not shown` tail. `add` enforces the structural rules at the write
 boundary; cross-document audits stay with `check`.
 
 Run the project's tests and typecheck before proposing a commit; prepare it
-and **wait for explicit approval** — recording is not commit approval.
-Never push.
+and **wait for explicit approval** — recording is not approval. Never push.

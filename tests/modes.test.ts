@@ -17,6 +17,7 @@ import {
     createDocsTool,
     createLakes,
     DOCS_INPUT,
+    revisionOf,
     type DocsInput,
     type LakeSpec,
 } from "../src/index.ts";
@@ -232,21 +233,29 @@ describe("create and replace contracts", () => {
 
     it("replaces precisely the named doc through mode:replace (C06)", async () => {
         const lake = spec("docs", "repo");
-        seed(lake.root, "aa/fresh.md", "Old");
+        const existing = seed(lake.root, "aa/fresh.md", "Old");
         seed(lake.root, "aa/other.md", "Other");
         const tool = toolOf([lake]);
 
         const result = await tool.execute(
-            { add: replacePayload("aa/fresh.md", "Fresh") } as never,
+            {
+                add: replacePayload("aa/fresh.md", "Fresh", {
+                    expectedRevision: revisionOf(existing),
+                }),
+            } as never,
             {} as never,
         );
 
-        // Assert – the named file replaced wholesale; its neighbour untouched.
+        // Assert – the named file replaced wholesale; its neighbour untouched;
+        // the returned revision is the independent hash of the new bytes.
         assert.equal(result.metadata?.written, true);
         assert.match(String(result.content), /^aa\/fresh\.md — replaced/);
         const replaced = readFileSync(join(lake.root, "aa/fresh.md"), "utf8");
         assert.match(replaced, /# Fresh/);
         assert.doesNotMatch(replaced, /Original body/);
+        assert.equal(result.metadata?.revision, revisionOf(replaced));
+        assert.equal(result.metadata?.lake, "docs");
+        assert.equal(result.metadata?.path, "aa/fresh.md");
         assert.match(
             readFileSync(join(lake.root, "aa/other.md"), "utf8"),
             /# Other/,
@@ -257,15 +266,37 @@ describe("create and replace contracts", () => {
         const lake = spec("docs", "repo");
         const tool = toolOf([lake]);
         const before = snapshot(lake.root);
+        // Well-formed but wrong: the target checks fire before any staleness.
+        const token = "ab".repeat(32);
 
         const missing = await tool.execute(
-            { add: replacePayload("aa/absent.md", "Fresh") } as never,
+            {
+                add: replacePayload("aa/absent.md", "Fresh", {
+                    expectedRevision: token,
+                }),
+            } as never,
             {} as never,
         );
         const noPath = await tool.execute(
             {
                 add: {
                     mode: "replace",
+                    expectedRevision: token,
+                    metadata: {
+                        Area: "aa",
+                        Keywords: ["Fresh"],
+                        Summary: "Fresh doc.",
+                    },
+                    body: "# Fresh\n\n### Facts\n\n- x.\n",
+                },
+            } as never,
+            {} as never,
+        );
+        const noToken = await tool.execute(
+            {
+                add: {
+                    mode: "replace",
+                    path: "aa/absent.md",
                     metadata: {
                         Area: "aa",
                         Keywords: ["Fresh"],
@@ -282,6 +313,11 @@ describe("create and replace contracts", () => {
         assert.match(String(missing.content), /mode:"create"/);
         assert.equal(noPath.metadata?.written, false);
         assert.match(String(noPath.content), /replace requires the path/);
+        assert.equal(noToken.metadata?.written, false);
+        assert.match(
+            String(noToken.content),
+            /replace requires expectedRevision/,
+        );
         assert.deepEqual(snapshot(lake.root), before);
     });
 
