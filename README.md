@@ -377,8 +377,11 @@ existing locks are left alone.
 A replacement re-reads and re-checks the revision under the lock and publishes
 through a **temp file this operation exclusively creates** (an ordinary
 pathname create that never follows a pre-existing symlink or truncates a
-foreign file) and an atomic whole-file rename; a create publishes through an
-exclusive open, so a losing create cannot overwrite the winner. A physically
+foreign file) and an atomic whole-file rename — the all-or-nothing swap is a
+**replacement-only guarantee**. A create opens the target exclusively and then
+writes its bytes, so a reader inside that window can observe the new file
+before every byte is stored; a create's promise is exclusive naming plus
+eventually-complete bytes, not atomic first visibility. A physically
 addressed write that reaches a nested lake's tree through an outer route is
 refused with that lake named, so a writable outer lake cannot make read-only
 nested content writable.

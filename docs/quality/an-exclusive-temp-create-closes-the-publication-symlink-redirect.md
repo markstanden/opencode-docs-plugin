@@ -33,13 +33,14 @@ Summary: Publication temps must be exclusively created and written through their
 ### Tested
 
 - S01/S02: pre-existing symlinked and regular-file temp names survive intact.
-- S03/S04: root-adjacent and target-adjacent `.docs-lock` symlinks, foreign
-  files and directories all refuse without external writes.
-- S07/S08: injected mid-write and rename failures keep the original bytes,
-  clean only owned artifacts, and leave a foreign `.tmp` file untouched.
-- S05/S06/S09/S10/S11/S12 in tests/publication.test.ts: exclusive ownership,
-  correct bytes with an external `sha256sum` revision, symlinked comfortable
-  root writes, document guards retained, artifacts never indexed as docs.
+- S03/S04: target-side `.docs-lock` symlinks, foreign files and directories
+  all refuse without external writes.
+- S05/S06/S07/S08/S09/S10/S11/S12 in tests/publication.test.ts: a dead
+  writer's owned temp is never stolen or erased, exact bytes with an external
+  `sha256sum` revision, injected mid-write and rename failures keep the
+  original bytes and clean only owned artifacts, symlinked configured-root
+  writes succeed safely, document guards retained, artifacts never indexed
+  as docs, and the full-write loop plus the honest zero-stall failure.
 
 ### Tested - threat boundary
 
@@ -47,6 +48,12 @@ Summary: Publication temps must be exclusively created and written through their
   writers, including interrupted operations. A local attacker who can swap
   directories between individual syscalls is outside the model — closing that
   would need per-component `O_NOFOLLOW` opens (documented, not built).
+- Create-time visibility is deliberately distinct: the create's `wx` open is
+  observable at the `targetOpen` stage before its bytes complete (the
+  cross-process C-vis test pins the empty-file state). Exclusive naming plus
+  eventually-complete bytes are a create's promise; the all-or-nothing swap
+  remains a replacement-only guarantee — documented in the README, not an
+  accidental reader behaviour.
 
 ### Open questions
 
