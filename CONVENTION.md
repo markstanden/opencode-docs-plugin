@@ -173,7 +173,9 @@ git. Optional invisible metadata may be added later; it is not required.
 ## Lifecycle
 
 A doc is current or deleted. Correct a wrong doc by replacing it in place with
-`mode: "replace"` and the doc's path. Delete an obsolete doc through the shell with
+`mode: "replace"`, the doc's path, and the revision token your last read
+returned — a stale token refuses rather than overwriting a newer edit. Delete
+an obsolete doc through the shell with
 explicit approval; there is no `delete` verb. A failed attempt is still valid
 knowledge when it records the outcome and the current truth.
 

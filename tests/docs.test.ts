@@ -48,6 +48,7 @@ const {
     resolveNudge,
     resolveRequest,
     resolveRoot,
+    revisionOf,
     score,
     serializeDoc,
     slugify,
@@ -2004,7 +2005,8 @@ describe("tool add", () => {
     });
 
     it("replaces an existing doc only through mode:replace", async () => {
-        // Arrange – the lake holds the target; the DTO carries mode:replace.
+        // Arrange – the lake holds the target; the DTO carries mode:replace
+        // with the revision of the bytes it read.
         const existing =
             "---\nArea: aa\nKeywords: alpha\nSummary: Old.\n---\n# Old\n";
         const { seam, written } = memoryFs({ "aa/fresh.md": existing });
@@ -2012,7 +2014,11 @@ describe("tool add", () => {
 
         const result = await tool.execute(
             {
-                add: addRequest({ mode: "replace", path: "aa/fresh.md" }),
+                add: addRequest({
+                    mode: "replace",
+                    path: "aa/fresh.md",
+                    expectedRevision: revisionOf(existing),
+                }),
             } as never,
             {} as never,
         );

@@ -317,18 +317,25 @@ earlier versions is intentionally unsupported.
     }
 }
 
-// Replace: path is required and must name an existing doc; the body is
-// wholesale — omitted content is lost. Same-area near-twin reconciliation is
-// a create guard; auditing duplicates across docs stays with check.
+// Replace: path is required and must name an existing doc, and
+// expectedRevision must match the doc's current bytes — the token your last
+// read (or write) returned. The body is wholesale: omitted content is lost.
+// A stale token refuses; read again, reconcile, resubmit.
 {
     "add": {
         "mode": "replace",
         "path": "decisions/queue-choice.md",
+        "expectedRevision": "<sha256 from the read>",
         "metadata": { "Area": "decisions", "Keywords": ["queue"], "Summary": "Why Kafka." },
         "body": "# Queue choice\n\n### Facts\n\n- Kafka, for the replay window.\n"
     }
 }
 ```
+
+A `read` of a lake doc carries the token in its metadata alongside the
+resolved target — `{ read, lake, path, revision }` — and a successful create
+or replace returns the new content's revision the same way. Wiki reads carry
+no revision: they promise no write-capable workflow.
 
 - **Create never overwrites.** A target that already exists refuses, even with
   an `allowNearTwinReason`; pass `mode: "replace"` deliberately.
@@ -340,6 +347,28 @@ earlier versions is intentionally unsupported.
   destination ambiguity.
 - **Replace never creates.** A missing target refuses; it is never an
   implicit create.
+- **Revisions are content, not history.** A revision is the SHA-256 of the
+  doc's exact stored bytes; if the same bytes return later, the token matches
+  again. Create takes no `expectedRevision` — its precondition is that the
+  target does not exist.
+
+## Concurrency limits
+
+Publications of one target are serialised by a per-target lock file under the
+lake's `.docs-lock/` directory, keyed on the target's physical path — two
+configurations reaching the same tree by different routes share the lock. A
+replacement re-reads and re-checks the revision under the lock and publishes
+through an atomic whole-file swap; a create publishes through an exclusive
+open, so a losing create cannot overwrite the winner.
+
+The guarantee covers **cooperating plugin writers** — the native tool, the
+Code Mode twin and `/docs` all use the same guarded route. A manual editor or
+an unrelated program that ignores the protocol can still race a publication;
+changes visible before the guarded commit are detected, but this is not a
+filesystem-wide compare-and-swap. A busy lock refuses with its recorded owner
+instead of waiting indefinitely; a lock left by an interrupted process is
+never stolen automatically — confirm the owner process is gone, then remove
+the named file by hand.
 
 ## Status
 
