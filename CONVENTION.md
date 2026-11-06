@@ -4,37 +4,58 @@ This plugin owns this convention: it is what the `docs` tool's `add` writes,
 what `check` validates, and what the registered `docs` skill teaches. A
 repository that adopts the plugin takes the convention with it.
 
-## Classes and scope
+## Scopes and classes
 
-Every doc belongs to exactly one class. The class is fixed by the lake it lives
-in, so a doc cannot mix scopes.
+Every doc belongs to exactly one scope. The scope is fixed by the lake it
+lives in, so a doc cannot mix scopes. The config values below never change;
+the labels are how the tool presents them.
 
-| Class              | Where                               | Reader                       | Writes                                |
-| ------------------ | ----------------------------------- | ---------------------------- | ------------------------------------- |
-| **Instructions**   | nested `README.md` files            | code-local how-to            | never by the tool                     |
-| **RepoContext**    | `<repo>/docs` by default            | this repo                    | yes                                   |
-| **MachineContext** | a personal lake such as `~/doclake` | this person, across machines | yes                                   |
-| **GlobalContext**  | an organisation lake                | every team, every repo       | yes, lock down with `writable: false` |
-| **Wiki**           | a human-readable wiki checkout      | humans first, agents second  | no                                    |
+| Scope        | Config value       | Where                               | Reader                  | Meaning                                                                                       | Writes                                |
+| ------------ | ------------------ | ----------------------------------- | ----------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------- |
+| Repository   | `repo`             | `<repo>/docs` by default            | this repo               | understanding or maintaining this particular repository                                       | yes                                   |
+| Personal     | `machine`          | a personal lake such as `~/doclake` | one person, any machine | tied to a person's devices, accounts, preferences or individual setup — one named host counts | yes                                   |
+| Organisation | `global`           | an organisation lake                | the owning teams        | established shared standards, services or integrations, with their boundary stated            | yes, lock down with `writable: false` |
+| Instructions | nested `README.md` | the project tree                    | code-local how-to       | build, run, test, deploy this code                                                            | never by the tool                     |
+| Wiki         | `wiki`             | a human-readable wiki checkout      | humans first            | human-facing reference and narrative                                                          | no                                    |
 
-Place at the **narrowest scope where the whole claim is true**:
+Place at the **narrowest justified scope**:
 
-1. Command or step to build, run, test, deploy → Instructions.
-2. True only for this repo → RepoContext.
-3. True for you across machines → MachineContext.
-4. True for the org across repos → GlobalContext.
-5. Human-facing narrative → Wiki.
+1. Identify the claim, what it depends on and its evidence. Where the session
+   happened is not itself a destination.
+2. Depends on this repository's implementation, architecture or decisions →
+   Repository.
+3. Depends on a person's device, account or individual setup → Personal.
+4. An established shared rule or integration → Organisation, recording its
+   actual team/service boundary. It need not apply to every team to belong
+   there.
+5. Reusability alone is not organisational ownership: a possible
+   generalisation from one repo stays with the repo that observed it, and its
+   conditions, until broader applicability or ownership is established.
+6. Operational procedures belong to the README editing workflow — `add`
+   cannot write them. A knowledge doc may keep the minimal diagnostic
+   commands that substantiate its claim and link to the maintained procedure;
+   commands are not banned from knowledge docs.
+7. Human narrative follows the wiki's owner workflow. The wiki being
+   read-only to the tool is not a reason to write a knowledge lake instead.
+8. Split only when there are independently useful claims with different
+   owners or topics. A shared rule plus a genuine repo exception may need two
+   linked docs; an uncertain owner does not make a doc unfocused.
+9. If ownership cannot be established, keep an explicitly unresolved proposal
+   in the handover and ask a focused question. Never guess a broader scope or
+   silently write to a substitute lake.
 
-Two answers mean two focused docs, one per class. A doc that needs a placement
-debate is not focused enough.
+Two answers with different owners means two focused docs, one per scope.
+Configured lakes may carry a `description` saying what belongs in that
+particular destination; when several writable lakes exist, `add` requires an
+explicit `lake` choice.
 
 ## Where knowledge lives
 
 Durable knowledge is one Markdown file per topic under a lake root, grouped by
 area: `<area>/<name>.md`. The default repo lake is `<location>/docs`; its docs
-are RepoContext. A repo adds other local roots in
+are Repository scope. A repo adds other local roots in
 `.opencode/docs-lakes.json`; a personal or managed base file lists the
-machine, global and wiki lakes.
+personal, organisation and wiki lakes.
 
 Lakes are named, and several per class are supported. A root nested inside
 another lake's root belongs to the **narrowest enclosing lake**: the outer lake
@@ -127,10 +148,10 @@ git. Optional invisible metadata may be added later; it is not required.
 
 - One question per doc. One topic per doc.
 - More than one H2 aimed at different topics or audiences means split.
-- Never write an omnibus notes doc to avoid choosing a class.
-- The narrowest true scope owns the claim. A broader class owns the general
-  rule; the narrower doc states only its delta and links up.
-- Do not copy between knowledge classes. Move or link.
+- Never write an omnibus notes doc to avoid choosing a scope.
+- The narrowest justified scope owns the claim. A broader scope owns the
+  general rule; the narrower doc states only its delta and links up.
+- Do not copy between knowledge scopes. Move or link.
 - Instructions own commands. Knowledge docs own reasons and link to the
   command. Knowledge docs link to the wiki page for human narrative.
 - Wiki duplication is expected, not a defect. If a wiki page drifts from a
@@ -145,7 +166,7 @@ git. Optional invisible metadata may be added later; it is not required.
 
 - No secrets, credentials, tokens, or customer data. Name the vault or variable,
   never the value.
-- No personal data in GlobalContext or Wiki.
+- No personal data in Organisation or Wiki.
 - The wiki profile is read-only to the tool. Its own owners review changes.
 
 ## Lifecycle
