@@ -389,6 +389,17 @@ Tests run the plugin source directly under Node's type-stripping (`noEmit`,
 ranking harness pins behaviour against — edit it directly. It holds invented
 paths and summaries only; never snapshot a real docs tree into it.
 
+`tests/fixtures/placement-cases.json` is a synthetic evaluation fixture for
+the placement guidance (cases E01–E16, each with a claim, evidence,
+destinations, expected scope or action, acceptable rationale and tempting
+wrong answer). To evaluate the guidance behaviourally: run the cases through
+a model with the docs tools mounted, holding model, settings and tool
+configuration constant, and score first-choice accuracy, unnecessary
+splitting, inappropriate fallback writes and the tool calls needed to correct
+recording. No behavioural trials have been run with the current wording; a
+fixture that merely asserts expected answers in Node is not evidence a model
+follows the guidance.
+
 ## Licence
 
 MIT — see [LICENSE](LICENSE).
