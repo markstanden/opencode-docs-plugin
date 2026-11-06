@@ -31,7 +31,8 @@ registered `docs` skill carries the working version.
   (`path — Area — date — Summary`); a search ranks docs over their front-matter,
   path and body identifiers (plus wiki prose), falling back to the closest
   matches rather than a dead end; `read` returns a doc verbatim and accepts a
-  `lake` or `lake:path`; `add` writes knowledge through a typed DTO; `check`
+  `lake` or `lake:path`; `add` writes knowledge through a typed DTO with an
+  explicit `mode`; `check`
   validates the knowledge lakes. Nested project `README.md` files are indexed
   too — `.gitignore` rules decide what is skipped — but only for search: `add`
   and `check` never touch them, and their results are prefixed `instructions:`
@@ -298,8 +299,47 @@ empty findings list means compliant. A very large report is capped with an
 `and N more lines not shown` tail; narrow it with `lake`.
 
 There is no lifecycle field. A doc is current or deleted; git is the archive.
-Correct a wrong doc by replacing it in place. A failed attempt is valid
-knowledge when it records the outcome and what is true now.
+Correct a wrong doc by replacing it in place with `mode: "replace"`. A failed
+attempt is valid knowledge when it records the outcome and what is true now.
+
+## Creating and replacing
+
+`add` carries an explicit mutation `mode`; the implicit path-based update of
+earlier versions is intentionally unsupported.
+
+```jsonc
+// Create: path is optional — omitted derives <Area>/<slug>.md from the H1.
+{
+    "add": {
+        "mode": "create",
+        "metadata": { "Area": "decisions", "Keywords": ["queue"], "Summary": "Why Kafka." },
+        "body": "# Queue choice\n\n### Facts\n\n- Kafka, for the replay window.\n"
+    }
+}
+
+// Replace: path is required and must name an existing doc; the body is
+// wholesale — omitted content is lost. Same-area near-twin reconciliation is
+// a create guard; auditing duplicates across docs stays with check.
+{
+    "add": {
+        "mode": "replace",
+        "path": "decisions/queue-choice.md",
+        "metadata": { "Area": "decisions", "Keywords": ["queue"], "Summary": "Why Kafka." },
+        "body": "# Queue choice\n\n### Facts\n\n- Kafka, for the replay window.\n"
+    }
+}
+```
+
+- **Create never overwrites.** A target that already exists refuses, even with
+  an `allowNearTwinReason`; pass `mode: "replace"` deliberately.
+- **Every create reconciles.** An explicit path gets the same structural and
+  same-area near-twin checks as a derived path. A genuine near-twin refusal is
+  answered by `mode: "replace"` — or, for a deliberate distinct doc, a
+  non-blank `allowNearTwinReason`, which bypasses only that semantic guard,
+  never target existence, path safety, metadata validation, writability or
+  destination ambiguity.
+- **Replace never creates.** A missing target refuses; it is never an
+  implicit create.
 
 ## Status
 

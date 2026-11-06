@@ -21,9 +21,8 @@ ownership; operational steps → the README workflow; human narrative → the
 wiki's owners. Split only for claims with different owners; unresolved
 ownership stays an explicit proposal, never a guessed destination.
 
-`help` lists each lake's scope and description; `add` writes to the sole
-writable knowledge lake when `lake` is omitted, and refuses with candidates
-when several could take it — pass `lake`.
+`help` lists each lake's scope and description; `add` writes the sole writable
+lake when `lake` is omitted, else refuses with candidates — pass `lake`.
 
 ## Find it
 
@@ -32,8 +31,8 @@ terms as **substrings** (a typo finds nothing) and falling back to
 `Closest matches`. Terms shorter than `MIN_TERM_LENGTH` (3) are dropped
 when longer terms exist; otherwise all query terms are kept.
 
-Open the match with `read` (root-relative path, or `lake:path`); a README
-result is `instructions:path` and opens with the built-in `read`. Consult
+Open the match with `read` (root-relative, or `lake:path`); a README
+result is `instructions:path` for the built-in `read`. Consult
 matching docs before a broad grep; a tie ranks repo, instructions, global,
 machine, wiki. Knowledge lakes exclude `plans/`, `requirements/` and `wiki/`
 at the root; wiki lakes exclude only dot-directories and `node_modules`.
@@ -45,21 +44,20 @@ authoritative):
 
 1. **Read first, never duplicate:** the same area, keyword hits on its
    entities, or links from touched docs.
-2. **Choose one scope** from the table — the narrowest that holds the claim.
+2. **Choose one scope** from the table — the narrowest that holds the claim;
+   one artifact per topic and scope, never one dump.
 3. **Reconcile, then add:** edit before add; merge near-twins; split per topic,
    repoint references, delete the emptied doc — no superseded stubs.
 
-One artifact per topic and scope, never one dump.
-
 Record through the typed `add`: metadata (`Area`, `Keywords`, `Summary`) plus a
-body with an `H1` and a claim section — Facts, Inferred, Tested, Failed approaches, Open questions. Omit `path` to create `<Area>/<slug>.md`; pass `path` to replace **wholesale** (omitted content is lost, the near-twin reconcile skipped). Refused: blank metadata, traversal, a non-`.md` or symlinked target, no claim section, and a same-area near-twin on a derived path.
+body with an `H1` and a claim section — Facts, Inferred, Tested, Failed approaches, Open questions. `mode:"create"` writes a new doc (never overwrites; near-twins refuse unless `allowNearTwinReason` explains the distinction). `mode:"replace"` wholesale-replaces the doc at `path` (omitted content is lost; a missing target refuses, never creates). Refused always: blank metadata, traversal, a non-`.md` or symlinked target, no claim section.
 
 A doc is current or deleted; no `Status` or `Supersedes`. A failed attempt is
 valid knowledge: what was tried, why it failed, what is true now, what not to
 retry.
 
-Lead with the actionable fact plus the reason, limits and evidence that affect
-its use; drop chronology and empty sections. Keep the
+Lead with the actionable fact, its reason, limits and evidence; drop
+chronology and empty sections. Keep the
 service names, errors, paths and commands someone will search for; the
 `Summary` decides whether to open the file.
 
@@ -78,5 +76,5 @@ lines not shown` tail. `add` enforces the structural rules at the write
 boundary; cross-document audits stay with `check`.
 
 Run the project's tests and typecheck before proposing a commit; prepare it
-and **wait for explicit approval** — recording findings is not commit
-approval. Never push.
+and **wait for explicit approval** — recording is not commit approval.
+Never push.

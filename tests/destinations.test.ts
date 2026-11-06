@@ -68,10 +68,12 @@ function toolOf(specs: readonly LakeSpec[]): ReturnType<typeof createDocsTool> {
 
 /** A valid create payload; the identity is distinctive and unused elsewhere. */
 function addPayload(title: string): {
+    mode: "create";
     metadata: { Area: string; Keywords: string[]; Summary: string };
     body: string;
 } {
     return {
+        mode: "create",
         metadata: {
             Area: "aa",
             Keywords: [title],

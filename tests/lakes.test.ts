@@ -591,6 +591,7 @@ describe("multi-lake tool", () => {
     it("adds to the repo lake by default and refuses the wiki", async () => {
         const tool = toolOf();
         const add = {
+            mode: "create" as const,
             metadata: { Area: "bb", Keywords: ["beta"], Summary: "New." },
             body: "# New\n\n### Facts\n\n- x.\n",
         };
@@ -1027,6 +1028,7 @@ describe("nested lake roots", () => {
     it("writes to the writable nested lake, never the read-only outer one", async () => {
         const { tool, outerRoot, nestedRoot } = fixture();
         const add = {
+            mode: "create" as const,
             metadata: {
                 Area: "reference",
                 Keywords: ["added"],
@@ -1110,6 +1112,7 @@ describe("missing lake roots", () => {
             {
                 lake: "doclake",
                 add: {
+                    mode: "create",
                     metadata: {
                         Area: "aa",
                         Keywords: ["alpha"],
@@ -1247,6 +1250,7 @@ describe("lake path safety", () => {
         const result = await tool.execute(
             {
                 add: {
+                    mode: "create",
                     metadata: {
                         Area: "aa",
                         Keywords: ["alpha"],
@@ -1324,6 +1328,7 @@ describe("soft length note", () => {
     it("notes an add over maxDocLines without refusing", () => {
         const outcome = prepareAdd(
             {
+                mode: "create",
                 metadata: { Area: "aa", Keywords: ["alpha"], Summary: "S." },
                 body: "# T\n\n### Facts\n\n- one.\n- two.\n",
             },
@@ -1350,6 +1355,7 @@ describe("soft length note", () => {
     it("disables the note when maxDocLines is zero", () => {
         const outcome = prepareAdd(
             {
+                mode: "create",
                 metadata: { Area: "aa", Keywords: ["alpha"], Summary: "S." },
                 body: "# T\n\n### Facts\n\n- one.\n- two.\n",
             },
@@ -1558,6 +1564,7 @@ describe("nested lakes", () => {
         const result = await tool.execute(
             {
                 add: {
+                    mode: "create",
                     metadata: {
                         Area: "new",
                         Keywords: ["new"],
@@ -1867,6 +1874,7 @@ describe("tool lake filters", () => {
         const result = await tool.execute(
             {
                 add: {
+                    mode: "create",
                     metadata: {
                         Area: "aa",
                         Keywords: ["alpha"],
@@ -1935,6 +1943,7 @@ describe("summary and target edges", () => {
         for (const path of [".md", "aa/"]) {
             const outcome = prepareAdd(
                 {
+                    mode: "create",
                     metadata: {
                         Area: "aa",
                         Keywords: ["alpha"],

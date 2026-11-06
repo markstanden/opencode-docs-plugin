@@ -136,11 +136,12 @@ git. Optional invisible metadata may be added later; it is not required.
   `add` refuses a near-twin write and returns the candidates to reconcile
   against — edit before add, merge near-twins, split a bloated doc into
   per-topic files.
-- The reconcile applies to a **create**: with `path` omitted, the target is
-  derived and the near-twin guard runs. An explicit `path` is the update
-  contract and skips it, which is how you replace a doc in place. Passing an
-  explicit _new_ path is therefore a deliberate override, not a protected
-  write.
+- The reconcile applies to every **create**, derived and explicit paths alike:
+  `add` refuses a near-twin and returns the candidates to reconcile against.
+  A non-blank `allowNearTwinReason` overrides that guard alone, for a
+  deliberate distinct doc; it never bypasses target existence or the
+  structural checks. Replacement is `mode: "replace"` with the existing
+  doc's path — wholesale, and never an implicit create.
 - Near-twins are per lake. The same topic at repo and global scope is
   legitimate; the narrower doc states its delta and links up.
 
@@ -172,7 +173,7 @@ git. Optional invisible metadata may be added later; it is not required.
 ## Lifecycle
 
 A doc is current or deleted. Correct a wrong doc by replacing it in place with
-`add` and an explicit `path`. Delete an obsolete doc through the shell with
+`mode: "replace"` and the doc's path. Delete an obsolete doc through the shell with
 explicit approval; there is no `delete` verb. A failed attempt is still valid
 knowledge when it records the outcome and the current truth.
 

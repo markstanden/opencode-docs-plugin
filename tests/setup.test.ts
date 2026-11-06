@@ -141,6 +141,7 @@ describe("setup", () => {
         await tool.execute(
             {
                 add: {
+                    mode: "create",
                     metadata: {
                         Area: "aa",
                         Keywords: ["alpha"],
@@ -210,6 +211,7 @@ describe("setup", () => {
         await tool.execute(
             {
                 add: {
+                    mode: "create",
                     metadata: {
                         Area: "aa",
                         Keywords: ["alpha"],
@@ -382,6 +384,7 @@ describe("setup", () => {
             {
                 lake: "wiki",
                 add: {
+                    mode: "create",
                     metadata: {
                         Area: "aa",
                         Keywords: ["alpha"],
