@@ -2227,8 +2227,12 @@ export interface Lake extends LakeSpec {
      * existing root; throws when the root is absent rather than creating it.
      */
     write: (path: string, contents: string) => void;
-    /** Environment notes for `check` (missing root, unversioned root). */
-    notes: readonly string[];
+    /**
+     * Legacy seam notes only. Real lakes compute their environment notes at
+     * call time — a root that appears, disappears or gains a git checkout is
+     * re-probed on the next `check`, `search` and help, never captured here.
+     */
+    notes?: readonly string[];
     /** Whether `check` should verify relative links; false for the legacy seam. */
     linkCheck: boolean;
 }
@@ -2314,7 +2318,6 @@ export function createLake(
     };
     return {
         ...spec,
-        notes: unversionedNote(spec.root, spec.name),
         linkCheck: true,
         collect: () =>
             collectDocs(spec.root, (paths) => fallbackDates(spec.root, paths), {
@@ -2346,18 +2349,27 @@ export function createLake(
 
 /**
  * Build every configured lake, each aware of the others so a nested root is
- * collected once.
+ * collected once. Nesting is decided on real paths, so a symlinked root cannot
+ * defeat containment: the skip paths handed to the walker are re-anchored
+ * under the collecting lake's configured root.
  * @param specs The configured lakes.
  * @returns The runtime lakes.
  */
 export function createLakes(specs: readonly LakeSpec[]): Lake[] {
-    return specs.map((spec) =>
-        createLake(spec, {
-            skip: specs
-                .filter((other) => other !== spec)
-                .map((other) => other.root),
-        }),
-    );
+    const realRoots = specs.map((spec) => realPathOf(spec.root));
+    return specs.map((spec, index) => {
+        const own = realRoots[index] ?? spec.root;
+        const skip = specs.flatMap((other, otherIndex) => {
+            if (otherIndex === index) {
+                return [];
+            }
+            const otherRoot = realRoots[otherIndex] ?? other.root;
+            return otherRoot !== own && isUnder(otherRoot, own)
+                ? [join(spec.root, relative(own, otherRoot))]
+                : [];
+        });
+        return createLake(spec, { skip });
+    });
 }
 
 /** The lake classes the configuration accepts. */
@@ -2819,6 +2831,44 @@ function findLake(lakes: readonly Lake[], name: string): Lake | undefined {
     return lakes.find((lake) => lake.name === name);
 }
 
+/**
+ * The environment notes for one lake, probed at call time. Legacy seams keep
+ * their captured notes; every real lake re-probes, so a root that appears,
+ * disappears or gains a git checkout is reported by the next surface that
+ * looks — `check`, `search` and help never disagree with a stale capture.
+ * @param lake The lake to describe.
+ * @returns The note lines.
+ */
+function lakeNotes(lake: Lake): readonly string[] {
+    return lake.root === ""
+        ? (lake.notes ?? [])
+        : unversionedNote(lake.root, lake.name);
+}
+
+/** Whether a lake root is absent, probed at call time. */
+function lakeMissing(lake: Lake): boolean {
+    return lake.root !== "" && !existsSync(lake.root);
+}
+
+/**
+ * How many knowledge lakes enclose a lake — the nesting depth used to pick the
+ * narrowest owner of a path and the deepest writable target for `add`. Wiki
+ * lakes never enclose anything.
+ * @param lake The lake to measure.
+ * @param lakes The configured lakes.
+ * @returns The number of enclosing knowledge lakes.
+ */
+function nestingDepth(lake: Lake, lakes: readonly Lake[]): number {
+    const root = realPathOf(lake.root);
+    return lakes.filter((other) => {
+        if (other === lake || other.profile === "wiki") {
+            return false;
+        }
+        const otherRoot = realPathOf(other.root);
+        return otherRoot !== root && isUnder(root, otherRoot);
+    }).length;
+}
+
 /** The lake `add` writes to, or the refusal reason. */
 function writableLake(
     lakes: readonly Lake[],
@@ -2836,14 +2886,34 @@ function writableLake(
         }
         return lake;
     }
-    return (
-        lakes.find((lake) => lake.class === "repo" && lake.writable) ??
-        lakes.find((lake) => lake.profile === "knowledge" && lake.writable) ?? {
+    // The narrowest writable knowledge lake wins: with nested roots the inner
+    // lake owns the file, so an outer read-only lake must not hijack the write.
+    const repos = lakes.filter(
+        (lake) => lake.class === "repo" && lake.writable,
+    );
+    const pool =
+        repos.length > 0
+            ? repos
+            : lakes.filter(
+                  (lake) => lake.profile === "knowledge" && lake.writable,
+              );
+    if (pool.length === 0) {
+        return {
             reason:
                 `${REFUSE} no writable knowledge lake is configured; ` +
                 "add a repo, machine, or global lake.",
+        };
+    }
+    let target = pool[0] as Lake;
+    let depth = nestingDepth(target, lakes);
+    for (const candidate of pool.slice(1)) {
+        const candidateDepth = nestingDepth(candidate, lakes);
+        if (candidateDepth > depth) {
+            target = candidate;
+            depth = candidateDepth;
         }
-    );
+    }
+    return target;
 }
 
 /** Qualify a path with its lake when more than one lake is configured. */
@@ -2887,9 +2957,8 @@ function searchDocs(
     const missing = runtime.lakes
         .filter(
             (lake) =>
-                lake.root !== "" &&
                 (lakeName === undefined || lakeName === lake.name) &&
-                !existsSync(lake.root),
+                lakeMissing(lake),
         )
         .map((lake) => missingRootNote(lake.root, lake.name));
     return {
@@ -2922,7 +2991,7 @@ function checkLakes(
         }
         const entries = lake.collect();
         return {
-            content: checkDocs(entries, lake.read, lake.notes, {
+            content: checkDocs(entries, lake.read, lakeNotes(lake), {
                 maxDocLines: runtime.maxDocLines,
                 ...(lake.linkCheck ? { exists: lake.exists } : {}),
             }),
@@ -2936,7 +3005,7 @@ function checkLakes(
     const reports = knowledge.map((lake) => {
         const entries = lake.collect();
         checked += entries.length;
-        const report = checkDocs(entries, lake.read, lake.notes, {
+        const report = checkDocs(entries, lake.read, lakeNotes(lake), {
             maxDocLines: runtime.maxDocLines,
             ...(lake.linkCheck ? { exists: lake.exists } : {}),
         });
@@ -3064,14 +3133,26 @@ function uniqueHolder(
     if (holders.length === 0) {
         return { reason: `No doc at ${path}.` };
     }
-    if (holders.length > 1) {
-        return {
-            reason:
-                `${REFUSE} ${path} exists in multiple lakes ` +
-                `(${holders.map((lake) => lake.name).join(", ")}); pass lake.`,
-        };
+    if (holders.length === 1) {
+        return holders[0] as Lake;
     }
-    return holders[0] as Lake;
+    // Nested lakes both hold an inner path: the narrowest enclosing lake owns
+    // it. Non-nested holders tie on depth, which stays a documented refusal —
+    // never a silent pick by collection order.
+    const deepest = holders.map((lake) => ({
+        lake,
+        depth: nestingDepth(lake, holders),
+    }));
+    const max = Math.max(...deepest.map((item) => item.depth));
+    const winners = deepest.filter((item) => item.depth === max);
+    if (winners.length === 1) {
+        return winners[0]?.lake as Lake;
+    }
+    return {
+        reason:
+            `${REFUSE} ${path} exists in multiple lakes ` +
+            `(${holders.map((lake) => lake.name).join(", ")}); pass lake.`,
+    };
 }
 
 /** Read one doc, resolving a `lake:path` prefix or the unique match. */
@@ -3122,7 +3203,7 @@ function lakeInfo(lakes: readonly Lake[]): LakeInfo[] {
         root: lake.root,
         writable: lake.writable,
         validated: lake.profile === "knowledge",
-        missing: lake.root !== "" && !existsSync(lake.root),
+        missing: lakeMissing(lake),
     }));
 }
 

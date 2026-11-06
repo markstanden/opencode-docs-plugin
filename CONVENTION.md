@@ -36,6 +36,19 @@ are RepoContext. A repo adds other local roots in
 `.opencode/docs-lakes.json`; a personal or managed base file lists the
 machine, global and wiki lakes.
 
+Lakes are named, and several per class are supported. A root nested inside
+another lake's root belongs to the **narrowest enclosing lake**: the outer lake
+skips it, search returns the inner lake's entry, a bare `read` resolves there,
+and `add` writes to the deepest writable knowledge lake. Nesting is decided on
+real paths, so reaching one root through a symlink cannot defeat containment.
+Two lakes that do not nest holding the same relative path stay a refusal —
+pass `lake`. Near-twin checks apply inside one lake and never pair across the
+nesting boundary.
+
+Lake notes — a missing root, or a root outside version control — are computed
+per call, not captured at startup: create, remove or version a root and the
+next `check`, `search` and help reflect it without a restart.
+
 The excluded areas — never scanned, never validated in a knowledge lake — are
 `plans/` (scratch, gitignored, deleted when the work lands), `requirements/`
 and `wiki/` (vendored mirrors). The wiki profile has no such exclusions; only

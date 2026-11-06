@@ -181,10 +181,17 @@ writable repo lake may sit inside a larger read-only wiki lake, and search,
 only decides its own profile and defaults; `repo`, `machine`, `global` and
 `wiki` all skip a nested root the same way.
 
-The skip compares the configured roots as written, so reach the tree the same
-way from both declarations. If one lake names the real directory and the other
-reaches it through a symlink, junction or mapped drive, the two paths never
-match and the nested doc is indexed twice.
+The skip is decided on real paths: every configured root is resolved through
+symlinks, junctions and mapped drives before the comparison, so the two
+declarations may reach the tree by different routes and the nested doc is
+still indexed once.
+
+A doc belongs to the **narrowest enclosing lake**. With nested roots, `search`
+returns the inner lake's entry and a bare `read` resolves to it; `add` writes
+to the deepest writable knowledge lake, so an outer read-only wrapper never
+hijacks the write. Two lakes that do not nest holding the same relative path
+stay a refusal — pass `lake`. Near-twin checks apply inside one lake and never
+pair across the nesting boundary.
 
 ```jsonc
 {
@@ -219,6 +226,10 @@ directory exists: `search` appends a note naming the lake and path, `help` marks
 it `— missing`, and `add` refuses with the path rather than bootstrapping a
 tree. Create the directory deliberately. Area folders beneath an existing root
 are still created on write.
+
+Root and git notes are computed per call, not captured at startup: a root that
+appears, disappears or gains a git checkout is reflected by the next `check`,
+`search` and help without a restart.
 
 `maxDocLines` (default 200, `0` disables) is a **soft** note on a long doc, not a
 refusal. `perLakeQuota` (default 3, `0` disables) is the per-source result
