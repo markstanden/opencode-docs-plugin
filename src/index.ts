@@ -2815,7 +2815,11 @@ export interface PublicationSeams {
 }
 
 /** The observations a guarded publication announces. */
-export type PublicationStage = "locked" | "verified" | "published";
+export type PublicationStage =
+    | "locked"
+    | "verified"
+    | /** create only: the target is exclusively open, bytes not yet written */ "targetOpen"
+    | "published";
 
 /**
  * The bounded retry over exclusive temp names: each attempt is a fresh name
@@ -2972,6 +2976,11 @@ function publishCreate(
     // From here the file at the target is this operation's own exclusive
     // create: a failure owns and removes it, never a rival's `EEXIST` loss.
     ledger.createdTarget = true;
+    // Deliberately observable window: a create's guarantees are exclusive
+    // naming and eventually-complete bytes, not the replacement path's
+    // all-or-nothing swap — "targetOpen" marks the readers-see-it-first state
+    // for coordination and tests.
+    onStage("targetOpen");
     try {
         writeFull(fd, contents);
     } finally {
@@ -3037,9 +3046,10 @@ function publishReplace(
  *   onStage locked
  *   verify          replace: current bytes re-read under the lock
  *   onStage verified
- *   create temp     exclusive create beside the target; owned fd retained
+ *   open target     create: `wx` open, this operation's file, no bytes yet
+ *   onStage targetOpen (create only — readers can observe the empty file)
  *   write full      through the fd only; short writes loop or fail
- *   rename          atomic temp → target; the file published is ours
+ *   rename          replace: atomic temp → target; the file published is ours
  *   onStage published
  *   release lock
  *   cleanup duties: on any ordinary failure, unlink ONLY the temp this

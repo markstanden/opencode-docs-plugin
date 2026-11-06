@@ -258,6 +258,64 @@ describe("cross-process publication", () => {
         assert.equal(existsSync(join(outer, "aa/raced.md")), false);
         assertClean(inner);
     });
+
+    it("shows a create before its bytes, then only complete bytes (C-vis)", async () => {
+        // Arrange – a create over a child that pauses at `targetOpen`, the
+        // exclusive open's still-empty file. A create's promise is exclusive
+        // naming plus eventually-complete bytes: readers may observe the file
+        // inside that window; the all-or-nothing swap belongs to replacement
+        // alone. This pins the intended behaviour, not a race accident.
+        const root = tempDir();
+        const run = tempDir();
+        const pausePath = join(run, "pause");
+        const resumePath = join(run, "resume");
+        const target = join(root, "aa/fresh.md");
+        const child = {
+            lakes: [lakeSpec(root, "docs")],
+            readyPath: join(run, "ready"),
+            goPath: join(run, "go"),
+            pauseAt: "targetOpen",
+            pausePath,
+            resumePath,
+        };
+        const serialized = serializeDoc(
+            { Area: "aa", Keywords: ["Fresh"], Summary: "Fresh." },
+            "# Fresh\n\n### Facts\n\n- Seeded fact.\n",
+        );
+
+        // Act – the create opens the target and pauses before writing.
+        const creator = runChild(child, createAdd("Fresh"));
+        await awaitFile(join(run, "ready"), "ready");
+        writeFileSync(join(run, "go"), "g");
+        await awaitFile(pausePath, "the targetOpen pause");
+
+        // At the pause the file exists and is observable, and is not yet the
+        // complete document — a reader here sees the open, not the bytes.
+        assert.ok(existsSync(target));
+        const observational = lstatSync(target);
+        assert.ok(observational.isFile());
+        assert.equal(
+            readFileSync(target, "utf8"),
+            "",
+            "the creating file is empty at targetOpen",
+        );
+
+        // Completeness arrives with the writer; the sequence describes the
+        // shown state no longer.
+        writeFileSync(resumePath, "g");
+        const creatorResult = await creator;
+        assert.equal(
+            creatorResult.metadata?.written,
+            true,
+            String(creatorResult.content),
+        );
+        assert.equal(
+            readFileSync(target, "utf8"),
+            serialized,
+            "the create lands whole once the writer finishes",
+        );
+        assertClean(root);
+    });
 });
 
 after(() => {

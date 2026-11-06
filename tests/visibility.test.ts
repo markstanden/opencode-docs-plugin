@@ -9,7 +9,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createDocsTool, createLakes, type LakeSpec } from "../src/index.ts";
+import {
+    createDocsTool,
+    createLakes,
+    revisionOf,
+    serializeDoc,
+    type LakeSpec,
+} from "../src/index.ts";
 
 /**
  * Revision visibility through the real host paths. Host evidence at opencode
@@ -47,14 +53,21 @@ function knowledgeSpec(name = "docs"): LakeSpec {
     };
 }
 
-/** The token exactly as the model or the Code Mode caller sees it. */
+/**
+ * The token exactly as the model or the Code Mode caller sees it: the
+ * **trailing** `docs: revision` envelope — a document body may itself quote a
+ * fake envelope (this plugin's own knowledge docs do), so a first-match parse
+ * would hand back the decoy. The appended envelope is always last.
+ */
 function tokenFrom(content: string): string {
-    const match = /docs: revision ([0-9a-f]{64}) —/.exec(content);
+    const matches = [...content.matchAll(/docs: revision ([0-9a-f]{64}) —/g)];
     assert.ok(
-        match !== null,
+        matches.length > 0,
         `no revision line in the surfaced result: ${JSON.stringify(content)}`,
     );
-    return match[1] as string;
+    const value = matches[matches.length - 1]?.[1];
+    assert.ok(value !== undefined, "the trailing match carries no token");
+    return value;
 }
 
 const RAW =
@@ -284,5 +297,83 @@ describe("revision visibility through the host channels", () => {
         );
         // Knowledge reads keep the verbatim raw document before the envelope.
         assert.ok(String(knowledgeRead.content).includes(RAW));
+    });
+
+    it("selects the trailing envelope when the document quotes a fake one (V06)", async () => {
+        // Arrange – a document ABOUT this plugin quotes an envelope line of
+        // its own, with a well-formed but wrong token. A first-match parse
+        // would adopt the decoy; callers must take the trailing envelope.
+        const decoy = "9".repeat(64);
+        const raw =
+            "---\nArea: aa\nKeywords: seed\nSummary: Seeded.\n---\n\n" +
+            "# Seed\n\n### Facts\n\n- Original body.\n\n" +
+            `docs: revision ${decoy} — internal example line.\n`;
+        const spec = knowledgeSpec();
+        mkdirSync(join(spec.root, "aa"), { recursive: true });
+        writeFileSync(join(spec.root, "aa/doc.md"), raw);
+        const tool = createDocsTool({ lakes: createLakes([spec]) });
+
+        const read = await tool.execute(
+            { read: "aa/doc.md" } as never,
+            {} as never,
+        );
+        const token = tokenFrom(String(read.content));
+
+        // Assert – the selected token is the trailing envelope's, equal to
+        // the stored bytes' independent hash, never the decoy.
+        assert.notEqual(token, decoy);
+        assert.equal(token, revisionOf(raw));
+
+        // A replacement whose body copies the read (decoy line included):
+        const copiedBody =
+            `# Seed\n\n### Facts\n\n- Copied body.\n\n` +
+            `docs: revision ${decoy} — internal example line.\n`;
+        const replace = await tool.execute(
+            {
+                add: {
+                    mode: "replace",
+                    path: "aa/doc.md",
+                    expectedRevision: token,
+                    metadata: { Area: "aa", Keywords: ["seed"], Summary: "S." },
+                    body: copiedBody,
+                },
+            } as never,
+            {} as never,
+        );
+        assert.equal(replace.metadata?.written, true, String(replace.content));
+
+        // The stored file holds exactly the submitted contents: the read's
+        // envelope never persisted as document content — the decoy line is
+        // there only because the caller's body carried it, and the real
+        // token the READ surfaced does not appear on disk.
+        const stored = readFileSync(join(spec.root, "aa/doc.md"), "utf8");
+        assert.equal(
+            stored,
+            serializeDoc(
+                { Area: "aa", Keywords: ["seed"], Summary: "S." },
+                copiedBody,
+            ),
+        );
+        assert.ok(!stored.includes(token), "the read envelope leaked to disk");
+        assert.ok(
+            String(replace.content).includes("the newly published bytes"),
+        );
+
+        // The write's own trailing envelope is the fresh bytes' hash and is
+        // immediately usable for a further replace.
+        const fresh = tokenFrom(String(replace.content));
+        const again = await tool.execute(
+            {
+                add: {
+                    mode: "replace",
+                    path: "aa/doc.md",
+                    expectedRevision: fresh,
+                    metadata: { Area: "aa", Keywords: ["seed"], Summary: "S." },
+                    body: "# Seed\n\n### Facts\n\n- Third body.\n",
+                },
+            } as never,
+            {} as never,
+        );
+        assert.equal(again.metadata?.written, true, String(again.content));
     });
 });
