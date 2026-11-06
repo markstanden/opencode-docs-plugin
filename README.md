@@ -169,6 +169,12 @@ Lake entries:
 | `name`     | Lower-case dashes; defaults to the root folder name. `instructions` is reserved.                 |
 | `writable` | Defaults true for knowledge classes, fixed false for `wiki`.                                     |
 
+Validation follows writability: `check` validates a writable knowledge lake
+only. A read-only knowledge lake, and every `wiki` lake, is indexed for search
+and never validated — the plugin cannot write there, so findings could not be
+fixed through it. Each skipped lake is named in the report, so "no findings" is
+never mistaken for compliance.
+
 Lake paths never follow symlinks: a symlinked doc is skipped by search and
 `check`, refused by `read`, and refused by `add`. The configured `root` itself
 may be a symlink; the content beneath it must be real.
@@ -246,12 +252,15 @@ wiki's owners decide.
 
 ## Check
 
-`check` validates the knowledge lakes: required front-matter, an H1, at least
-one claim section (`Facts`, `Inferred`, `Tested`, `Failed approaches`,
+`check` validates the **writable** knowledge lakes: required front-matter, an H1,
+at least one claim section (`Facts`, `Inferred`, `Tested`, `Failed approaches`,
 `Open questions`), no hand-maintained `Date`, a distinctive H1+Keywords
-identity, same-area near-twins, and broken relative `.md` links. Obsolete
-`Status`/`Supersedes` fields, long docs, and unversioned or missing roots are
-**notes**, not findings. An empty findings list means compliant.
+identity, same-area near-twins, and broken relative `.md` links. Read-only
+knowledge lakes and wiki lakes are searched in full but never validated; the
+report names each skipped lake and why. Obsolete `Status`/`Supersedes` fields,
+long docs, and unversioned or missing roots are **notes**, not findings. An
+empty findings list means compliant. A very large report is capped with an
+`and N more lines not shown` tail; narrow it with `lake`.
 
 There is no lifecycle field. A doc is current or deleted; git is the archive.
 Correct a wrong doc by replacing it in place. A failed attempt is valid

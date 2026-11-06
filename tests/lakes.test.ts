@@ -21,6 +21,7 @@ import {
     gitDates,
     markdownTargets,
     MAX_RESULTS,
+    MAX_CHECK_CHARS,
     missNudgeFor,
     prepareAdd,
     rankDocs,
@@ -612,7 +613,10 @@ describe("multi-lake tool", () => {
         const result = await tool.execute({ check: true }, {} as never);
 
         assert.match(String(result.content), /repo:/);
-        assert.match(String(result.content), /wiki lakes are read-only/);
+        assert.match(
+            String(result.content),
+            /^wiki: wiki class, read-only, not validated\.$/m,
+        );
         assert.equal(result.metadata?.checked, 1);
     });
 
@@ -629,6 +633,146 @@ describe("multi-lake tool", () => {
             String(result.content),
             /wiki \(wiki, read-only, not checked\)/,
         );
+    });
+});
+
+describe("check validation scope", () => {
+    const compliant =
+        "---\nArea: aa\nKeywords: alpha\nSummary: Good.\n---\n# Good\n\n### Facts\n\n- x.\n";
+    const broken =
+        "---\nArea: aa\nKeywords: alpha\nSummary: Bad.\n---\nJust prose.\n";
+
+    /** One lake over a directory holding a compliant and a broken doc. */
+    function fixture(
+        writable: boolean,
+        profile: "knowledge" | "wiki" = "knowledge",
+    ): ReturnType<typeof createDocsTool> {
+        const root = tempDir();
+        writeFileSync(join(root, "good.md"), compliant);
+        writeFileSync(join(root, "bad.md"), broken);
+        return createDocsTool({
+            lakes: createLakes([
+                {
+                    name: "scope",
+                    class: profile === "wiki" ? "wiki" : "repo",
+                    root,
+                    profile,
+                    writable,
+                },
+            ]),
+        });
+    }
+
+    it("reports findings in a writable knowledge lake", async () => {
+        const result = await fixture(true).execute(
+            { check: true },
+            {} as never,
+        );
+        const content = String(result.content);
+
+        assert.match(content, /\bbad\.md/);
+        assert.match(content, /H1/);
+        assert.equal(result.metadata?.checked, 2);
+    });
+
+    it("skips a read-only knowledge lake and names it", async () => {
+        const result = await fixture(false).execute(
+            { check: true },
+            {} as never,
+        );
+        const content = String(result.content);
+
+        assert.doesNotMatch(content, /\bbad\.md/);
+        assert.doesNotMatch(content, /H1/);
+        assert.match(content, /^scope: read-only, not validated\.$/m);
+        assert.equal(result.metadata?.checked, 0);
+    });
+
+    it("never validates a wiki lake", async () => {
+        const result = await fixture(false, "wiki").execute(
+            { check: true },
+            {} as never,
+        );
+        const content = String(result.content);
+
+        assert.doesNotMatch(content, /\bbad\.md/);
+        assert.match(
+            content,
+            /^scope: wiki class, read-only, not validated\.$/m,
+        );
+        assert.equal(result.metadata?.checked, 0);
+    });
+
+    it("marks a read-only knowledge lake not checked in help", async () => {
+        const result = await fixture(false).execute(
+            { search: "help" },
+            {} as never,
+        );
+
+        assert.match(
+            String(result.content),
+            /scope \(repo, read-only, not checked\)/,
+        );
+    });
+
+    it("names every skipped lake when none are writable", async () => {
+        const lakes = createLakes(
+            ["one", "two"].map((name) => ({
+                name,
+                class: "repo" as const,
+                root: tempDir(),
+                profile: "knowledge" as const,
+                writable: false,
+            })),
+        );
+
+        const result = await createDocsTool({ lakes }).execute(
+            { check: true },
+            {} as never,
+        );
+        const content = String(result.content);
+
+        assert.match(content, /^one: read-only, not validated\.$/m);
+        assert.match(content, /^two: read-only, not validated\.$/m);
+        assert.doesNotMatch(content, /comply/);
+        assert.equal(result.metadata?.checked, 0);
+    });
+
+    it("still searches a read-only lake in full", async () => {
+        const result = await fixture(false).execute(
+            { search: "bad" },
+            {} as never,
+        );
+
+        assert.match(String(result.content), /^bad\.md/m);
+    });
+
+    it("caps a finding-heavy report with an and N more tail", async () => {
+        const root = tempDir();
+        const count = Math.ceil(MAX_CHECK_CHARS / 40) + 20;
+        for (let index = 0; index < count; index += 1) {
+            writeFileSync(join(root, `bad-${index}.md`), broken);
+        }
+        const tool = createDocsTool({
+            lakes: createLakes([
+                {
+                    name: "scope",
+                    class: "repo",
+                    root,
+                    profile: "knowledge",
+                    writable: true,
+                },
+            ]),
+        });
+
+        const result = await tool.execute({ check: true }, {} as never);
+        const content = String(result.content);
+        const tail = content.match(/… and (\d+) more lines not shown/);
+
+        assert.ok(tail !== null);
+        assert.ok(Number(tail[1]) > 0);
+        assert.ok(content.length < MAX_CHECK_CHARS + 200);
+        assert.match(content, /Narrow it per lake with the `lake` selector/);
     });
 });
 
@@ -1217,8 +1361,8 @@ describe("call-time lake notes", () => {
 });
 
 describe("nested lakes", () => {
-    /** An outer repo lake (read-only) with a writable lake nested inside. */
-    function nestedTool(): {
+    /** An outer repo lake with a writable lake nested inside. */
+    function nestedTool(outerWritable = false): {
         tool: ReturnType<typeof createDocsTool>;
         innerRoot: string;
     } {
@@ -1243,7 +1387,7 @@ describe("nested lakes", () => {
                 class: "repo",
                 root: outerRoot,
                 profile: "knowledge",
-                writable: false,
+                writable: outerWritable,
             },
             {
                 name: "inner",
@@ -1257,7 +1401,7 @@ describe("nested lakes", () => {
     }
 
     it("attributes the inner doc to the inner lake only", async () => {
-        const { tool } = nestedTool();
+        const { tool } = nestedTool(true);
 
         const checked = await tool.execute({ check: true }, {} as never);
         const found = await tool.execute({ search: "inner" }, {} as never);
@@ -1296,7 +1440,7 @@ describe("nested lakes", () => {
                 class: "repo",
                 root: outerRoot,
                 profile: "knowledge",
-                writable: false,
+                writable: true,
             },
             {
                 name: "inner",
@@ -1582,7 +1726,10 @@ describe("tool lake filters", () => {
         );
 
         assert.match(String(missingCheck.content), /lake named 'nope'/i);
-        assert.match(String(wikiCheck.content), /read-only reference/);
+        assert.match(
+            String(wikiCheck.content),
+            /^wiki: wiki class, read-only, not validated\.$/m,
+        );
         assert.match(String(repoCheck.content), /All 1 docs comply/);
         assert.match(String(missingRead.content), /lake named 'nope'/i);
 

@@ -126,7 +126,7 @@ export const DOCS_INPUT = Schema.Struct({
     check: Schema.optional(
         Schema.Boolean.annotate({
             description:
-                "Validate every knowledge doc: front-matter, an H1, a claim section, no hand-maintained Date, a distinctive H1+Keywords identity, near-twins, broken relative links, a soft length note. Wiki lakes and READMEs are not validated.",
+                "Validate every knowledge doc: front-matter, an H1, a claim section, no hand-maintained Date, a distinctive H1+Keywords identity, near-twins, broken relative links, a soft length note. Only writable knowledge lakes are validated; read-only lakes, wiki lakes and READMEs are not, and skipped lakes are named.",
         }),
     ),
     read: Schema.optional(
@@ -540,6 +540,13 @@ export const MIN_TERM_LENGTH = 3;
  * cap — tune here.
  */
 export const MAX_RESULTS = 10;
+
+/**
+ * The most characters a `check` report returns before it is truncated with an
+ * `and N more` tail. A finding-heavy run once returned 39,871 characters in one
+ * tool result; the cap keeps a report readable. The single knob for the cap.
+ */
+export const MAX_CHECK_CHARS = 8000;
 
 /** Split a raw query into lower-cased, non-empty terms, dropping filler. */
 function termsOf(query: string): string[] {
@@ -2214,6 +2221,17 @@ export interface LakeSpec {
     writable: boolean;
 }
 
+/**
+ * Whether `check` validates a lake: validation follows writability, because a
+ * lake the plugin cannot write is out of its control. A wiki lake is never
+ * validated. One rule, no per-lake override.
+ * @param lake The configured lake.
+ * @returns True when the lake's docs are validated.
+ */
+function lakeValidated(lake: LakeSpec): boolean {
+    return lake.profile === "knowledge" && lake.writable;
+}
+
 /** A lake with its runtime seams. */
 export interface Lake extends LakeSpec {
     /** Collects this lake's docs. */
@@ -2971,6 +2989,80 @@ function searchDocs(
     };
 }
 
+/** Why a lake is skipped by `check`, in one short line. */
+function skippedLakeLine(lake: LakeSpec): string {
+    const why = lake.profile === "wiki" ? "wiki class, read-only" : "read-only";
+    return `${lake.name}: ${why}, not validated.`;
+}
+
+/**
+ * Truncate a check report at a line boundary, counting the lines cut and
+ * pointing at the narrower report. A finding-heavy lake otherwise floods a
+ * tool result.
+ * @param content The full report text.
+ * @returns The report, within {@link MAX_CHECK_CHARS}, or its capped form.
+ */
+function cappedCheck(content: string): string {
+    if (content.length <= MAX_CHECK_CHARS) {
+        return content;
+    }
+    const lines = content.split("\n");
+    const kept: string[] = [];
+    let length = 0;
+    for (const line of lines) {
+        const next = length + (kept.length > 0 ? 1 : 0) + line.length;
+        if (next > MAX_CHECK_CHARS) {
+            break;
+        }
+        kept.push(line);
+        length = next;
+    }
+    const omitted = lines.length - kept.length;
+    const head = kept.length > 0 ? `${kept.join("\n")}\n\n` : "";
+    return (
+        `${head}… and ${omitted} more lines not shown. ` +
+        "Narrow it per lake with the `lake` selector."
+    );
+}
+
+/** Run one lake's check report and count the docs looked at. */
+function lakeReport(
+    runtime: Runtime,
+    lake: Lake,
+): { report: string; checked: number } {
+    const entries = lake.collect();
+    return {
+        report: checkDocs(entries, lake.read, lakeNotes(lake), {
+            maxDocLines: runtime.maxDocLines,
+            ...(lake.linkCheck ? { exists: lake.exists } : {}),
+        }),
+        checked: entries.length,
+    };
+}
+
+/**
+ * Join the validated lakes' reports and the skipped-lake lines. Only the
+ * reports are capped: "no findings" must never read as "compliant" when a lake
+ * was simply not looked at.
+ * @param reports The validated lakes' reports, in configuration order.
+ * @param skipped One-line reasons for each lake `check` did not validate.
+ * @returns The check result text.
+ */
+function assembleCheck(
+    reports: readonly string[],
+    skipped: readonly string[],
+): string {
+    const report = reports.length > 0 ? cappedCheck(reports.join("\n\n")) : "";
+    const tail = skipped.join("\n");
+    if (report === "" && tail === "") {
+        return "No knowledge lakes configured.";
+    }
+    if (report === "" || tail === "") {
+        return report || tail;
+    }
+    return `${report}\n\n${tail}`;
+}
+
 /** Check the knowledge lakes, optionally limited to one. */
 function checkLakes(
     runtime: Runtime,
@@ -2981,54 +3073,24 @@ function checkLakes(
         if (lake === undefined) {
             return { content: `No lake named '${lakeName}'.`, checked: 0 };
         }
-        if (lake.profile === "wiki") {
-            return {
-                content:
-                    `Lake '${lake.name}' is a wiki lake — read-only reference, ` +
-                    "not validated.",
-                checked: 0,
-            };
+        if (!lakeValidated(lake)) {
+            return { content: skippedLakeLine(lake), checked: 0 };
         }
-        const entries = lake.collect();
-        return {
-            content: checkDocs(entries, lake.read, lakeNotes(lake), {
-                maxDocLines: runtime.maxDocLines,
-                ...(lake.linkCheck ? { exists: lake.exists } : {}),
-            }),
-            checked: entries.length,
-        };
+        const { report, checked } = lakeReport(runtime, lake);
+        return { content: cappedCheck(report), checked };
     }
-    const knowledge = runtime.lakes.filter(
-        (lake) => lake.profile === "knowledge",
-    );
     let checked = 0;
-    const reports = knowledge.map((lake) => {
-        const entries = lake.collect();
-        checked += entries.length;
-        const report = checkDocs(entries, lake.read, lakeNotes(lake), {
-            maxDocLines: runtime.maxDocLines,
-            ...(lake.linkCheck ? { exists: lake.exists } : {}),
-        });
-        return knowledge.length > 1 || runtime.lakes.length > 1
-            ? `${lake.name}:\n${report}`
-            : report;
+    const reports = runtime.lakes.filter(lakeValidated).map((lake) => {
+        const outcome = lakeReport(runtime, lake);
+        checked += outcome.checked;
+        return runtime.lakes.length > 1
+            ? `${lake.name}:\n${outcome.report}`
+            : outcome.report;
     });
-    const wiki = runtime.lakes
-        .filter((lake) => lake.profile === "wiki")
-        .map((lake) => lake.name);
-    if (wiki.length > 0) {
-        reports.push(
-            `note: wiki lakes are read-only reference and are not validated: ` +
-                `${wiki.join(", ")}.`,
-        );
-    }
-    return {
-        content:
-            reports.length > 0
-                ? reports.join("\n\n")
-                : "No knowledge lakes configured.",
-        checked,
-    };
+    const skipped = runtime.lakes
+        .filter((lake) => !lakeValidated(lake))
+        .map(skippedLakeLine);
+    return { content: assembleCheck(reports, skipped), checked };
 }
 
 /** Add a doc to the target lake. */
@@ -3202,7 +3264,7 @@ function lakeInfo(lakes: readonly Lake[]): LakeInfo[] {
         class: lake.class,
         root: lake.root,
         writable: lake.writable,
-        validated: lake.profile === "knowledge",
+        validated: lakeValidated(lake),
         missing: lakeMissing(lake),
     }));
 }
