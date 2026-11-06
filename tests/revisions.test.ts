@@ -681,12 +681,14 @@ describe("cross-process publication", () => {
         );
         assert.equal(holding.length, 1);
         assert.equal(stored.endsWith(`${holding[0]?.racer} body.\n`), true);
+        // The loser refuses bounded — staleness, an existing target, or a
+        // busy lock it arrived during — and never overwrites or waits.
         const loser = results.find(
             (result) => result.metadata?.written !== true,
         );
         assert.match(
             String(loser?.content ?? ""),
-            /changed since you read it|already exists/,
+            /changed since you read it|already exists|holds the target lock/,
         );
         for (const result of results) {
             assert.equal(result.error, undefined);
