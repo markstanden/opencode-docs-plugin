@@ -64,12 +64,15 @@ variable, never the value — and no personal data in GlobalContext or Wiki.
 
 ## Check it
 
-`check` audits the lakes: front-matter, an `H1`, a claim section, no
-hand-maintained `Date`, a distinctive identity, near-twins and broken relative
-links. Obsolete fields, long docs and missing roots are **notes**, not findings;
-wiki lakes are not validated. `add` enforces the structural rules at the write
-boundary; cross-document audits stay with `check`. `maxDocLines` (default 200,
-`0` disables) is a soft size signal, not a refusal.
+`check` audits the **writable** knowledge lakes: front-matter, an `H1`, a claim
+section, no hand-maintained `Date`, a distinctive identity, near-twins and broken
+relative links. Obsolete fields, long docs and missing roots are **notes**, not
+findings. Validation follows writability — read-only lakes, wiki lakes and
+READMEs are not validated, and skipped lakes are named in the report. A very
+large report is capped with an `and N more lines not shown` tail; narrow it with
+`lake`. `add` enforces the structural rules at the write boundary;
+cross-document audits stay with `check`. `maxDocLines` (default 200, `0`
+disables) is a soft size signal, not a refusal.
 
 Run the project's tests and typecheck before proposing a commit, fixing
 failures rather than papering over them. Prepare the commit and **wait for

@@ -49,6 +49,10 @@ Lake notes — a missing root, or a root outside version control — are compute
 per call, not captured at startup: create, remove or version a root and the
 next `check`, `search` and help reflect it without a restart.
 
+Validation follows writability: `check` validates only writable knowledge lakes.
+A read-only lake is indexed for search and never validated, and the report names
+it as skipped.
+
 The excluded areas — never scanned, never validated in a knowledge lake — are
 `plans/` (scratch, gitignored, deleted when the work lands), `requirements/`
 and `wiki/` (vendored mirrors). The wiki profile has no such exclusions; only
