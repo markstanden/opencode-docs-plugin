@@ -407,6 +407,9 @@ npm test          # node --test
 npm run typecheck
 ```
 
+Testing instructions, the behavioural placement trials and their container
+live in [TESTING.md](TESTING.md).
+
 Tests run the plugin source directly under Node's type-stripping (`noEmit`,
 `erasableSyntaxOnly`), so the file OpenCode loads is the file under test.
 
@@ -415,15 +418,28 @@ ranking harness pins behaviour against — edit it directly. It holds invented
 paths and summaries only; never snapshot a real docs tree into it.
 
 `tests/fixtures/placement-cases.json` is a synthetic evaluation fixture for
-the placement guidance (cases E01–E16, each with a claim, evidence,
+the placement guidance (cases E01–E17, each with a claim, evidence,
 destinations, expected scope or action, acceptable rationale and tempting
-wrong answer). To evaluate the guidance behaviourally: run the cases through
-a model with the docs tools mounted, holding model, settings and tool
-configuration constant, and score first-choice accuracy, unnecessary
-splitting, inappropriate fallback writes and the tool calls needed to correct
-recording. No behavioural trials have been run with the current wording; a
-fixture that merely asserts expected answers in Node is not evidence a model
-follows the guidance.
+wrong answer). `tests/fixtures/placement-harness/harness.mjs` runs the cases
+behaviourally: `generate` materialises one prompt and one pristine fixture
+tree per case (defaults `~/tmp/docs-placement/` for prompts and results,
+`~/test-dir/docs-placement/` for fixtures), `run` copies a fixture into a
+stamped results directory and drives a headless `opencode run` session there,
+`judge` scores each answer against the case rubric with a second, plugin-free
+model call (`--judge-model` names a stronger judge than the workhorse), and
+`export` bundles a sweep into one `dossier.md` for deep review by an external
+model. Trials judge placement from the supplied finding: the sandbox denies
+shell, edits and reads outside the workspace, and never contains the rubric.
+`container-run.sh` runs the harness inside a Debian-slim trial container
+(Node LTS, current `@opencode/cli`, read-only root filesystem) so trials see
+no host filesystem at all; the harness can also run directly on the host.
+Runs modify neither the repository nor the fixture trees. No behavioural
+trials have been recorded with the current wording; a fixture that merely
+asserts expected answers in Node is not evidence a model follows the
+guidance. In this repository, `/placement` (workflow in
+`.opencode/skills/placement-trials/`) drives the harness: trials run on the
+workhorse model, judging defaults to the current session model, and `export`
+bundles a sweep for a stronger external reviewer.
 
 ## Licence
 

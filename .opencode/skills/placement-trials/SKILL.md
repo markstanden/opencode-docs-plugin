@@ -1,0 +1,69 @@
+---
+name: placement-trials
+description: Run and score the behavioural placement-guidance trials (tests/fixtures/placement-cases.json) through tests/fixtures/placement-harness/harness.mjs. Use for /placement, "placement trials", or when asked to evaluate the placement guidance against real model sessions.
+---
+
+# Placement trials
+
+`tests/fixtures/placement-harness/harness.mjs` runs the cases in
+`tests/fixtures/placement-cases.json` (E01–E17) through real headless
+OpenCode sessions against pristine fixture trees.
+
+Subcommands: `generate` (materialise prompts to `~/tmp/docs-placement/prompts/`
+and fixtures to `~/test-dir/docs-placement/`), `run` (sandboxed session per
+case), `judge` (score answers against each rubric), `summary` (results table),
+`export` (one `dossier.md` for a stronger reviewer), `all` (the full loop).
+Per-case wrappers live in `~/tmp/docs-placement/E01.sh`…`E17.sh`.
+
+## Models
+
+- **Trials — the behaviour under test:** the workhorse default
+  `opencode-go/deepseek-v4.1-flash`. Change it only when the Guv requests a
+  model (`--model provider/model`); the trial model is the variable being
+  compared, so hold it constant within a comparison.
+- **Judging — the reasoning:** the **current session model**, passed
+  explicitly as `--judge-model <this session's provider/model>` — but only
+  when that model is free-tier; otherwise fall back to the trial's free
+  workhorse tier. Judging with yourself makes the default UX sense; say
+  which model judged when reporting. Judges run **host-side**
+  (`node …/harness.mjs judge …`): provider keys live with the host session,
+  and judging reads local result artefacts, so it needs no sandbox.
+- **Cost policy — free by default:** trials and judging must stay on
+  free/flash-tier models unless the Guv explicitly names a paid one. The
+  strong-model pass is always deliberate: `--judge-model <paid model>`, or
+  the exported `dossier.md` handed to an external frontier account.
+- **Deep scan:** `export` writes `results/<stamp>/dossier.md`; hand it to a
+  frontier model (in OpenCode or external) when the Guv wants a second,
+  stronger opinion on a whole sweep.
+
+## Running
+
+- Trials run in the **trial container** (`tests/fixtures/placement-harness/container-run.sh`):
+  Debian slim, Node LTS, the current `@opencode/cli`, a read-only root
+  filesystem and the repo mounted read-only — only prompts, fixtures and
+  results are writable, and provider routing passes through from the host
+  environment at runtime. Nothing about this machine is baked into the repo.
+- One case: `container-run.sh run E01 --judge-model <session model>`
+  (wrappers: `~/tmp/docs-placement/E01.sh`).
+- A sweep: `container-run.sh all`. Seventeen trials plus judging costs real
+  minutes and tokens — ask before starting one.
+- Host invocation (`node …/harness.mjs …`) works for development, but fixture
+  configs embed the plugin path from generation time — generate and run from
+  the same environment, or regenerate (`generate --force`) when switching.
+- Name stamps for comparisons: `--stamp <plugin-version-or-topic>`; diff
+  `summary.md` across stamps rather than trusting a single cell.
+- Trials are sandboxed in depth: the container is the boundary, and the
+  session additionally denies shell, edits and external reads, with no rubric
+  in the sandbox. Do not weaken that to make a case pass; regenerate fixtures
+  (`generate --force`) only when the fixture JSON or sandbox policy genuinely
+  changed.
+
+## Reading results
+
+- `summary.md` per stamp: verdict, destination, writes, docs-tool call count.
+- `writes.txt` must say `none`; anything else is a trial-integrity finding
+  before it is a guidance finding.
+- Borderline cases (E05, E07, E16) flicker between sweeps — the model is the
+  uncontrolled variable; compare distributions, not single runs.
+- A guidance wording that keeps failing is durable knowledge: record it under
+  `docs/` at the narrowest scope, with the stamp that showed it.
