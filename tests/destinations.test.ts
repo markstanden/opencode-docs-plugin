@@ -417,6 +417,49 @@ describe("write destination selection", () => {
         assert.ok(existsSync(join(b.root, "aa/alpha-note.md")));
     });
 
+    it("refuses an existing target in the explicitly selected lake, not the candidates (P07b)", async () => {
+        // Arrange – two writable lakes, and the selected lake already holds
+        // the path. If the top-level `lake` selector is dropped, this becomes
+        // a candidates-refusal instead of a target-exists refusal.
+        const repo = spec("docs", "repo");
+        const doclake = spec("doclake", "machine");
+        mkdirSync(join(doclake.root, "aa"), { recursive: true });
+        writeFileSync(
+            join(doclake.root, "aa/existing.md"),
+            "# Existing doc\n\n### Facts\n\n- x\n",
+        );
+        const tool = toolOf([repo, doclake]);
+        const beforeRepo = snapshot(repo.root);
+        const beforeDoc = readFileSync(
+            join(doclake.root, "aa/existing.md"),
+            "utf8",
+        );
+
+        // Act
+        const result = await tool.execute(
+            {
+                lake: "doclake",
+                add: {
+                    ...addPayload("Distinct qzx"),
+                    path: "aa/existing.md",
+                },
+            } as never,
+            {} as never,
+        );
+
+        // Assert – the selector reaches the writer: the refusal names the
+        // selected lake's target, and no candidate list is offered.
+        assert.equal(result.metadata?.written, false);
+        const content = String(result.content);
+        assert.match(content, /doclake:aa\/existing\.md already exists/);
+        assert.doesNotMatch(content, /writable knowledge lakes could/);
+        assert.deepEqual(snapshot(repo.root), beforeRepo);
+        assert.equal(
+            readFileSync(join(doclake.root, "aa/existing.md"), "utf8"),
+            beforeDoc,
+        );
+    });
+
     it("never falls back from an unknown, read-only or missing-root lake (P08)", async () => {
         // Arrange – a writable lake exists, but each explicit choice is unusable.
         const personal = spec("doclake", "machine");
