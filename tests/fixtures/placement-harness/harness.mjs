@@ -27,8 +27,9 @@ import {
     rmSync,
     writeFileSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -37,6 +38,14 @@ const DEFAULT_FIXTURE = resolve(HERE, "..", "placement-cases.json");
 const DEFAULT_PLUGIN = resolve(HERE, "..", "..", "..");
 const HOME = homedir();
 const COMMANDS = ["generate", "run", "judge", "summary", "export", "all"];
+
+const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
+
+/** A positive per-call timeout; a malformed env value falls back loudly. */
+function timeoutFromEnv() {
+    const value = Number(process.env.TRIAL_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS);
+    return Number.isFinite(value) && value > 0 ? value : DEFAULT_TIMEOUT_MS;
+}
 
 const DEFAULTS = {
     prompts: join(HOME, "tmp", "docs-placement", "prompts"),
@@ -47,11 +56,13 @@ const DEFAULTS = {
     opencode: process.env.OPENCODE_BIN || "opencode",
     fixture: DEFAULT_FIXTURE,
     plugin: DEFAULT_PLUGIN,
+    timeoutMs: timeoutFromEnv(),
 };
 
 const SWITCHES = {
     "--force": "force",
     "--no-judge": "noJudge",
+    "--allow-writes": "allowWrites",
     "--help": "help",
     "-h": "help",
 };
@@ -104,7 +115,11 @@ common options:
   --fixtures DIR           fixture root (default ${DEFAULTS.fixtures})
   --results DIR            result root (default ${DEFAULTS.results})
   --stamp NAME             result stamp (default: current time)
-  --opencode BIN           OpenCode binary (default ${DEFAULTS.opencode})`);
+  --opencode BIN           OpenCode binary (default ${DEFAULTS.opencode})
+  --allow-writes           judge runs that changed files (execution trials;
+                           decision-only trials must leave writes: none)
+
+  TRIAL_TIMEOUT_MS         per-session timeout (default ${DEFAULTS.timeoutMs} ms)`);
     process.exit(2);
 }
 
@@ -126,7 +141,13 @@ function applyFlag(options, arg, argv) {
 
 function parseArgs(argv) {
     const command = argv.shift();
-    const options = { ...DEFAULTS, force: false, noJudge: false, ids: [] };
+    const options = {
+        ...DEFAULTS,
+        force: false,
+        noJudge: false,
+        allowWrites: false,
+        ids: [],
+    };
     while (argv.length > 0) {
         const arg = argv.shift();
         if (!applyFlag(options, arg, argv)) options.ids.push(arg);
@@ -154,6 +175,9 @@ const write = (path, contents) => {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, contents);
 };
+
+const sha256 = (value) => createHash("sha256").update(value).digest("hex");
+const fileHash = (path) => sha256(readFileSync(path));
 
 const listFiles = (root) => {
     const found = [];
@@ -368,16 +392,22 @@ function generateAll(options) {
     ]);
     const manifest = {
         generatedAt: new Date().toISOString(),
-        fixture: options.fixture,
-        plugin: options.plugin,
+        ...provenance(options),
         model: options.model,
         prompts: options.prompts,
-        cases: selected.map((testCase) => ({
-            id: testCase.id,
-            prompt: join(options.prompts, `${testCase.id}.md`),
-            fixture: join(options.fixtures, testCase.id),
-            expected: testCase.expected,
-        })),
+        fixture: options.fixture,
+        plugin: options.plugin,
+        cases: selected.map((testCase) => {
+            const prompt = join(options.prompts, `${testCase.id}.md`);
+            const fixture = join(options.fixtures, testCase.id);
+            return {
+                id: testCase.id,
+                prompt,
+                promptHash: existsSync(prompt) ? fileHash(prompt) : "unknown",
+                fixture,
+                expected: testCase.expected,
+            };
+        }),
     };
     write(
         join(options.fixtures, "manifest.json"),
@@ -458,7 +488,45 @@ function opencodeVersion(options) {
     return options.cliVersion;
 }
 
-function opencodeCall({ cwd, env, model, title, prompt, opencode }) {
+/** One git fact, or "unknown" when the plugin is not a checkout. */
+function gitFact(directory, args) {
+    const probe = spawnSync("git", args, { cwd: directory, encoding: "utf8" });
+    return probe.status === 0 ? (probe.stdout ?? "").trim() : "unknown";
+}
+
+/** Content hashes and versions that make a result reproducible. */
+function provenance(options) {
+    const fixtureHash = existsSync(options.fixture)
+        ? fileHash(options.fixture)
+        : "unknown";
+    const pluginParts = ["package.json", join("src", "index.ts")].filter(
+        (name) => existsSync(join(options.plugin, name)),
+    );
+    const pluginHash =
+        pluginParts.length === 0
+            ? "unknown"
+            : sha256(
+                  pluginParts
+                      .map((name) => readFileSync(join(options.plugin, name)))
+                      .join("\n"),
+              );
+    const pluginStatus = gitFact(options.plugin, ["status", "--porcelain"]);
+    return {
+        fixture: options.fixture,
+        fixtureHash,
+        fixtureVersion: `sha256:${fixtureHash.slice(0, 12)}`,
+        plugin: options.plugin,
+        pluginHash,
+        pluginCommit: gitFact(options.plugin, ["rev-parse", "HEAD"]),
+        pluginDirty: pluginStatus !== "unknown" && pluginStatus !== "",
+        opencode: opencodeVersion(options),
+        image: process.env.PLACEMENT_IMAGE ?? "",
+        imageId: process.env.PLACEMENT_IMAGE_ID ?? "",
+        args: process.argv.slice(2),
+    };
+}
+
+function opencodeCall({ cwd, env, model, title, prompt, opencode, timeoutMs }) {
     return spawnSync(
         opencode,
         [
@@ -474,7 +542,13 @@ function opencodeCall({ cwd, env, model, title, prompt, opencode }) {
             "json",
             prompt,
         ],
-        { cwd, env, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+        {
+            cwd,
+            env,
+            encoding: "utf8",
+            maxBuffer: 64 * 1024 * 1024,
+            timeout: timeoutMs,
+        },
     );
 }
 
@@ -487,25 +561,52 @@ function copySandbox(caseFixture, live) {
     }
 }
 
+/**
+ * Hash every trial-visible file, so an edit to an existing README or lake doc
+ * is a write even when no path was added or removed. `.git` is scaffolding, not
+ * trial content, so it is excluded.
+ */
 function snapshotLive(live) {
-    const work = join(live, "work");
-    const lakes = join(live, "lakes");
-    return [
-        ...listFiles(work).map((path) => `work/${relative(work, path)}`),
-        ...listFiles(lakes).map((path) => `lakes/${relative(lakes, path)}`),
-    ].sort();
+    const roots = [
+        ["work", join(live, "work")],
+        ["lakes", join(live, "lakes")],
+    ];
+    const files = new Map();
+    for (const [prefix, root] of roots) {
+        for (const path of listFiles(root)) {
+            const name = relative(root, path);
+            if (name.split(sep).includes(".git")) continue;
+            files.set(`${prefix}/${name}`, fileHash(path));
+        }
+    }
+    return files;
 }
 
 function snapshotDiff(before, after) {
+    const added = [];
+    const modified = [];
+    const removed = [];
+    for (const [path, hash] of after) {
+        if (!before.has(path)) added.push(path);
+        else if (before.get(path) !== hash) modified.push(path);
+    }
+    for (const path of before.keys()) {
+        if (!after.has(path)) removed.push(path);
+    }
     return {
-        added: after.filter((path) => !before.includes(path)),
-        removed: before.filter((path) => !after.includes(path)),
+        added: added.sort(),
+        modified: modified.sort(),
+        removed: removed.sort(),
     };
 }
+
+const writeCount = (diff) =>
+    diff.added.length + diff.modified.length + diff.removed.length;
 
 function writesReport(diff) {
     const lines = [
         ...diff.added.map((path) => `added: ${path}`),
+        ...diff.modified.map((path) => `modified: ${path}`),
         ...diff.removed.map((path) => `removed: ${path}`),
     ];
     return lines.length > 0 ? lines.join("\n") + "\n" : "none\n";
@@ -519,25 +620,50 @@ function metaFor(
     startedAt,
     result,
     diff,
+    answerHash,
 ) {
     return (
         JSON.stringify(
             {
+                ...provenance(options),
                 case: testCase.id,
                 model: options.model,
-                opencode: opencodeVersion(options),
-                plugin: options.plugin,
                 prompt: promptPath,
-                fixture: caseFixture,
+                promptHash: existsSync(promptPath)
+                    ? fileHash(promptPath)
+                    : "unknown",
+                caseFixture,
                 startedAt,
                 finishedAt: new Date().toISOString(),
                 exit: result.status,
-                writes: diff.added.length + diff.removed.length,
+                signal: result.signal ?? null,
+                error: result.error
+                    ? (result.error.code ?? String(result.error))
+                    : null,
+                writes: writeCount(diff),
+                writeKinds: diff,
+                answerHash,
             },
             null,
             2,
         ) + "\n"
     );
+}
+
+/** Whether a recorded run already occupies this result directory. */
+function resultExists(resultDir) {
+    return (
+        existsSync(join(resultDir, "meta.json")) ||
+        existsSync(join(resultDir, "final.md"))
+    );
+}
+
+/** Copy the rubric and case after the answer exists, never before the run. */
+function copyCaseEvidence(caseFixture, resultDir) {
+    for (const name of ["rubric.md", "case.json"]) {
+        const source = join(caseFixture, name);
+        if (existsSync(source)) cpSync(source, join(resultDir, name));
+    }
 }
 
 function runOne(testCase, options, stamp) {
@@ -546,12 +672,21 @@ function runOne(testCase, options, stamp) {
 
     const caseFixture = join(options.fixtures, testCase.id);
     const resultDir = join(options.results, stamp, testCase.id);
+    // A run is evidence, not scratch: rerunning the same stamp would mix
+    // answers, tool trails and verdicts. A fresh stamp is the only way to
+    // repeat a case.
+    if (resultExists(resultDir)) {
+        console.error(
+            `${testCase.id}: result already exists at ${resultDir}; ` +
+                "use a new --stamp instead of overwriting a run",
+        );
+        return 1;
+    }
+
     const live = join(resultDir, "live");
     rmSync(live, { recursive: true, force: true });
     copySandbox(caseFixture, live);
     cpSync(promptPath, join(resultDir, "prompt.md"));
-    cpSync(join(caseFixture, "rubric.md"), join(resultDir, "rubric.md"));
-    cpSync(join(caseFixture, "case.json"), join(resultDir, "case.json"));
 
     const before = snapshotLive(live);
     const startedAt = new Date().toISOString();
@@ -562,8 +697,11 @@ function runOne(testCase, options, stamp) {
         title: `placement-${testCase.id}`,
         prompt: readFileSync(promptPath, "utf8"),
         opencode: options.opencode,
+        timeoutMs: options.timeoutMs,
     });
     const diff = snapshotDiff(before, snapshotLive(live));
+    const { text, tools } = extract(result.stdout ?? "");
+    const answerHash = sha256(text);
 
     write(join(resultDir, "stdout.jsonl"), result.stdout ?? "");
     write(join(resultDir, "stderr.log"), result.stderr ?? "");
@@ -572,7 +710,6 @@ function runOne(testCase, options, stamp) {
         `${result.status ?? `signal:${result.signal}`}\n`,
     );
     write(join(resultDir, "writes.txt"), writesReport(diff));
-    const { text, tools } = extract(result.stdout ?? "");
     write(join(resultDir, "final.md"), text);
     write(join(resultDir, "tools.jsonl"), tools);
     write(
@@ -585,10 +722,14 @@ function runOne(testCase, options, stamp) {
             startedAt,
             result,
             diff,
+            answerHash,
         ),
     );
+    // The rubric stays out of the sandbox until the answer exists. The same
+    // applies to case.json, which carries the rubric's expectations.
+    copyCaseEvidence(caseFixture, resultDir);
 
-    const writes = diff.added.length + diff.removed.length;
+    const writes = writeCount(diff);
     console.log(
         `${testCase.id}: exit ${result.status ?? "signal"}, writes ${writes} -> ${resultDir}`,
     );
@@ -666,17 +807,108 @@ function verdictLabel(verdict) {
     return `${parsed.verdict ?? "unparsed"}${destination ? ` -> ${destination}` : ""}`;
 }
 
-function recordVerdict(caseId, resultDir, result, judgeModel) {
-    write(join(resultDir, "judge", "stdout.jsonl"), result.stdout ?? "");
-    write(join(resultDir, "judge", "stderr.log"), result.stderr ?? "");
-    const { text } = extract(result.stdout ?? "");
-    write(join(resultDir, "judge", "raw.md"), text);
+/** The next judge attempt number, so rejudging never overwrites evidence. */
+function nextAttempt(resultDir) {
+    const root = join(resultDir, "judge");
+    if (!existsSync(root)) return "001";
+    const attempts = readdirSync(root, { withFileTypes: true })
+        .filter(
+            (entry) => entry.isDirectory() && /^attempt-\d+$/.test(entry.name),
+        )
+        .map((entry) => Number(entry.name.slice("attempt-".length)))
+        .filter(Number.isFinite);
+    return String(Math.max(0, ...attempts) + 1).padStart(3, "0");
+}
 
-    const verdict = parseVerdict(text);
+/** Why a recorded run is not judgeable, or null when it is complete. */
+function runInvalidReason(resultDir, options) {
+    if (!existsSync(join(resultDir, "final.md"))) {
+        return "no final.md recorded";
+    }
+    const exitPath = join(resultDir, "exit-code");
+    const exit = existsSync(exitPath)
+        ? readFileSync(exitPath, "utf8").trim()
+        : "missing";
+    if (exit !== "0") {
+        return `trial did not complete (exit ${exit})`;
+    }
+    const meta = readJson(join(resultDir, "meta.json"));
+    if (!meta) {
+        return "no meta.json recorded";
+    }
+    if (meta.writes !== 0 && !options.allowWrites) {
+        return `decision-only trial changed ${meta.writes} file(s)`;
+    }
+    return null;
+}
+
+function writeInvalidVerdict(caseId, resultDir, reason, answerHash) {
+    const verdict = {
+        verdict: "invalid",
+        reason,
+        answerHash,
+        judgeModel: "none",
+    };
     write(
         join(resultDir, "verdict.json"),
-        JSON.stringify(verdictArtefact(verdict, text, judgeModel), null, 2) +
-            "\n",
+        JSON.stringify(verdict, null, 2) + "\n",
+    );
+    console.log(`${caseId}: invalid — ${reason}`);
+    return 1;
+}
+
+function recordVerdict(
+    caseId,
+    resultDir,
+    judgeDir,
+    result,
+    judgeModel,
+    answerHash,
+    rubricHash,
+    startedAt,
+) {
+    write(join(judgeDir, "stdout.jsonl"), result.stdout ?? "");
+    write(join(judgeDir, "stderr.log"), result.stderr ?? "");
+    const { text } = extract(result.stdout ?? "");
+    write(join(judgeDir, "raw.md"), text);
+
+    const verdict = parseVerdict(text);
+    const attempt = relative(resultDir, judgeDir);
+    const artefact = {
+        ...verdictArtefact(verdict, text, judgeModel),
+        answerHash,
+        rubricHash,
+        attempt,
+    };
+    write(
+        join(judgeDir, "verdict.json"),
+        JSON.stringify(artefact, null, 2) + "\n",
+    );
+    write(
+        join(judgeDir, "meta.json"),
+        JSON.stringify(
+            {
+                attempt,
+                judgeModel,
+                answerHash,
+                rubricHash,
+                startedAt,
+                finishedAt: new Date().toISOString(),
+                exit: result.status,
+                signal: result.signal ?? null,
+                error: result.error
+                    ? (result.error.code ?? String(result.error))
+                    : null,
+            },
+            null,
+            2,
+        ) + "\n",
+    );
+    // Convenience pointer for summary/export; the attempt directory is the
+    // durable evidence.
+    write(
+        join(resultDir, "verdict.json"),
+        JSON.stringify(artefact, null, 2) + "\n",
     );
     console.log(`${caseId}: ${verdictLabel(verdict)}`);
     return verdict?.verdict === "pass" ? 0 : 1;
@@ -684,22 +916,46 @@ function recordVerdict(caseId, resultDir, result, judgeModel) {
 
 function judgeOne(testCase, options, stamp) {
     const resultDir = join(options.results, stamp, testCase.id);
-    if (!existsSync(join(resultDir, "final.md"))) {
+    if (!existsSync(resultDir)) {
         console.log(`${testCase.id}: no run recorded, skipping judge`);
         return 1;
     }
+    const answerHash = existsSync(join(resultDir, "final.md"))
+        ? fileHash(join(resultDir, "final.md"))
+        : "unknown";
+    const invalid = runInvalidReason(resultDir, options);
+    if (invalid !== null) {
+        return writeInvalidVerdict(testCase.id, resultDir, invalid, answerHash);
+    }
     copyRubric(options, resultDir, testCase.id);
+    const rubricHash = existsSync(join(resultDir, "rubric.md"))
+        ? fileHash(join(resultDir, "rubric.md"))
+        : "unknown";
     const judgeModel = options.judgeModel || options.model;
     const judgeRoot = prepareJudgeRoot(resultDir, judgeModel);
+    const attempt = nextAttempt(resultDir);
+    const judgeDir = join(resultDir, "judge", `attempt-${attempt}`);
+    mkdirSync(judgeDir, { recursive: true });
+    const startedAt = new Date().toISOString();
     const result = opencodeCall({
         cwd: join(judgeRoot, "work"),
         env: childEnv(join(judgeRoot, "config-home")),
         model: judgeModel,
-        title: `placement-judge-${testCase.id}`,
+        title: `placement-judge-${testCase.id}-${attempt}`,
         prompt: judgePrompt(resultDir),
         opencode: options.opencode,
+        timeoutMs: options.timeoutMs,
     });
-    return recordVerdict(testCase.id, resultDir, result, judgeModel);
+    return recordVerdict(
+        testCase.id,
+        resultDir,
+        judgeDir,
+        result,
+        judgeModel,
+        answerHash,
+        rubricHash,
+        startedAt,
+    );
 }
 
 function readJson(path) {
@@ -764,6 +1020,7 @@ function renderSummary(options, stamp) {
         ),
         "",
         `Passed: ${rows.filter((row) => row.verdict === "pass").length}/${rows.length}`,
+        `Invalid: ${rows.filter((row) => row.verdict === "invalid").length}`,
         "",
     ];
     const text = lines.join("\n");
@@ -811,7 +1068,8 @@ function verdictFor(resultDir) {
         ? ` — destination: ${verdict.destination}`
         : "";
     const reason = verdict.reason ? ` — ${verdict.reason}` : "";
-    return `${verdict.verdict}${destination}${reason} (judge model: ${verdict.judgeModel ?? "unknown"})`;
+    const attempt = verdict.attempt ? `, attempt ${verdict.attempt}` : "";
+    return `${verdict.verdict}${destination}${reason} (judge model: ${verdict.judgeModel ?? "unknown"}${attempt})`;
 }
 
 /** The dossier section for one case: rubric, prompt, answer, trail, verdict. */
@@ -855,17 +1113,25 @@ function caseSection(testCase, resultDir) {
         "",
         verdictFor(resultDir),
         "",
-        `Run meta: exit ${meta.exit ?? "?"}, ${meta.writes ?? "?"} write(s), started ${meta.startedAt ?? "?"}.`,
+        `Run meta: exit ${meta.exit ?? "?"}, ${meta.writes ?? "?"} write(s), ` +
+            `answer ${meta.answerHash ?? "?"}, started ${meta.startedAt ?? "?"}.`,
         "",
     ];
 }
 
 function dossierHeader(options, stamp) {
+    const manifest = readJson(join(options.fixtures, "manifest.json"));
+    const provenanceInfo = manifest ?? provenance(options);
     return [
         `# Placement-trial dossier ${stamp}`,
         "",
         `- Generated: ${new Date().toISOString()}`,
         `- Trial model: ${options.model}`,
+        `- Fixture: ${provenanceInfo.fixtureVersion ?? "unknown"} (${provenanceInfo.fixtureHash ?? "unknown"})`,
+        `- Plugin: ${provenanceInfo.pluginCommit ?? "unknown"} (${provenanceInfo.pluginHash ?? "unknown"})`,
+        `- CLI: ${provenanceInfo.opencode ?? "unknown"}`,
+        `- Image: ${provenanceInfo.image || "unknown"}${provenanceInfo.imageId ? ` (${provenanceInfo.imageId})` : ""}`,
+        `- Timeout: ${options.timeoutMs} ms per model call`,
         `- Harness: opencode-docs-plugin tests/fixtures/placement-harness`,
         "- Sandbox: shell, file edits and reads outside the workspace were denied;" +
             " the rubric was not present in the sandbox. Trials state an intended" +
