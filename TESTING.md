@@ -61,8 +61,8 @@ trials:
 
 | Subcommand | What it does                                                      |
 | ---------- | ----------------------------------------------------------------- |
-| `generate` | Write one prompt per case and one pristine fixture tree per case  |
-| `run`      | Copy a fixture into a stamped results dir, run a headless session |
+| `generate` | Write prompts, pristine fixture trees and out-of-band rubrics     |
+| `run`      | Copy one case into a stamped results dir, run an isolated session |
 | `judge`    | Score each recorded answer against its rubric (second model call) |
 | `summary`  | Render the per-stamp results table                                |
 | `export`   | Bundle a sweep into one `dossier.md` for an external deep review  |
@@ -70,24 +70,28 @@ trials:
 
 Common flags: `--model` (trial model), `--judge-model` (judge model),
 `--stamp` (result label — name sweeps by plugin version or topic),
-`--prompts/--fixtures/--results` (output roots), `--allow-writes` (judge a
-run that changed files; decision-only trials must leave `writes: none`).
-`TRIAL_TIMEOUT_MS` bounds each model call (default ten minutes).
+`--prompts/--fixtures/--rubrics/--results` (output roots), `--allow-writes`
+(judge a run that changed files; decision-only trials must leave
+`writes: none`). `TRIAL_TIMEOUT_MS` bounds each model call (default ten
+minutes).
 
 ### The container
 
 `container-run.sh` runs the harness inside the trial container
 (`Containerfile`): Debian slim, Node LTS, the current `@opencode/cli`
 installed at build time so trials test what users run. The root filesystem is
-run at build time so trials test what users run. The root filesystem is
-read-only; the repository mounts read-only and only prompts, fixtures and
-results are writable, so a wandering model has nothing of yours to find. The
-container shares the host network namespace, so provider traffic uses the
-host's loopback proxy overlay unchanged — no routes or credentials live in
-this repository.
+read-only. `generate` mounts the repository read-only and writes prompts,
+fixtures and rubrics; `run` starts **one container per case**, mounting only a
+curated plugin package (`package.json`, `src`, `node_modules`), that case's
+sandbox, its prompt and its result directory. Rubrics and case JSON are
+copied into the result only after the container exits, so a trial cannot read
+its own or another case's expectations. The container shares the host network
+namespace, so provider traffic uses the host's loopback proxy overlay
+unchanged — no routes or credentials live in this repository.
 
 Default output roots (overridable with `PLACEMENT_PROMPTS`,
-`PLACEMENT_FIXTURES`, `PLACEMENT_RESULTS`): prompts and results under
+`PLACEMENT_FIXTURES`, `PLACEMENT_RUBRICS`, `PLACEMENT_RESULTS`,
+`PLACEMENT_RUN_FIXTURES`): prompts, rubrics and results under
 `~/tmp/docs-placement/`, fixtures under `~/test-dir/docs-placement/`.
 
 The harness can also run directly on the host for development, but fixture
@@ -155,13 +159,14 @@ Per case, under `results/<stamp>/<case>/`:
 
 Trials judge placement from the supplied finding, so the session gets no
 shell, no edits and no reads outside the workspace (the `docs` tool serves
-the lakes itself). The rubric and case are copied into the result directory
-only after the answer is recorded, so the running session cannot find them in
-its own result tree. The container is the physical boundary and the reason
-trials stay controlled; the permission rules are defence in depth and have
-proven unreliable to enforce in every run context, so do not rely on them —
-and treat host-side trial runs as development, never as the safety
-mechanism.
+the lakes itself). A run container mounts only the current case's sandbox,
+prompt and result directory plus a curated plugin package; rubrics, case JSON
+and every other case's results are outside its mount namespace. The rubric
+and case are copied into the result only after the container exits. The
+container is the physical boundary and the reason trials stay controlled; the
+permission rules are defence in depth and have proven unreliable to enforce
+in every run context, so do not rely on them — and treat host-side trial runs
+as development, never as the safety mechanism.
 
 ### Reading results
 
