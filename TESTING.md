@@ -72,8 +72,11 @@ Common flags: `--model` (trial model), `--judge-model` (judge model),
 `--stamp` (result label — name sweeps by plugin version or topic),
 `--prompts/--fixtures/--rubrics/--results` (output roots), `--allow-writes`
 (judge a run that changed files; decision-only trials must leave
-`writes: none`). `TRIAL_TIMEOUT_MS` bounds each model call (default ten
-minutes).
+`writes: none`), `--discovery` (the discovery variant: prompts carry no
+destinations, so lakes are reachable only through `docs help`; the summary
+gains a `Discovery` column measuring help use per case, kept separate from
+the placement verdict). `TRIAL_TIMEOUT_MS` bounds each model call (default
+ten minutes).
 
 ### The container
 

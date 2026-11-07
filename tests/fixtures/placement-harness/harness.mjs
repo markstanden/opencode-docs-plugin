@@ -66,6 +66,7 @@ const SWITCHES = {
     "--force": "force",
     "--no-judge": "noJudge",
     "--allow-writes": "allowWrites",
+    "--discovery": "discovery",
     "--help": "help",
     "-h": "help",
 };
@@ -124,6 +125,9 @@ common options:
   --opencode BIN           OpenCode binary (default ${DEFAULTS.opencode})
   --allow-writes           judge runs that changed files (execution trials;
                            decision-only trials must leave writes: none)
+  --discovery              omit destinations from prompts; the lakes are then
+                           discoverable only through 'docs help', which the
+                           prompt mentions without requiring
 
   TRIAL_TIMEOUT_MS         per-session timeout (default ${DEFAULTS.timeoutMs} ms)`);
     process.exit(2);
@@ -152,6 +156,7 @@ function parseArgs(argv) {
         force: false,
         noJudge: false,
         allowWrites: false,
+        discovery: false,
         ids: [],
     };
     while (argv.length > 0) {
@@ -198,7 +203,20 @@ const listFiles = (root) => {
     return found.sort();
 };
 
-const promptFor = (testCase) => `We have established the following finding.
+const promptFor = (testCase, options) => {
+    // Discovery variant: the prompt names no destination and no tool — the
+    // lakes are reachable only through the session's normal tool inventory
+    // (the docs tool's own description points at `help`).
+    const destinations = options.discovery
+        ? ""
+        : `Available documentation destinations:
+${testCase.destinations
+    .map(
+        (destination) =>
+            `- ${destination.name} (\`${destination.class}\`): ${destination.description}`,
+    )
+    .join("\n")}`;
+    return `We have established the following finding.
 
 Finding:
 ${testCase.claim}
@@ -206,15 +224,7 @@ ${testCase.claim}
 Evidence:
 ${testCase.evidence}
 
-Available documentation destinations:
-${testCase.destinations
-    .map(
-        (destination) =>
-            `- ${destination.name} (\`${destination.class}\`): ${destination.description}`,
-    )
-    .join("\n")}
-
-Use your normal documentation guidance to decide how to preserve this finding. For this trial, do not change files.
+${destinations ? `${destinations}\n\n` : ""}Use your normal documentation guidance to decide how to preserve this finding. For this trial, do not change files.
 
 State:
 - Your intended action.
@@ -225,6 +235,7 @@ State:
 
 Treat the evidence descriptions as supplied facts for this synthetic trial.
 `;
+};
 
 const rubricFor = (testCase) => `# ${testCase.id} rubric
 
@@ -263,10 +274,20 @@ function generateCase(testCase, options) {
 
     // The run container deliberately has no rubric root; there, a prompt and
     // config are enough to keep the fixture. Generate requires the rubric.
+    // A stored prompt only counts as kept when it matches the current
+    // template — a variant or template change must regenerate, never reuse.
+    // The run container's id-only case list cannot rebuild prompts: there the
+    // kept check stays existence-based and the template is never computed.
+    const promptComparable = testCase.claim !== undefined;
+    const promptText = promptComparable
+        ? promptFor(testCase, options)
+        : undefined;
     const rubricRootMounted = existsSync(options.rubrics);
     if (
         !options.force &&
         existsSync(promptPath) &&
+        (!promptComparable ||
+            readFileSync(promptPath, "utf8") === promptText) &&
         existsSync(configPath) &&
         (!rubricRootMounted || existsSync(rubricPath))
     ) {
@@ -281,7 +302,7 @@ function generateCase(testCase, options) {
 
     buildFixtureTree(testCase, caseDir);
 
-    write(promptPath, promptFor(testCase));
+    write(promptPath, promptText);
     write(rubricPath, rubricFor(testCase));
     write(
         join(rubricDir, "case.json"),
@@ -1047,12 +1068,15 @@ function docsCallCount(resultDir) {
 /**
  * What a tool call's input exposes beyond the prompt, most specific first.
  * Ordered so overlapping paths stay labelled: a rubric read is never mistaken
- * for the redacted case list.
+ * for the redacted case list. A `glob` that merely names a guidance file is
+ * discovery, not a read, so it is labelled apart from content reads.
  */
 const EXPOSURE_RULES = [
     ["rubric-case", /rubric\.md|case\.json|\/rubrics\//i],
     ["repo cases", /\/repo\/tests\/|placement-cases\.json/i],
     ["case list", /\/fixtures\/cases\.json/i],
+    ["session config", /opencode\.json/i],
+    ["harness surfaces", /\/fixtures\/manifest\.json|\/prompts\//i],
     ["guidance", /CONVENTION\.md|AGENTS\.md|SKILL\.md|\/\.opencode\//i],
 ];
 
@@ -1066,10 +1090,52 @@ function exposureFor(resultDir) {
         if (!entry) continue;
         const input = JSON.stringify(entry.input ?? "");
         for (const [label, pattern] of EXPOSURE_RULES) {
-            if (pattern.test(input)) found.add(label);
+            if (!pattern.test(input)) continue;
+            found.add(
+                label === "guidance" && entry.tool === "glob"
+                    ? "guidance-discovery"
+                    : label,
+            );
         }
+        // A loaded skill is guidance-adjacent context the trail should show.
+        if (entry.tool === "skill") found.add("skill load");
     }
     return [...found];
+}
+
+const isHelpQuery = (value) => value.trim().toLowerCase() === "help";
+
+/**
+ * Discovery observation for one case: total `docs` calls and how many asked
+ * for help (the verb that lists the configured lakes with their names,
+ * classes and descriptions). Deliberately separate from the placement
+ * verdict: a trial can discover the lakes yet place badly, and in
+ * discovery-variant prompts help is the only place the lakes appear.
+ */
+function discoveryFor(resultDir) {
+    const path = join(resultDir, "tools.jsonl");
+    if (!existsSync(path)) return null;
+    const entries = readFileSync(path, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map(parseLine)
+        .filter((entry) => entry?.tool === "docs");
+    return {
+        calls: entries.length,
+        help: entries.filter(
+            (entry) =>
+                typeof entry.input?.search === "string" &&
+                isHelpQuery(entry.input.search),
+        ).length,
+    };
+}
+
+/** The Discovery column value: a help call is the observed discovery step. */
+function discoveryLabel(discovery) {
+    if (discovery === null) return "-";
+    if (discovery.calls === 0) return "none";
+    if (discovery.help === 0) return `no help (${discovery.calls})`;
+    return `help×${discovery.help}`;
 }
 
 /** The Writes column value for one run's writes.txt content. */
@@ -1097,6 +1163,7 @@ function summaryRow(testCase, resultDir) {
         destination: verdict?.destination ?? "",
         writes: writesLabel(report),
         docsCalls: count === null ? "-" : String(count),
+        discovery: discoveryLabel(discoveryFor(resultDir)),
         exposure: exposure.length > 0 ? exposure.join(" + ") : "none",
     };
 }
@@ -1111,17 +1178,23 @@ function renderSummary(options, stamp) {
         "",
         `Model: ${options.model}`,
         `Judge: ${options.judgeModel || options.model}`,
+        `Variant: ${
+            options.discovery
+                ? "discovery — prompts carry no destinations; lakes only via docs help"
+                : "destinations listed in prompt"
+        }`,
         `Results: ${stampDir}`,
         "",
-        "| Case | Expected | Verdict | Destination | Writes | Docs calls | Exposure |",
-        "| ---- | -------- | ------- | ----------- | ------ | ---------- | -------- |",
+        "| Case | Expected | Verdict | Destination | Writes | Docs calls | Discovery | Exposure |",
+        "| ---- | -------- | ------- | ----------- | ------ | ---------- | --------- | -------- |",
         ...rows.map(
             (row) =>
-                `| ${row.id} | ${row.expected} | ${row.verdict} | ${row.destination || "-"} | ${row.writes} | ${row.docsCalls} | ${row.exposure} |`,
+                `| ${row.id} | ${row.expected} | ${row.verdict} | ${row.destination || "-"} | ${row.writes} | ${row.docsCalls} | ${row.discovery} | ${row.exposure} |`,
         ),
         "",
         `Passed: ${rows.filter((row) => row.verdict === "pass").length}/${rows.length}`,
         `Invalid: ${rows.filter((row) => row.verdict === "invalid").length}`,
+        `Discovered: ${rows.filter((row) => row.discovery.startsWith("help")).length}/${rows.length}`,
         `Exposed: ${rows.filter((row) => row.exposure !== "none").length}/${rows.length}`,
         "",
     ];
@@ -1209,6 +1282,8 @@ function caseSection(testCase, resultDir) {
             exposureFor(resultDir).join(" + ") || "none"
         } (classified from the tool trail; guidance exposure is expected)`,
         "",
+        `Discovery: ${discoveryLabel(discoveryFor(resultDir))} (docs calls; help lists the configured lakes)`,
+        "",
         "### Files changed",
         "",
         "````",
@@ -1233,6 +1308,11 @@ function dossierHeader(options, stamp) {
         "",
         `- Generated: ${new Date().toISOString()}`,
         `- Trial model: ${options.model}`,
+        `- Variant: ${
+            options.discovery
+                ? "discovery — prompts carry no destinations; lakes only via docs help"
+                : "destinations listed in prompt"
+        }`,
         `- Fixture: ${provenanceInfo.fixtureVersion ?? "unknown"} (${provenanceInfo.fixtureHash ?? "unknown"})`,
         `- Plugin: ${provenanceInfo.pluginCommit ?? "unknown"} (${provenanceInfo.pluginHash ?? "unknown"})`,
         `- CLI: ${provenanceInfo.opencode ?? "unknown"}`,
