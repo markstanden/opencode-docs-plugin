@@ -6,14 +6,14 @@ description: Run and score the behavioural placement-guidance trials (tests/fixt
 # Placement trials
 
 `tests/fixtures/placement-harness/harness.mjs` runs the cases in
-`tests/fixtures/placement-cases.json` (E01–E17) through real headless
+`tests/fixtures/placement-cases.json` (E01–E18) through real headless
 OpenCode sessions against pristine fixture trees.
 
 Subcommands: `generate` (materialise prompts to `~/tmp/docs-placement/prompts/`
 and fixtures to `~/test-dir/docs-placement/`), `run` (sandboxed session per
 case), `judge` (score answers against each rubric), `summary` (results table),
 `export` (one `dossier.md` for a stronger reviewer), `all` (the full loop).
-Per-case wrappers live in `~/tmp/docs-placement/E01.sh`…`E17.sh`.
+Per-case wrappers live in `~/tmp/docs-placement/E01.sh`…`E18.sh`.
 
 ## Models
 
@@ -45,22 +45,26 @@ Per-case wrappers live in `~/tmp/docs-placement/E01.sh`…`E17.sh`.
   environment at runtime. Nothing about this machine is baked into the repo.
 - One case: `container-run.sh run E01 --judge-model <session model>`
   (wrappers: `~/tmp/docs-placement/E01.sh`).
-- A sweep: `container-run.sh all`. Seventeen trials plus judging costs real
+- A sweep: `container-run.sh all`. Eighteen trials plus judging costs real
   minutes and tokens — ask before starting one.
 - Host invocation (`node …/harness.mjs …`) works for development, but fixture
   configs embed the plugin path from generation time — generate and run from
   the same environment, or regenerate (`generate --force`) when switching.
 - Name stamps for comparisons: `--stamp <plugin-version-or-topic>`; diff
   `summary.md` across stamps rather than trusting a single cell.
-- Trials are sandboxed in depth: the container is the boundary, and the
-  session additionally denies shell, edits and external reads, with no rubric
-  in the sandbox. Do not weaken that to make a case pass; regenerate fixtures
-  (`generate --force`) only when the fixture JSON or sandbox policy genuinely
-  changed.
+- Trials are sandboxed: the container mount is the boundary, and the session
+  is configured to deny shell, edits and external reads on top — but trails
+  have shown those denials are not guaranteed, and no rubric ever enters the
+  sandbox. Check the `Exposure` column in `summary.md` rather than trusting
+  the permission set. Do not weaken any of it to make a case pass;
+  regenerate fixtures (`generate --force`) only when the fixture JSON or
+  sandbox policy genuinely changed.
 
 ## Reading results
 
-- `summary.md` per stamp: verdict, destination, writes, docs-tool call count.
+- `summary.md` per stamp: verdict, destination, writes, docs-tool call count,
+  and the trail `Exposure` classification (guidance / case list / rubric-case
+  / repo cases).
 - `writes.txt` must say `none`; anything else is a trial-integrity finding
   before it is a guidance finding.
 - Borderline cases (E05, E07, E16) flicker between sweeps — the model is the

@@ -48,7 +48,7 @@ working-tree changes.
 
 ## Behavioural placement trials
 
-`tests/fixtures/placement-cases.json` holds seventeen cases (E01–E17): each
+`tests/fixtures/placement-cases.json` holds eighteen cases (E01–E18): each
 has a claim, evidence, the available destinations, an expected scope or
 action, acceptable rationale, and tempting wrong answers. The guidance text
 these cases evaluate lives in the registered `docs` skill and
@@ -82,12 +82,14 @@ minutes).
 installed at build time so trials test what users run. The root filesystem is
 read-only. `generate` mounts the repository read-only and writes prompts,
 fixtures and rubrics; `run` starts **one container per case**, mounting only a
-curated plugin package (`package.json`, `src`, `node_modules`), that case's
-sandbox, its prompt and its result directory. Rubrics and case JSON are
-copied into the result only after the container exits, so a trial cannot read
-its own or another case's expectations. The container shares the host network
-namespace, so provider traffic uses the host's loopback proxy overlay
-unchanged — no routes or credentials live in this repository.
+curated plugin package (`package.json`, `src`, `node_modules`,
+`CONVENTION.md`), that case's sandbox, its prompt, an id-only case list and
+its result directory. Rubrics and case JSON are copied into the result only
+after the container exits, so a trial cannot read its own or another case's
+expectations; the case list it does see carries ids only, no claims or
+expected labels. The container shares the host network namespace, so provider
+traffic uses the host's loopback proxy overlay unchanged — no routes or
+credentials live in this repository.
 
 Default output roots (overridable with `PLACEMENT_PROMPTS`,
 `PLACEMENT_FIXTURES`, `PLACEMENT_RUBRICS`, `PLACEMENT_RESULTS`,
@@ -152,21 +154,29 @@ Per case, under `results/<stamp>/<case>/`:
   (model, CLI, image, fixture and plugin hashes, args, answer hash, timing),
   `exit-code`, `live/` (the exact sandbox that ran); plus `verdict.json` and a
   `judge/attempt-NNN/` trail once judged.
-- Per sweep: `summary.md`, `dossier.md` and the provenance-bearing
-  `manifest.json` under the fixture root.
+- Per sweep: `summary.md` (verdicts plus per-case trail-exposure
+  classification), `dossier.md` (with an `Exposure:` line per case) and the
+  provenance-bearing `manifest.json` under the fixture root.
 
 ### Sandbox guarantees
 
-Trials judge placement from the supplied finding, so the session gets no
-shell, no edits and no reads outside the workspace (the `docs` tool serves
-the lakes itself). A run container mounts only the current case's sandbox,
-prompt and result directory plus a curated plugin package; rubrics, case JSON
-and every other case's results are outside its mount namespace. The rubric
-and case are copied into the result only after the container exits. The
-container is the physical boundary and the reason trials stay controlled; the
-permission rules are defence in depth and have proven unreliable to enforce
-in every run context, so do not rely on them — and treat host-side trial runs
-as development, never as the safety mechanism.
+Trials judge placement from the supplied finding (the `docs` tool serves the
+lakes itself). A run container mounts only the current case's sandbox, its
+prompt, an id-only case list and the result directory, plus the curated
+plugin package; rubrics, case JSON and every other case's results are outside
+its mount namespace. The rubric and case are copied into the result only
+after the container exits.
+
+The container is the enforced boundary. The permission rules (no shell, no
+edits, no reads outside the workspace) are requested, not guaranteed: trails
+have shown successful shell commands and reads outside the workspace, so
+never rely on them, and treat host-side trial runs as development, never as
+the safety mechanism. Instead of trusting the denials, the harness classifies
+each case's tool-trail exposure — guidance / case list / rubric-case / repo
+cases — into the `Exposure` column of `summary.md` and an `Exposure:` line
+per dossier section. A populated cell is context for the verdict, not
+automatically a failure: guidance exposure (the curated `CONVENTION.md`
+mount) is expected and benign.
 
 ### Reading results
 
@@ -180,7 +190,9 @@ that showed it.
 
 ### Fixture notes
 
-- E11 configures two personal lakes; E17 nests a repo lake inside a wider
+- E11 and E18 each configure two personal lakes (`workstation`,
+  `household`) and expect the lake named by the description, not the class
+  alone; E17 nests a repo lake inside a wider
   repo lake with an unrelated personal lake beside it; E06 and E17 get small
   code-shaped work trees matching their evidence.
 - E13 and E16 list no repository destination, so their fixtures pin a

@@ -418,7 +418,7 @@ ranking harness pins behaviour against — edit it directly. It holds invented
 paths and summaries only; never snapshot a real docs tree into it.
 
 `tests/fixtures/placement-cases.json` is a synthetic evaluation fixture for
-the placement guidance (cases E01–E17, each with a claim, evidence,
+the placement guidance (cases E01–E18, each with a claim, evidence,
 destinations, expected scope or action, acceptable rationale and tempting
 wrong answer). `tests/fixtures/placement-harness/harness.mjs` runs the cases
 behaviourally: `generate` materialises one prompt, one pristine fixture tree
@@ -429,8 +429,10 @@ prompts, rubrics and results, `~/test-dir/docs-placement/` for fixtures),
 rubric with a second, plugin-free model call (`--judge-model` names a stronger
 judge than the workhorse), and `export` bundles a sweep into one `dossier.md`
 for deep review by an external model. Trials judge placement from the supplied
-finding: the sandbox denies shell, edits and reads outside the workspace, and
-a per-case run container sees only that case's sandbox, prompt and result.
+finding: a per-case run container sees only that case's sandbox, prompt, an
+id-only case list and the result, and the requested shell/edit/read denials
+are defence in depth rather than guarantees — each case's trail exposure is
+classified and reported in the sweep summary.
 `container-run.sh` runs the harness inside a Debian-slim trial container
 (Node LTS, current `@opencode/cli`, read-only root filesystem) so trials see
 no host filesystem at all; the harness can also run directly on the host.
