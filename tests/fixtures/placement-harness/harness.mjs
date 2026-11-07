@@ -50,6 +50,7 @@ function timeoutFromEnv() {
 const DEFAULTS = {
     prompts: join(HOME, "tmp", "docs-placement", "prompts"),
     fixtures: join(HOME, "test-dir", "docs-placement"),
+    rubrics: join(HOME, "tmp", "docs-placement", "rubrics"),
     results: join(HOME, "tmp", "docs-placement", "results"),
     model: process.env.TRIAL_MODEL || "opencode-go/deepseek-v4.1-flash",
     judgeModel: process.env.TRIAL_JUDGE_MODEL || "",
@@ -73,6 +74,7 @@ const VALUE_FLAGS = {
     "--opencode": { key: "opencode" },
     "--prompts": { key: "prompts", path: true },
     "--fixtures": { key: "fixtures", path: true },
+    "--rubrics": { key: "rubrics", path: true },
     "--results": { key: "results", path: true },
     "--plugin": { key: "plugin", path: true },
     "--fixture": { key: "fixture", path: true },
@@ -113,6 +115,8 @@ common options:
                            'export' to deep-scan a sweep with an external model
   --prompts DIR            prompt output (default ${DEFAULTS.prompts})
   --fixtures DIR           fixture root (default ${DEFAULTS.fixtures})
+  --rubrics DIR            rubric/case output, kept out of the run sandbox
+                           (default ${DEFAULTS.rubrics})
   --results DIR            result root (default ${DEFAULTS.results})
   --stamp NAME             result stamp (default: current time)
   --opencode BIN           OpenCode binary (default ${DEFAULTS.opencode})
@@ -246,23 +250,37 @@ const SANDBOX_PERMISSIONS = [
  */
 function generateCase(testCase, options) {
     const caseDir = join(options.fixtures, testCase.id);
+    const rubricDir = join(options.rubrics, testCase.id);
     const promptPath = join(options.prompts, `${testCase.id}.md`);
+    const rubricPath = join(rubricDir, "rubric.md");
     const configPath = join(caseDir, "work", "opencode.json");
 
-    if (!options.force && existsSync(promptPath) && existsSync(configPath)) {
+    // The run container deliberately has no rubric root; there, a prompt and
+    // config are enough to keep the fixture. Generate requires the rubric.
+    const rubricRootMounted = existsSync(options.rubrics);
+    if (
+        !options.force &&
+        existsSync(promptPath) &&
+        existsSync(configPath) &&
+        (!rubricRootMounted || existsSync(rubricPath))
+    ) {
         return "kept";
     }
 
     if (options.force) {
         rmSync(caseDir, { recursive: true, force: true });
+        rmSync(rubricDir, { recursive: true, force: true });
         rmSync(promptPath, { force: true });
     }
 
     buildFixtureTree(testCase, caseDir);
 
     write(promptPath, promptFor(testCase));
-    write(join(caseDir, "rubric.md"), rubricFor(testCase));
-    write(join(caseDir, "case.json"), JSON.stringify(testCase, null, 2) + "\n");
+    write(rubricPath, rubricFor(testCase));
+    write(
+        join(rubricDir, "case.json"),
+        JSON.stringify(testCase, null, 2) + "\n",
+    );
     write(
         configPath,
         JSON.stringify(
@@ -400,11 +418,14 @@ function generateAll(options) {
         cases: selected.map((testCase) => {
             const prompt = join(options.prompts, `${testCase.id}.md`);
             const fixture = join(options.fixtures, testCase.id);
+            const rubric = join(options.rubrics, testCase.id, "rubric.md");
             return {
                 id: testCase.id,
                 prompt,
                 promptHash: existsSync(prompt) ? fileHash(prompt) : "unknown",
                 fixture,
+                rubric,
+                rubricHash: existsSync(rubric) ? fileHash(rubric) : "unknown",
                 expected: testCase.expected,
             };
         }),
@@ -494,31 +515,52 @@ function gitFact(directory, args) {
     return probe.status === 0 ? (probe.stdout ?? "").trim() : "unknown";
 }
 
+/** The real fixture hash, even when a run container sees only a redacted list. */
+function fixtureHashOf(options) {
+    if (process.env.PLACEMENT_FIXTURE_HASH) {
+        return process.env.PLACEMENT_FIXTURE_HASH;
+    }
+    if (existsSync(options.fixture)) return fileHash(options.fixture);
+    const manifest = readJson(join(options.fixtures, "manifest.json"));
+    return manifest?.fixtureHash ?? "unknown";
+}
+
+/** A stable content hash for the plugin package, even under a curated mount. */
+function pluginHashOf(options) {
+    const parts = ["package.json", join("src", "index.ts")].filter((name) =>
+        existsSync(join(options.plugin, name)),
+    );
+    if (parts.length === 0) return "unknown";
+    return sha256(
+        parts
+            .map((name) => readFileSync(join(options.plugin, name)))
+            .join("\n"),
+    );
+}
+
+function pluginCommitOf(options) {
+    const commit = gitFact(options.plugin, ["rev-parse", "HEAD"]);
+    if (commit !== "unknown") return commit;
+    return process.env.PLACEMENT_PLUGIN_COMMIT || "unknown";
+}
+
+function pluginDirtyOf(options) {
+    const status = gitFact(options.plugin, ["status", "--porcelain"]);
+    if (status === "unknown") return process.env.PLACEMENT_PLUGIN_DIRTY === "1";
+    return status !== "";
+}
+
 /** Content hashes and versions that make a result reproducible. */
 function provenance(options) {
-    const fixtureHash = existsSync(options.fixture)
-        ? fileHash(options.fixture)
-        : "unknown";
-    const pluginParts = ["package.json", join("src", "index.ts")].filter(
-        (name) => existsSync(join(options.plugin, name)),
-    );
-    const pluginHash =
-        pluginParts.length === 0
-            ? "unknown"
-            : sha256(
-                  pluginParts
-                      .map((name) => readFileSync(join(options.plugin, name)))
-                      .join("\n"),
-              );
-    const pluginStatus = gitFact(options.plugin, ["status", "--porcelain"]);
+    const fixtureHash = fixtureHashOf(options);
     return {
         fixture: options.fixture,
         fixtureHash,
         fixtureVersion: `sha256:${fixtureHash.slice(0, 12)}`,
         plugin: options.plugin,
-        pluginHash,
-        pluginCommit: gitFact(options.plugin, ["rev-parse", "HEAD"]),
-        pluginDirty: pluginStatus !== "unknown" && pluginStatus !== "",
+        pluginHash: pluginHashOf(options),
+        pluginCommit: pluginCommitOf(options),
+        pluginDirty: pluginDirtyOf(options),
         opencode: opencodeVersion(options),
         image: process.env.PLACEMENT_IMAGE ?? "",
         imageId: process.env.PLACEMENT_IMAGE_ID ?? "",
@@ -658,10 +700,15 @@ function resultExists(resultDir) {
     );
 }
 
-/** Copy the rubric and case after the answer exists, never before the run. */
-function copyCaseEvidence(caseFixture, resultDir) {
+/**
+ * Copy the rubric and case after the answer exists, never before the run. In
+ * the per-case run container the rubric root is not mounted, so this is a
+ * no-op and the host copies them after the container exits.
+ */
+function copyCaseEvidence(options, testCase, resultDir) {
+    const sourceDir = join(options.rubrics, testCase.id);
     for (const name of ["rubric.md", "case.json"]) {
-        const source = join(caseFixture, name);
+        const source = join(sourceDir, name);
         if (existsSync(source)) cpSync(source, join(resultDir, name));
     }
 }
@@ -727,13 +774,15 @@ function runOne(testCase, options, stamp) {
     );
     // The rubric stays out of the sandbox until the answer exists. The same
     // applies to case.json, which carries the rubric's expectations.
-    copyCaseEvidence(caseFixture, resultDir);
+    copyCaseEvidence(options, testCase, resultDir);
 
     const writes = writeCount(diff);
     console.log(
         `${testCase.id}: exit ${result.status ?? "signal"}, writes ${writes} -> ${resultDir}`,
     );
-    return result.status ?? 1;
+    // The run is recorded even when the model call failed; judging gates on
+    // completion and reports an invalid run instead of a placement failure.
+    return 0;
 }
 
 function judgePrompt(resultDir) {
@@ -763,8 +812,14 @@ ${writes}`;
 
 function copyRubric(options, resultDir, caseId) {
     const target = join(resultDir, "rubric.md");
-    if (!existsSync(target))
-        cpSync(join(options.fixtures, caseId, "rubric.md"), target);
+    if (existsSync(target)) return;
+    // The rubric root is the current home; fixture-local copies keep older
+    // results judgeable after the move.
+    const source = [
+        join(options.rubrics, caseId, "rubric.md"),
+        join(options.fixtures, caseId, "rubric.md"),
+    ].find((path) => existsSync(path));
+    if (source !== undefined) cpSync(source, target);
 }
 
 function prepareJudgeRoot(resultDir, judgeModel) {
@@ -928,9 +983,15 @@ function judgeOne(testCase, options, stamp) {
         return writeInvalidVerdict(testCase.id, resultDir, invalid, answerHash);
     }
     copyRubric(options, resultDir, testCase.id);
-    const rubricHash = existsSync(join(resultDir, "rubric.md"))
-        ? fileHash(join(resultDir, "rubric.md"))
-        : "unknown";
+    if (!existsSync(join(resultDir, "rubric.md"))) {
+        return writeInvalidVerdict(
+            testCase.id,
+            resultDir,
+            "no rubric recorded",
+            answerHash,
+        );
+    }
+    const rubricHash = fileHash(join(resultDir, "rubric.md"));
     const judgeModel = options.judgeModel || options.model;
     const judgeRoot = prepareJudgeRoot(resultDir, judgeModel);
     const attempt = nextAttempt(resultDir);

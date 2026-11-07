@@ -421,15 +421,16 @@ paths and summaries only; never snapshot a real docs tree into it.
 the placement guidance (cases E01–E17, each with a claim, evidence,
 destinations, expected scope or action, acceptable rationale and tempting
 wrong answer). `tests/fixtures/placement-harness/harness.mjs` runs the cases
-behaviourally: `generate` materialises one prompt and one pristine fixture
-tree per case (defaults `~/tmp/docs-placement/` for prompts and results,
-`~/test-dir/docs-placement/` for fixtures), `run` copies a fixture into a
-stamped results directory and drives a headless `opencode run` session there,
-`judge` scores each answer against the case rubric with a second, plugin-free
-model call (`--judge-model` names a stronger judge than the workhorse), and
-`export` bundles a sweep into one `dossier.md` for deep review by an external
-model. Trials judge placement from the supplied finding: the sandbox denies
-shell, edits and reads outside the workspace, and never contains the rubric.
+behaviourally: `generate` materialises one prompt, one pristine fixture tree
+and one out-of-band rubric per case (defaults `~/tmp/docs-placement/` for
+prompts, rubrics and results, `~/test-dir/docs-placement/` for fixtures),
+`run` copies one case into a stamped results directory and drives a headless
+`opencode run` session there, `judge` scores each answer against the case
+rubric with a second, plugin-free model call (`--judge-model` names a stronger
+judge than the workhorse), and `export` bundles a sweep into one `dossier.md`
+for deep review by an external model. Trials judge placement from the supplied
+finding: the sandbox denies shell, edits and reads outside the workspace, and
+a per-case run container sees only that case's sandbox, prompt and result.
 `container-run.sh` runs the harness inside a Debian-slim trial container
 (Node LTS, current `@opencode/cli`, read-only root filesystem) so trials see
 no host filesystem at all; the harness can also run directly on the host.
