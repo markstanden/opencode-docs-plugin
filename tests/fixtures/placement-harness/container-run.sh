@@ -38,6 +38,12 @@ podman build -q \
 
 mkdir -p "$PROMPTS" "$FIXTURES" "$RESULTS"
 
+IMAGE_ID="$(podman image inspect --format '{{.Id}}' "$IMAGE" 2>/dev/null || true)"
+TIMEOUT_ENV=()
+if [ -n "${TRIAL_TIMEOUT_MS:-}" ]; then
+    TIMEOUT_ENV=(-e "TRIAL_TIMEOUT_MS=$TRIAL_TIMEOUT_MS")
+fi
+
 SUBCOMMAND="${1:-}"
 shift || true
 case "$SUBCOMMAND" in
@@ -55,6 +61,9 @@ exec podman run \
     --read-only \
     --tmpfs /tmp:rw,nosuid,size=768m \
     -e "OPENCODE_CONFIG_CONTENT=$overlay" \
+    -e "PLACEMENT_IMAGE=$IMAGE" \
+    -e "PLACEMENT_IMAGE_ID=$IMAGE_ID" \
+    "${TIMEOUT_ENV[@]}" \
     -e "XDG_CONFIG_HOME=/tmp/agent-home/.config" \
     -e "XDG_DATA_HOME=/tmp/agent-home/.local/share" \
     -e "XDG_CACHE_HOME=/tmp/agent-home/.cache" \

@@ -70,7 +70,9 @@ trials:
 
 Common flags: `--model` (trial model), `--judge-model` (judge model),
 `--stamp` (result label — name sweeps by plugin version or topic),
-`--prompts/--fixtures/--results` (output roots).
+`--prompts/--fixtures/--results` (output roots), `--allow-writes` (judge a
+run that changed files; decision-only trials must leave `writes: none`).
+`TRIAL_TIMEOUT_MS` bounds each model call (default ten minutes).
 
 ### The container
 
@@ -111,9 +113,16 @@ frontier account. Strong-model review is always a deliberate act.
 ### Trial runs and results
 
 Runs live outside the repository (per-user results roots); this section is
-the scoping record so sweeps stay comparable. Preserve every judge's
-verdict: the harness overwrites `verdict.json` on re-judge, so keep a
-`verdicts-<judge>.json` copy per judge alongside the run.
+the scoping record so sweeps stay comparable.
+
+A stamp is immutable evidence: rerunning a case into an existing stamp is
+refused, so a comparison always gets a fresh stamp. Every judge attempt is
+stored separately under `judge/attempt-NNN/` with the answer hash, rubric
+hash, judge model and timings; the top-level `verdict.json` is only a pointer
+to the latest attempt. Judging refuses an incomplete run — missing answer,
+non-zero exit, or writes in a decision-only trial — and records `invalid`
+without calling the judge model. Preserve every judge's verdict by keeping the
+attempt directories, which are never overwritten.
 
 | Stamp     | Date       | Trial model                       | Setup                                                                                                                          | Judges and result                                                                    |
 | --------- | ---------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
@@ -133,21 +142,26 @@ not changed on the strength of this sweep.
 Per case, under `results/<stamp>/<case>/`:
 
 - `final.md` — the trial model's answer; `tools.jsonl` — its tool trail
-  (counting docs-tool calls is part of scoring); `writes.txt` — files added
-  or removed (must say `none`); `prompt.md`, `rubric.md`, `case.json`,
-  `meta.json` (model, CLI version, timing), `exit-code`, `live/` (the exact
-  sandbox that ran); plus `verdict.json` once judged and a `judge/` trail.
-- Per sweep: `summary.md` and `dossier.md`.
+  (counting docs-tool calls is part of scoring); `writes.txt` — files added,
+  modified or removed, detected by content hash (must say `none` for a
+  decision-only trial); `prompt.md`, `rubric.md`, `case.json`, `meta.json`
+  (model, CLI, image, fixture and plugin hashes, args, answer hash, timing),
+  `exit-code`, `live/` (the exact sandbox that ran); plus `verdict.json` and a
+  `judge/attempt-NNN/` trail once judged.
+- Per sweep: `summary.md`, `dossier.md` and the provenance-bearing
+  `manifest.json` under the fixture root.
 
 ### Sandbox guarantees
 
 Trials judge placement from the supplied finding, so the session gets no
 shell, no edits and no reads outside the workspace (the `docs` tool serves
-the lakes itself), and the rubric is never inside the sandbox. The container
-is the physical boundary and the reason trials stay controlled; the
-permission rules are defence in depth and have proven unreliable to enforce
-in every run context, so do not rely on them — and treat host-side trial
-runs as development, never as the safety mechanism.
+the lakes itself). The rubric and case are copied into the result directory
+only after the answer is recorded, so the running session cannot find them in
+its own result tree. The container is the physical boundary and the reason
+trials stay controlled; the permission rules are defence in depth and have
+proven unreliable to enforce in every run context, so do not rely on them —
+and treat host-side trial runs as development, never as the safety
+mechanism.
 
 ### Reading results
 
