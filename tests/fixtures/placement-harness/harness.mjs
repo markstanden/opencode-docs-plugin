@@ -1,0 +1,972 @@
+#!/usr/bin/env node
+/**
+ * Behavioural trial harness for tests/fixtures/placement-cases.json.
+ *
+ * `generate` materialises the reusable harness on disk:
+ *   - one prompt per case under ~/tmp/docs-placement/prompts/
+ *   - one fixture tree per case under ~/test-dir/docs-placement/
+ *
+ * `run` copies a pristine fixture into a results directory, runs one headless
+ * OpenCode session there, and records the answer, tool calls and any writes.
+ * The trial sandbox denies shell, edits and reads outside the workspace, and
+ * never contains the rubric: trials judge placement from the supplied finding.
+ * `judge` scores each recorded answer against the case rubric with a second,
+ * plugin-free model call — `--judge-model` names a stronger judge than the
+ * workhorse. `summary` renders the results table. `export` bundles a sweep
+ * into one dossier for deep review by an external model.
+ *
+ * The repository, the user's OpenCode config and the fixture trees are never
+ * modified by a run: each session works on its own copy.
+ */
+import {
+    cpSync,
+    existsSync,
+    mkdirSync,
+    readFileSync,
+    readdirSync,
+    rmSync,
+    writeFileSync,
+} from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, relative, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const DEFAULT_FIXTURE = resolve(HERE, "..", "placement-cases.json");
+const DEFAULT_PLUGIN = resolve(HERE, "..", "..", "..");
+const HOME = homedir();
+const COMMANDS = ["generate", "run", "judge", "summary", "export", "all"];
+
+const DEFAULTS = {
+    prompts: join(HOME, "tmp", "docs-placement", "prompts"),
+    fixtures: join(HOME, "test-dir", "docs-placement"),
+    results: join(HOME, "tmp", "docs-placement", "results"),
+    model: process.env.TRIAL_MODEL || "opencode-go/deepseek-v4.1-flash",
+    judgeModel: process.env.TRIAL_JUDGE_MODEL || "",
+    opencode: process.env.OPENCODE_BIN || "opencode",
+    fixture: DEFAULT_FIXTURE,
+    plugin: DEFAULT_PLUGIN,
+};
+
+const SWITCHES = {
+    "--force": "force",
+    "--no-judge": "noJudge",
+    "--help": "help",
+    "-h": "help",
+};
+const VALUE_FLAGS = {
+    "--model": { key: "model" },
+    "--judge-model": { key: "judgeModel" },
+    "--stamp": { key: "stamp" },
+    "--opencode": { key: "opencode" },
+    "--prompts": { key: "prompts", path: true },
+    "--fixtures": { key: "fixtures", path: true },
+    "--results": { key: "results", path: true },
+    "--plugin": { key: "plugin", path: true },
+    "--fixture": { key: "fixture", path: true },
+};
+
+function stampNow() {
+    const now = new Date();
+    const pad = (value) => String(value).padStart(2, "0");
+    return (
+        `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
+        `-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+    );
+}
+
+function latestStamp(resultsRoot) {
+    if (!existsSync(resultsRoot)) return undefined;
+    return readdirSync(resultsRoot, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .sort()
+        .at(-1);
+}
+
+function usage(message) {
+    if (message) console.error(message);
+    console.error(`usage:
+  harness.mjs generate [E01 ...] [--force]
+  harness.mjs run      [E01 ...]
+  harness.mjs judge    [E01 ...]
+  harness.mjs summary  [--stamp NAME]
+  harness.mjs export   [--stamp NAME]
+  harness.mjs all
+
+common options:
+  --model provider/model   workhorse model for trials (default ${DEFAULTS.model})
+  --judge-model MODEL      model for local judging; defaults to --model. Use a
+                           stronger model here, or skip judging and run
+                           'export' to deep-scan a sweep with an external model
+  --prompts DIR            prompt output (default ${DEFAULTS.prompts})
+  --fixtures DIR           fixture root (default ${DEFAULTS.fixtures})
+  --results DIR            result root (default ${DEFAULTS.results})
+  --stamp NAME             result stamp (default: current time)
+  --opencode BIN           OpenCode binary (default ${DEFAULTS.opencode})`);
+    process.exit(2);
+}
+
+/** Apply one CLI flag; false when the argument is not a flag. */
+function applyFlag(options, arg, argv) {
+    const flag = SWITCHES[arg];
+    if (flag === "help") usage();
+    if (flag) {
+        options[flag] = true;
+        return true;
+    }
+    const spec = VALUE_FLAGS[arg];
+    if (!spec) return false;
+    if (argv.length === 0) usage(`${arg} needs a value`);
+    const raw = argv.shift();
+    options[spec.key] = spec.path ? resolve(raw) : raw;
+    return true;
+}
+
+function parseArgs(argv) {
+    const command = argv.shift();
+    const options = { ...DEFAULTS, force: false, noJudge: false, ids: [] };
+    while (argv.length > 0) {
+        const arg = argv.shift();
+        if (!applyFlag(options, arg, argv)) options.ids.push(arg);
+    }
+    if (!command || command === "help") usage();
+    if (!COMMANDS.includes(command)) usage(`unknown command ${command}`);
+    return { command, options };
+}
+
+function loadCases(fixturePath) {
+    return JSON.parse(readFileSync(fixturePath, "utf8"));
+}
+
+function select(options) {
+    const cases = loadCases(options.fixture);
+    if (options.ids.length === 0) return cases;
+    const unknown = options.ids.filter(
+        (id) => !cases.some((entry) => entry.id === id),
+    );
+    if (unknown.length > 0) usage(`unknown case(s): ${unknown.join(", ")}`);
+    return cases.filter((entry) => options.ids.includes(entry.id));
+}
+
+const write = (path, contents) => {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, contents);
+};
+
+const listFiles = (root) => {
+    const found = [];
+    const walk = (directory) => {
+        for (const entry of readdirSync(directory, { withFileTypes: true })) {
+            const path = join(directory, entry.name);
+            if (entry.isDirectory()) walk(path);
+            else if (entry.isFile()) found.push(path);
+        }
+    };
+    if (existsSync(root)) walk(root);
+    return found.sort();
+};
+
+const promptFor = (testCase) => `We have established the following finding.
+
+Finding:
+${testCase.claim}
+
+Evidence:
+${testCase.evidence}
+
+Available documentation destinations:
+${testCase.destinations
+    .map(
+        (destination) =>
+            `- ${destination.name} (\`${destination.class}\`): ${destination.description}`,
+    )
+    .join("\n")}
+
+Use your normal documentation guidance to decide how to preserve this finding. For this trial, do not change files.
+
+State:
+- Your intended action.
+- The exact destination lake, or other documentation workflow.
+- Whether this needs one document or several.
+- A brief reason.
+- Any clarification needed before proceeding.
+
+Treat the evidence descriptions as supplied facts for this synthetic trial.
+`;
+
+const rubricFor = (testCase) => `# ${testCase.id} rubric
+
+Claim: ${testCase.claim}
+
+Expected: ${testCase.expected}
+
+Accepts:
+${testCase.accepts.map((line) => `- ${line}`).join("\n")}
+
+Tempting wrong answers:
+${testCase.temptingWrong.map((line) => `- ${line}`).join("\n")}
+`;
+
+/** The sandbox permission set: no shell, no edits, no reads outside the workspace. */
+const SANDBOX_PERMISSIONS = [
+    { action: "shell", resource: "*", effect: "deny" },
+    { action: "edit", resource: "*", effect: "deny" },
+    { action: "external_directory", resource: "*", effect: "deny" },
+];
+
+/**
+ * Build one pristine case fixture. Paths in opencode.json are relative to the
+ * work directory, so the whole fixture tree stays relocatable.
+ */
+function generateCase(testCase, options) {
+    const caseDir = join(options.fixtures, testCase.id);
+    const promptPath = join(options.prompts, `${testCase.id}.md`);
+    const configPath = join(caseDir, "work", "opencode.json");
+
+    if (!options.force && existsSync(promptPath) && existsSync(configPath)) {
+        return "kept";
+    }
+
+    if (options.force) {
+        rmSync(caseDir, { recursive: true, force: true });
+        rmSync(promptPath, { force: true });
+    }
+
+    buildFixtureTree(testCase, caseDir);
+
+    write(promptPath, promptFor(testCase));
+    write(join(caseDir, "rubric.md"), rubricFor(testCase));
+    write(join(caseDir, "case.json"), JSON.stringify(testCase, null, 2) + "\n");
+    write(
+        configPath,
+        JSON.stringify(
+            {
+                $schema: "https://opencode.ai/config.json",
+                model: options.model,
+                plugins: [
+                    {
+                        package: options.plugin,
+                        options: { lakes: lakesFor(testCase, caseDir) },
+                    },
+                ],
+                permissions: SANDBOX_PERMISSIONS,
+            },
+            null,
+            2,
+        ) + "\n",
+    );
+    return "created";
+}
+
+/** Create the case's work and lake directories, plus its code-shaped context. */
+function buildFixtureTree(testCase, caseDir) {
+    const work = join(caseDir, "work");
+    mkdirSync(work, { recursive: true });
+    mkdirSync(join(caseDir, "lakes"), { recursive: true });
+    mkdirSync(join(caseDir, "config-home", "opencode"), { recursive: true });
+
+    for (const destination of testCase.destinations) {
+        mkdirSync(join(caseDir, "lakes", destination.name), {
+            recursive: true,
+        });
+    }
+    // E17 deliberately nests the repo lake "docs" inside the wider repo lake "outer".
+    if (testCase.id === "E17")
+        mkdirSync(join(caseDir, "lakes", "outer", "docs"), { recursive: true });
+
+    // The plugin adds an implicit writable repo lake at <location>/docs when no
+    // repo lake is configured. E13 and E16 list no repo destination, so pin a
+    // read-only placeholder: it suppresses the implicit writable lake without
+    // offering a destination the case does not list.
+    if (
+        !testCase.destinations.some(
+            (destination) => destination.class === "repo",
+        )
+    ) {
+        mkdirSync(join(work, "docs"), { recursive: true });
+    }
+
+    if (testCase.id === "E06") writeWorkFiles(work, WORK_FILES_E06);
+    if (testCase.id === "E17") writeWorkFiles(work, WORK_FILES_E17);
+    spawnSync("git", ["init", "-q", work], { stdio: "ignore" });
+}
+
+/** Lake specs for the trial config; roots are relative to the work directory. */
+function lakesFor(testCase) {
+    const listed = testCase.destinations.map((destination) => ({
+        class: destination.class,
+        // E17 nests the repo lake inside the wider outer repo lake.
+        root:
+            testCase.id === "E17" && destination.name === "docs"
+                ? "../lakes/outer/docs"
+                : `../lakes/${destination.name}`,
+        name: destination.name,
+        description: destination.description,
+    }));
+    if (
+        testCase.destinations.some(
+            (destination) => destination.class === "repo",
+        )
+    )
+        return listed;
+    return [
+        ...listed,
+        {
+            class: "repo",
+            root: "docs",
+            name: "docs",
+            writable: false,
+            description:
+                "Read-only placeholder; not a listed destination in this trial.",
+        },
+    ];
+}
+
+const WORK_FILES_E06 = {
+    "package.json":
+        JSON.stringify(
+            {
+                name: "trial-app",
+                private: true,
+                scripts: { test: "node --test", typecheck: "tsc --noEmit" },
+            },
+            null,
+            2,
+        ) + "\n",
+    "README.md": "# Trial app\n\n```sh\nnpm test\nnpm run typecheck\n```\n",
+};
+
+const WORK_FILES_E17 = {
+    "package.json":
+        JSON.stringify(
+            {
+                name: "trial-app",
+                private: true,
+                scripts: { build: "node build.mjs" },
+            },
+            null,
+            2,
+        ) + "\n",
+    "build.sh":
+        "#!/usr/bin/env bash\nset -euo pipefail\n" +
+        "# The trap this case is about: the flag must stay inside this repo's wrapper.\n" +
+        "npm run build -- --legacy-peer-deps\n",
+};
+
+function writeWorkFiles(work, files) {
+    for (const [name, contents] of Object.entries(files))
+        write(join(work, name), contents);
+}
+
+function generateAll(options) {
+    const selected = select(options);
+    const rows = selected.map((testCase) => [
+        testCase.id,
+        generateCase(testCase, options),
+    ]);
+    const manifest = {
+        generatedAt: new Date().toISOString(),
+        fixture: options.fixture,
+        plugin: options.plugin,
+        model: options.model,
+        prompts: options.prompts,
+        cases: selected.map((testCase) => ({
+            id: testCase.id,
+            prompt: join(options.prompts, `${testCase.id}.md`),
+            fixture: join(options.fixtures, testCase.id),
+            expected: testCase.expected,
+        })),
+    };
+    write(
+        join(options.fixtures, "manifest.json"),
+        JSON.stringify(manifest, null, 2) + "\n",
+    );
+    for (const [id, action] of rows) console.log(`${id}: ${action}`);
+    console.log(`prompts:  ${options.prompts}`);
+    console.log(`fixtures: ${options.fixtures}`);
+}
+
+function parseLine(line) {
+    try {
+        return JSON.parse(line);
+    } catch {
+        return undefined;
+    }
+}
+
+function toolOutput(value) {
+    return typeof value === "string" ? value.slice(0, 2000) : value;
+}
+
+function collectText(part, texts) {
+    if (part?.type === "text" && typeof part.text === "string")
+        texts.push(part.text);
+}
+
+function collectTool(part, tools) {
+    if (part?.type !== "tool") return;
+    tools.push({
+        tool: part.tool,
+        input: part.state?.input,
+        status: part.state?.status,
+        output: toolOutput(part.state?.output),
+    });
+}
+
+/** Turn `opencode run --format json` JSONL into the final text and tool trail. */
+function extract(stdout) {
+    const texts = [];
+    const tools = [];
+    for (const line of stdout.split("\n").filter(Boolean)) {
+        const event = parseLine(line);
+        if (!event) continue;
+        const part = event.part ?? event;
+        collectText(part, texts);
+        collectTool(part, tools);
+    }
+    return {
+        text: texts.join("\n").trim() + "\n",
+        tools:
+            tools.map((entry) => JSON.stringify(entry)).join("\n") +
+            (tools.length > 0 ? "\n" : ""),
+    };
+}
+
+function childEnv(configHome) {
+    const env = { ...process.env };
+    for (const key of [
+        "OPENCODE_SESSION_ID",
+        "OPENCODE_TERMINAL",
+        "OPENCODE",
+        "AI_AGENT",
+    ]) {
+        delete env[key];
+    }
+    env.XDG_CONFIG_HOME = configHome;
+    return env;
+}
+
+function opencodeVersion(options) {
+    if (!options.cliVersion) {
+        const probe = spawnSync(options.opencode, ["--version"], {
+            encoding: "utf8",
+        });
+        options.cliVersion = (probe.stdout ?? "").trim() || "unknown";
+    }
+    return options.cliVersion;
+}
+
+function opencodeCall({ cwd, env, model, title, prompt, opencode }) {
+    return spawnSync(
+        opencode,
+        [
+            "run",
+            "--standalone",
+            "--auto",
+            "--archived",
+            "--title",
+            title,
+            "--model",
+            model,
+            "--format",
+            "json",
+            prompt,
+        ],
+        { cwd, env, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+    );
+}
+
+/** Copy only the sandbox surfaces; rubric.md and case.json stay out of reach. */
+function copySandbox(caseFixture, live) {
+    for (const surface of ["work", "lakes", "config-home"]) {
+        cpSync(join(caseFixture, surface), join(live, surface), {
+            recursive: true,
+        });
+    }
+}
+
+function snapshotLive(live) {
+    const work = join(live, "work");
+    const lakes = join(live, "lakes");
+    return [
+        ...listFiles(work).map((path) => `work/${relative(work, path)}`),
+        ...listFiles(lakes).map((path) => `lakes/${relative(lakes, path)}`),
+    ].sort();
+}
+
+function snapshotDiff(before, after) {
+    return {
+        added: after.filter((path) => !before.includes(path)),
+        removed: before.filter((path) => !after.includes(path)),
+    };
+}
+
+function writesReport(diff) {
+    const lines = [
+        ...diff.added.map((path) => `added: ${path}`),
+        ...diff.removed.map((path) => `removed: ${path}`),
+    ];
+    return lines.length > 0 ? lines.join("\n") + "\n" : "none\n";
+}
+
+function metaFor(
+    testCase,
+    options,
+    promptPath,
+    caseFixture,
+    startedAt,
+    result,
+    diff,
+) {
+    return (
+        JSON.stringify(
+            {
+                case: testCase.id,
+                model: options.model,
+                opencode: opencodeVersion(options),
+                plugin: options.plugin,
+                prompt: promptPath,
+                fixture: caseFixture,
+                startedAt,
+                finishedAt: new Date().toISOString(),
+                exit: result.status,
+                writes: diff.added.length + diff.removed.length,
+            },
+            null,
+            2,
+        ) + "\n"
+    );
+}
+
+function runOne(testCase, options, stamp) {
+    const promptPath = join(options.prompts, `${testCase.id}.md`);
+    if (!existsSync(promptPath)) generateCase(testCase, options);
+
+    const caseFixture = join(options.fixtures, testCase.id);
+    const resultDir = join(options.results, stamp, testCase.id);
+    const live = join(resultDir, "live");
+    rmSync(live, { recursive: true, force: true });
+    copySandbox(caseFixture, live);
+    cpSync(promptPath, join(resultDir, "prompt.md"));
+    cpSync(join(caseFixture, "rubric.md"), join(resultDir, "rubric.md"));
+    cpSync(join(caseFixture, "case.json"), join(resultDir, "case.json"));
+
+    const before = snapshotLive(live);
+    const startedAt = new Date().toISOString();
+    const result = opencodeCall({
+        cwd: join(live, "work"),
+        env: childEnv(join(live, "config-home")),
+        model: options.model,
+        title: `placement-${testCase.id}`,
+        prompt: readFileSync(promptPath, "utf8"),
+        opencode: options.opencode,
+    });
+    const diff = snapshotDiff(before, snapshotLive(live));
+
+    write(join(resultDir, "stdout.jsonl"), result.stdout ?? "");
+    write(join(resultDir, "stderr.log"), result.stderr ?? "");
+    write(
+        join(resultDir, "exit-code"),
+        `${result.status ?? `signal:${result.signal}`}\n`,
+    );
+    write(join(resultDir, "writes.txt"), writesReport(diff));
+    const { text, tools } = extract(result.stdout ?? "");
+    write(join(resultDir, "final.md"), text);
+    write(join(resultDir, "tools.jsonl"), tools);
+    write(
+        join(resultDir, "meta.json"),
+        metaFor(
+            testCase,
+            options,
+            promptPath,
+            caseFixture,
+            startedAt,
+            result,
+            diff,
+        ),
+    );
+
+    const writes = diff.added.length + diff.removed.length;
+    console.log(
+        `${testCase.id}: exit ${result.status ?? "signal"}, writes ${writes} -> ${resultDir}`,
+    );
+    return result.status ?? 1;
+}
+
+function judgePrompt(resultDir) {
+    const rubric = readFileSync(join(resultDir, "rubric.md"), "utf8");
+    const answer = existsSync(join(resultDir, "final.md"))
+        ? readFileSync(join(resultDir, "final.md"), "utf8")
+        : "(no answer recorded)";
+    const writes = existsSync(join(resultDir, "writes.txt"))
+        ? readFileSync(join(resultDir, "writes.txt"), "utf8")
+        : "(unknown)";
+    return `Score one placement-guidance trial against its rubric. Judge only the stated intended action; a trial is not required to write a file.
+
+Return ONE JSON object and nothing else:
+{"verdict":"pass"|"fail","destination":"...","documents":"one"|"several"|"none","clarification":"yes"|"no","reason":"..."}
+
+A pass means the destination or workflow matches Expected and Accepts, and does not rely on a tempting wrong answer. For Expected "clarify", a pass must ask a focused question rather than guessing a destination.
+
+Rubric:
+${rubric}
+
+Trial answer:
+${answer}
+
+Files changed during the trial:
+${writes}`;
+}
+
+function copyRubric(options, resultDir, caseId) {
+    const target = join(resultDir, "rubric.md");
+    if (!existsSync(target))
+        cpSync(join(options.fixtures, caseId, "rubric.md"), target);
+}
+
+function prepareJudgeRoot(resultDir, judgeModel) {
+    const judgeRoot = join(resultDir, "judge");
+    mkdirSync(join(judgeRoot, "work"), { recursive: true });
+    mkdirSync(join(judgeRoot, "config-home", "opencode"), { recursive: true });
+    write(
+        join(judgeRoot, "config-home", "opencode", "opencode.json"),
+        JSON.stringify(
+            { $schema: "https://opencode.ai/config.json", model: judgeModel },
+            null,
+            2,
+        ) + "\n",
+    );
+    return judgeRoot;
+}
+
+/** Pull the one JSON verdict object out of the judge's prose, if any. */
+function parseVerdict(text) {
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    if (start === -1 || end <= start) return undefined;
+    try {
+        return JSON.parse(text.slice(start, end + 1));
+    } catch {
+        return undefined;
+    }
+}
+
+function verdictArtefact(verdict, text, judgeModel) {
+    return {
+        ...(verdict ?? { verdict: "unparsed", raw: text.trim() }),
+        judgeModel,
+    };
+}
+
+function verdictLabel(verdict) {
+    const parsed = verdict ?? {};
+    const destination = parsed.destination ?? "";
+    return `${parsed.verdict ?? "unparsed"}${destination ? ` -> ${destination}` : ""}`;
+}
+
+function recordVerdict(caseId, resultDir, result, judgeModel) {
+    write(join(resultDir, "judge", "stdout.jsonl"), result.stdout ?? "");
+    write(join(resultDir, "judge", "stderr.log"), result.stderr ?? "");
+    const { text } = extract(result.stdout ?? "");
+    write(join(resultDir, "judge", "raw.md"), text);
+
+    const verdict = parseVerdict(text);
+    write(
+        join(resultDir, "verdict.json"),
+        JSON.stringify(verdictArtefact(verdict, text, judgeModel), null, 2) +
+            "\n",
+    );
+    console.log(`${caseId}: ${verdictLabel(verdict)}`);
+    return verdict?.verdict === "pass" ? 0 : 1;
+}
+
+function judgeOne(testCase, options, stamp) {
+    const resultDir = join(options.results, stamp, testCase.id);
+    if (!existsSync(join(resultDir, "final.md"))) {
+        console.log(`${testCase.id}: no run recorded, skipping judge`);
+        return 1;
+    }
+    copyRubric(options, resultDir, testCase.id);
+    const judgeModel = options.judgeModel || options.model;
+    const judgeRoot = prepareJudgeRoot(resultDir, judgeModel);
+    const result = opencodeCall({
+        cwd: join(judgeRoot, "work"),
+        env: childEnv(join(judgeRoot, "config-home")),
+        model: judgeModel,
+        title: `placement-judge-${testCase.id}`,
+        prompt: judgePrompt(resultDir),
+        opencode: options.opencode,
+    });
+    return recordVerdict(testCase.id, resultDir, result, judgeModel);
+}
+
+function readJson(path) {
+    if (!existsSync(path)) return undefined;
+    try {
+        return JSON.parse(readFileSync(path, "utf8"));
+    } catch {
+        return undefined;
+    }
+}
+
+function docsCallCount(resultDir) {
+    const path = join(resultDir, "tools.jsonl");
+    if (!existsSync(path)) return null;
+    return readFileSync(path, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map(parseLine)
+        .filter((entry) => entry?.tool === "docs").length;
+}
+
+function summaryRow(testCase, resultDir) {
+    const verdict = readJson(join(resultDir, "verdict.json"));
+    const report = existsSync(join(resultDir, "writes.txt"))
+        ? readFileSync(join(resultDir, "writes.txt"), "utf8").trim()
+        : "";
+    const count = docsCallCount(resultDir);
+    return {
+        id: testCase.id,
+        expected: testCase.expected,
+        verdict:
+            verdict?.verdict ??
+            (existsSync(resultDir) ? "unjudged" : "not run"),
+        destination: verdict?.destination ?? "",
+        writes:
+            report === ""
+                ? "-"
+                : report === "none"
+                  ? "none"
+                  : `${report.split("\n").filter(Boolean).length} file(s)`,
+        docsCalls: count === null ? "-" : String(count),
+    };
+}
+
+function renderSummary(options, stamp) {
+    const stampDir = join(options.results, stamp);
+    const rows = loadCases(options.fixture).map((testCase) =>
+        summaryRow(testCase, join(stampDir, testCase.id)),
+    );
+    const lines = [
+        `# Placement trial ${stamp}`,
+        "",
+        `Model: ${options.model}`,
+        `Judge: ${options.judgeModel || options.model}`,
+        `Results: ${stampDir}`,
+        "",
+        "| Case | Expected | Verdict | Destination | Writes | Docs calls |",
+        "| ---- | -------- | ------- | ----------- | ------ | ---------- |",
+        ...rows.map(
+            (row) =>
+                `| ${row.id} | ${row.expected} | ${row.verdict} | ${row.destination || "-"} | ${row.writes} | ${row.docsCalls} |`,
+        ),
+        "",
+        `Passed: ${rows.filter((row) => row.verdict === "pass").length}/${rows.length}`,
+        "",
+    ];
+    const text = lines.join("\n");
+    write(join(stampDir, "summary.md"), text);
+    process.stdout.write(text);
+}
+
+/** Read a result artefact for the dossier; absent files get a visible marker. */
+function readArtifact(resultDir, name) {
+    const path = join(resultDir, name);
+    return existsSync(path) ? readFileSync(path, "utf8").trim() : "(absent)";
+}
+
+/** One tool-trail line for the dossier, with the output trimmed for scanning. */
+function trailLine(entry) {
+    const input = JSON.stringify(entry.input ?? {});
+    const output =
+        typeof entry.output === "string"
+            ? entry.output.slice(0, 160)
+            : entry.output;
+    return `- **${entry.tool}** input \`${input}\`${output ? ` -> \`${JSON.stringify(output)}\`` : ""}`;
+}
+
+function trailFor(resultDir) {
+    const path = join(resultDir, "tools.jsonl");
+    if (!existsSync(path)) return [];
+    const entries = readFileSync(path, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map(parseLine)
+        .filter(Boolean)
+        .map(trailLine);
+    return entries.length > 15
+        ? [
+              ...entries.slice(0, 15),
+              `(${entries.length - 15} more calls elided)`,
+          ]
+        : entries;
+}
+
+function verdictFor(resultDir) {
+    const verdict = readJson(join(resultDir, "verdict.json"));
+    if (!verdict) return "not judged locally";
+    const destination = verdict.destination
+        ? ` — destination: ${verdict.destination}`
+        : "";
+    const reason = verdict.reason ? ` — ${verdict.reason}` : "";
+    return `${verdict.verdict}${destination}${reason} (judge model: ${verdict.judgeModel ?? "unknown"})`;
+}
+
+/** The dossier section for one case: rubric, prompt, answer, trail, verdict. */
+function caseSection(testCase, resultDir) {
+    const trail = trailFor(resultDir);
+    const meta = readJson(join(resultDir, "meta.json")) ?? {};
+    return [
+        "---",
+        "",
+        `## ${testCase.id} — Expected: ${testCase.expected}`,
+        "",
+        "### Rubric",
+        "",
+        "````",
+        readArtifact(resultDir, "rubric.md"),
+        "````",
+        "",
+        "### Prompt given to the trial model",
+        "",
+        "````",
+        readArtifact(resultDir, "prompt.md"),
+        "````",
+        "",
+        "### Trial answer",
+        "",
+        "````",
+        readArtifact(resultDir, "final.md"),
+        "````",
+        "",
+        `### Tool trail (${trail.length} entr${trail.length === 1 ? "y" : "ies"})`,
+        "",
+        ...(trail.length > 0 ? trail : ["(no tool calls)"]),
+        "",
+        "### Files changed",
+        "",
+        "````",
+        readArtifact(resultDir, "writes.txt"),
+        "````",
+        "",
+        "### Local judge",
+        "",
+        verdictFor(resultDir),
+        "",
+        `Run meta: exit ${meta.exit ?? "?"}, ${meta.writes ?? "?"} write(s), started ${meta.startedAt ?? "?"}.`,
+        "",
+    ];
+}
+
+function dossierHeader(options, stamp) {
+    return [
+        `# Placement-trial dossier ${stamp}`,
+        "",
+        `- Generated: ${new Date().toISOString()}`,
+        `- Trial model: ${options.model}`,
+        `- Harness: opencode-docs-plugin tests/fixtures/placement-harness`,
+        "- Sandbox: shell, file edits and reads outside the workspace were denied;" +
+            " the rubric was not present in the sandbox. Trials state an intended" +
+            " action; they are not required to write.",
+        "",
+        "You are an expert reviewer scoring a behavioural trial of",
+        "documentation-placement guidance. For each case, read the rubric, the",
+        "prompt, the trial's answer and its tool trail. Decide pass or fail",
+        "against Expected and Accepts, flag any tempting wrong answer it fell",
+        "for, and note whether the docs tool was used appropriately. Finish",
+        "with a markdown summary table (Case | Verdict | Destination | Notes).",
+        "",
+    ];
+}
+
+/**
+ * Bundle one stamp into a single Markdown dossier for deep review by a
+ * stronger model (a local big-brother judge, or an external frontier model).
+ */
+function exportDossier(options, stamp) {
+    const stampDir = join(options.results, stamp);
+    if (!existsSync(stampDir)) usage(`no results at ${stampDir}`);
+    const parts = dossierHeader(options, stamp);
+    let cases = 0;
+    for (const testCase of loadCases(options.fixture)) {
+        const resultDir = join(stampDir, testCase.id);
+        if (!existsSync(join(resultDir, "final.md"))) continue;
+        cases += 1;
+        parts.push(...caseSection(testCase, resultDir));
+    }
+    const dossier = parts.join("\n") + "\n";
+    const outPath = join(stampDir, "dossier.md");
+    write(outPath, dossier);
+    console.log(
+        `dossier: ${outPath} (${cases} cases, ${dossier.length} bytes)`,
+    );
+    return 0;
+}
+
+function runSelected(options, stamp, selected) {
+    generateAll(options);
+    return selected.reduce(
+        (worst, testCase) => Math.max(worst, runOne(testCase, options, stamp)),
+        0,
+    );
+}
+
+function judgeSelected(options, stamp, selected) {
+    return selected.reduce(
+        (worst, testCase) =>
+            Math.max(worst, judgeOne(testCase, options, stamp)),
+        0,
+    );
+}
+
+function latestStampOrUsage(options) {
+    const stamp = options.stamp || latestStamp(options.results);
+    if (!stamp) usage(`no result stamps under ${options.results}`);
+    return stamp;
+}
+
+/** What a sweep-style command should do, derived once. */
+function planFor(command, noJudge) {
+    return {
+        runs: command === "run" || command === "all",
+        judges: command === "judge" || (command === "all" && !noJudge),
+        reports: command === "judge" || command === "all",
+    };
+}
+
+function executeAndReport(options, plan, stamp, selected) {
+    let worst = 0;
+    if (plan.runs) worst = runSelected(options, stamp, selected);
+    if (plan.judges)
+        worst = Math.max(worst, judgeSelected(options, stamp, selected));
+    if (plan.reports) {
+        renderSummary(options, stamp);
+        exportDossier(options, stamp);
+    }
+    return worst;
+}
+
+function main() {
+    const { command, options } = parseArgs(process.argv.slice(2));
+    if (command === "generate") {
+        generateAll(options);
+        return 0;
+    }
+    if (command === "summary") {
+        renderSummary(options, latestStampOrUsage(options));
+        return 0;
+    }
+    if (command === "export") {
+        return exportDossier(options, latestStampOrUsage(options));
+    }
+    return executeAndReport(
+        options,
+        planFor(command, options.noJudge),
+        options.stamp || stampNow(),
+        select(options),
+    );
+}
+
+process.exit(main());
