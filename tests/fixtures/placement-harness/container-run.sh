@@ -121,14 +121,14 @@ prepare_case_fixture() {
     done
 }
 
-# A redacted case list gives the run harness ids and expected scopes without
-# exposing the claims, evidence or rubric text.
+# An id-only case list gives the run harness the selection without exposing
+# claims, evidence, rubric text or the expected answers.
 prepare_cases_run() {
     mkdir -p "$(dirname "$CASES_RUN")"
     node -e '
         const fs = require("node:fs");
         const cases = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-        const redacted = cases.map(({ id, expected }) => ({ id, expected }));
+        const redacted = cases.map(({ id }) => ({ id }));
         fs.writeFileSync(process.argv[2], JSON.stringify(redacted, null, 2) + "\n");
     ' "$CASES" "$CASES_RUN"
 }
