@@ -147,7 +147,8 @@
         ],
         "expected": "Instructions",
         "accepts": [
-            "Operational steps belong beside the code (README workflow); do not write a knowledge doc just to bypass README restrictions."
+            "Operational steps belong beside the code (README workflow); do not write a knowledge doc just to bypass README restrictions.",
+            "The stated destination must agree with the operative action: a README/CONTRIBUTING section is not a repo-lake knowledge doc."
         ],
         "temptingWrong": [
             "A knowledge doc in the repo lake duplicating npm test.",
@@ -215,13 +216,13 @@
                 "description": "This repository's decisions and deltas."
             }
         ],
-        "expected": "linked: Organisation + Repository",
+        "expected": "Repository (link to existing Organisation policy)",
         "accepts": [
-            "Two linked docs: the rule at organisation scope, the delta in the repo, neither duplicating the other."
+            "One new repo exception doc that links the existing organisation policy page; reuse the existing rule, never restate it or require a second organisation doc."
         ],
         "temptingWrong": [
             "One repo doc restating the whole rule plus its exception.",
-            "One organisation doc listing every repo exception."
+            "Creating a second organisation doc, or an organisation exceptions list, instead of linking to the existing policy."
         ]
     },
     {
