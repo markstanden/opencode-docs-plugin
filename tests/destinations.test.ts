@@ -946,11 +946,13 @@ describe("placement evaluation fixture", () => {
         "Instructions",
         "Wiki",
         "Repository (link to existing Organisation policy)",
+        "Personal (workstation lake)",
+        "Personal (household lake)",
         "clarify",
     ]);
 
     it("carries every case with claim, destinations, expectation and trap", () => {
-        assert.ok(Array.isArray(placementCases) && placementCases.length >= 16);
+        assert.ok(Array.isArray(placementCases) && placementCases.length >= 18);
         const ids = new Set<string>();
         for (const testCase of placementCases) {
             assert.ok(testCase.id, "every case names an id");
@@ -985,7 +987,7 @@ describe("placement evaluation fixture", () => {
                 `${testCase.id} names the tempting wrong answer`,
             );
         }
-        for (const id of ["E01", "E02", "E07", "E11", "E14", "E16"]) {
+        for (const id of ["E01", "E02", "E07", "E11", "E14", "E16", "E18"]) {
             assert.ok(ids.has(id), `the fixture lacks required case ${id}`);
         }
     });

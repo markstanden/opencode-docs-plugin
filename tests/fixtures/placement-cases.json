@@ -247,8 +247,8 @@
     },
     {
         "id": "E11",
-        "claim": "Workstation window-manager setup versus the household's device inventory.",
-        "evidence": "Both live in the personal lake today, described in its configuration.",
+        "claim": "This workstation's window-manager setup broke after its last update; the fixed autostart line and why it changed are now pinned down.",
+        "evidence": "The workstation's window-manager configuration and the change that restored startup.",
         "destinations": [
             {
                 "name": "workstation",
@@ -261,12 +261,13 @@
                 "description": "Household devices, warranties and network."
             }
         ],
-        "expected": "Personal",
+        "expected": "Personal (workstation lake)",
         "accepts": [
-            "Both are personal; choose the destination by the configured descriptions, not the class alone."
+            "Two machine-class lakes are listed and the configured descriptions select between them: a pass names the workstation lake, whose description matches the finding's scope."
         ],
         "temptingWrong": [
-            "Either lake, chosen at random because both are 'machine' class."
+            "The household lake because both destinations are 'machine' class, so the class alone is treated as the decision.",
+            "Refusing to choose between the two personal lakes when the descriptions already distinguish them."
         ]
     },
     {
@@ -381,9 +382,11 @@
         ],
         "expected": "clarify",
         "accepts": [
-            "Keep one unresolved proposal and ask a focused question; do not invent policy, do not split one uncertain claim into two docs."
+            "Keep one unresolved proposal, leave the destination explicitly deferred (no lake named) and ask a focused question; do not invent policy, do not split one uncertain claim into two docs.",
+            "Naming a destination passes only with an independent ownership justification for that place; a provisional pick of a listed lake while ownership is unresolved is a guess and fails."
         ],
         "temptingWrong": [
+            "Naming a provisional destination lake (doclake or global) while ownership is unresolved.",
             "Writing both a personal and an organisation doc 'to cover it'.",
             "Guessing organisation scope because shared would be more useful."
         ]
@@ -417,6 +420,31 @@
             "Writing into the enclosing outer tree because the claim physically sits there",
             "Selecting the unrelated personal lake for convenience",
             "Guessing the deepest lake without reading its description"
+        ]
+    },
+    {
+        "id": "E18",
+        "claim": "The household's washing machine is still under an extended warranty that expires in March; the policy reference and expiry are recorded on the receipt.",
+        "evidence": "The warranty receipt and the manufacturer's registration confirmation.",
+        "destinations": [
+            {
+                "name": "workstation",
+                "class": "machine",
+                "description": "This workstation's desktop setup and tooling."
+            },
+            {
+                "name": "household",
+                "class": "machine",
+                "description": "Household devices, warranties and network."
+            }
+        ],
+        "expected": "Personal (household lake)",
+        "accepts": [
+            "Two machine-class lakes are listed and the configured descriptions select between them: a pass names the household lake, whose description matches the finding's scope."
+        ],
+        "temptingWrong": [
+            "The workstation lake because both destinations are 'machine' class, so the class alone is treated as the decision.",
+            "Refusing to choose between the two personal lakes when the descriptions already distinguish them."
         ]
     }
 ]

@@ -8,8 +8,10 @@
  *
  * `run` copies a pristine fixture into a results directory, runs one headless
  * OpenCode session there, and records the answer, tool calls and any writes.
- * The trial sandbox denies shell, edits and reads outside the workspace, and
- * never contains the rubric: trials judge placement from the supplied finding.
+ * The container mount is the enforced boundary; permission rules requesting
+ * no shell, edits or reads outside the workspace are defence in depth. The
+ * sandbox never contains the rubric: trials judge placement from the supplied
+ * finding.
  * `judge` scores each recorded answer against the case rubric with a second,
  * plugin-free model call — `--judge-model` names a stronger judge than the
  * workhorse. `summary` renders the results table. `export` bundles a sweep
@@ -237,7 +239,11 @@ Tempting wrong answers:
 ${testCase.temptingWrong.map((line) => `- ${line}`).join("\n")}
 `;
 
-/** The sandbox permission set: no shell, no edits, no reads outside the workspace. */
+/**
+ * The requested sandbox permission set. Trails have shown these denials are
+ * not reliably enforced in every run context, so the container mount stays
+ * the real boundary.
+ */
 const SANDBOX_PERMISSIONS = [
     { action: "shell", resource: "*", effect: "deny" },
     { action: "edit", resource: "*", effect: "deny" },
@@ -798,7 +804,7 @@ function judgePrompt(resultDir) {
 Return ONE JSON object and nothing else:
 {"verdict":"pass"|"fail","destination":"...","documents":"one"|"several"|"none","clarification":"yes"|"no","reason":"..."}
 
-A pass means the destination or workflow matches Expected and Accepts, and does not rely on a tempting wrong answer. For Expected "clarify", a pass must ask a focused question rather than guessing a destination.
+A pass means the destination or workflow matches Expected and Accepts, and does not rely on a tempting wrong answer. For Expected "clarify", a pass must ask a focused question and leave the destination explicitly deferred: naming a destination lake while ownership is unresolved is a guess and fails, unless the Accepts explicitly permit naming it (for example, with an independent ownership justification).
 
 Rubric:
 ${rubric}
@@ -1038,12 +1044,50 @@ function docsCallCount(resultDir) {
         .filter((entry) => entry?.tool === "docs").length;
 }
 
+/**
+ * What a tool call's input exposes beyond the prompt, most specific first.
+ * Ordered so overlapping paths stay labelled: a rubric read is never mistaken
+ * for the redacted case list.
+ */
+const EXPOSURE_RULES = [
+    ["rubric-case", /rubric\.md|case\.json|\/rubrics\//i],
+    ["repo cases", /\/repo\/tests\/|placement-cases\.json/i],
+    ["case list", /\/fixtures\/cases\.json/i],
+    ["guidance", /CONVENTION\.md|AGENTS\.md|SKILL\.md|\/\.opencode\//i],
+];
+
+/** Exposure labels for one case's tool trail, or [] when the trail is clean. */
+function exposureFor(resultDir) {
+    const path = join(resultDir, "tools.jsonl");
+    if (!existsSync(path)) return [];
+    const found = new Set();
+    for (const line of readFileSync(path, "utf8").split("\n").filter(Boolean)) {
+        const entry = parseLine(line);
+        if (!entry) continue;
+        const input = JSON.stringify(entry.input ?? "");
+        for (const [label, pattern] of EXPOSURE_RULES) {
+            if (pattern.test(input)) found.add(label);
+        }
+    }
+    return [...found];
+}
+
+/** The Writes column value for one run's writes.txt content. */
+function writesLabel(report) {
+    return report === ""
+        ? "-"
+        : report === "none"
+          ? "none"
+          : `${report.split("\n").filter(Boolean).length} file(s)`;
+}
+
 function summaryRow(testCase, resultDir) {
     const verdict = readJson(join(resultDir, "verdict.json"));
     const report = existsSync(join(resultDir, "writes.txt"))
         ? readFileSync(join(resultDir, "writes.txt"), "utf8").trim()
         : "";
     const count = docsCallCount(resultDir);
+    const exposure = exposureFor(resultDir);
     return {
         id: testCase.id,
         expected: testCase.expected,
@@ -1051,13 +1095,9 @@ function summaryRow(testCase, resultDir) {
             verdict?.verdict ??
             (existsSync(resultDir) ? "unjudged" : "not run"),
         destination: verdict?.destination ?? "",
-        writes:
-            report === ""
-                ? "-"
-                : report === "none"
-                  ? "none"
-                  : `${report.split("\n").filter(Boolean).length} file(s)`,
+        writes: writesLabel(report),
         docsCalls: count === null ? "-" : String(count),
+        exposure: exposure.length > 0 ? exposure.join(" + ") : "none",
     };
 }
 
@@ -1073,15 +1113,16 @@ function renderSummary(options, stamp) {
         `Judge: ${options.judgeModel || options.model}`,
         `Results: ${stampDir}`,
         "",
-        "| Case | Expected | Verdict | Destination | Writes | Docs calls |",
-        "| ---- | -------- | ------- | ----------- | ------ | ---------- |",
+        "| Case | Expected | Verdict | Destination | Writes | Docs calls | Exposure |",
+        "| ---- | -------- | ------- | ----------- | ------ | ---------- | -------- |",
         ...rows.map(
             (row) =>
-                `| ${row.id} | ${row.expected} | ${row.verdict} | ${row.destination || "-"} | ${row.writes} | ${row.docsCalls} |`,
+                `| ${row.id} | ${row.expected} | ${row.verdict} | ${row.destination || "-"} | ${row.writes} | ${row.docsCalls} | ${row.exposure} |`,
         ),
         "",
         `Passed: ${rows.filter((row) => row.verdict === "pass").length}/${rows.length}`,
         `Invalid: ${rows.filter((row) => row.verdict === "invalid").length}`,
+        `Exposed: ${rows.filter((row) => row.exposure !== "none").length}/${rows.length}`,
         "",
     ];
     const text = lines.join("\n");
@@ -1164,6 +1205,10 @@ function caseSection(testCase, resultDir) {
         "",
         ...(trail.length > 0 ? trail : ["(no tool calls)"]),
         "",
+        `Exposure: ${
+            exposureFor(resultDir).join(" + ") || "none"
+        } (classified from the tool trail; guidance exposure is expected)`,
+        "",
         "### Files changed",
         "",
         "````",
@@ -1194,9 +1239,14 @@ function dossierHeader(options, stamp) {
         `- Image: ${provenanceInfo.image || "unknown"}${provenanceInfo.imageId ? ` (${provenanceInfo.imageId})` : ""}`,
         `- Timeout: ${options.timeoutMs} ms per model call`,
         `- Harness: opencode-docs-plugin tests/fixtures/placement-harness`,
-        "- Sandbox: shell, file edits and reads outside the workspace were denied;" +
-            " the rubric was not present in the sandbox. Trials state an intended" +
-            " action; they are not required to write.",
+        "- Boundary: each trial ran in its own container, whose mounts held" +
+            " only that case's sandbox, its prompt, an id-only case list and" +
+            " the result directory, plus a curated plugin package; the rubric" +
+            " reached the result only after the container exited. Permission" +
+            " rules requesting no shell, edits or reads outside the workspace" +
+            " are defence in depth, not guarantees — read each case's tool" +
+            " trail and Exposure line. Trials state an intended action; they" +
+            " are not required to write.",
         "",
         "You are an expert reviewer scoring a behavioural trial of",
         "documentation-placement guidance. For each case, read the rubric, the",
