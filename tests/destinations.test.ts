@@ -902,7 +902,7 @@ describe("placement evaluation fixture", () => {
         "Organisation",
         "Instructions",
         "Wiki",
-        "linked: Organisation + Repository",
+        "Repository (link to existing Organisation policy)",
         "clarify",
     ]);
 
