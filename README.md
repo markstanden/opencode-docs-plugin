@@ -433,10 +433,16 @@ shell, edits and reads outside the workspace, and never contains the rubric.
 `container-run.sh` runs the harness inside a Debian-slim trial container
 (Node LTS, current `@opencode/cli`, read-only root filesystem) so trials see
 no host filesystem at all; the harness can also run directly on the host.
-Runs modify neither the repository nor the fixture trees. No behavioural
-trials have been recorded with the current wording; a fixture that merely
-asserts expected answers in Node is not evidence a model follows the
-guidance. In this repository, `/placement` (workflow in
+Runs modify neither the repository nor the fixture trees. The first
+behavioural sweep is recorded: sweep-1 (2026-11-07, plugin 0.12.0 at main
+`f5a5882`), decision-only prompts with the `docs` skill in session, workhorse
+`opencode-go/deepseek-v4.1-flash` in the trial container — 14/17 under the
+workhorse judge, 17/17 under `zai-coding-plan/glm-5.3-flash`, with the three
+disagreements resolved by manual review in favour of rewording the fixture
+and rubric (E09, E06) rather than the guidance; see [TESTING.md](TESTING.md).
+The principle stands: a fixture that merely asserts expected answers in Node
+is not evidence a model follows the guidance. In this repository,
+`/placement` (workflow in
 `.opencode/skills/placement-trials/`) drives the harness: trials run on the
 workhorse model, judging defaults to the current session model, and `export`
 bundles a sweep for a stronger external reviewer.

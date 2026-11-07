@@ -108,6 +108,26 @@ models; a paid model enters only when someone names it explicitly
 (`--judge-model <paid>`) or takes the exported `dossier.md` to an external
 frontier account. Strong-model review is always a deliberate act.
 
+### Trial runs and results
+
+Runs live outside the repository (per-user results roots); this section is
+the scoping record so sweeps stay comparable. Preserve every judge's
+verdict: the harness overwrites `verdict.json` on re-judge, so keep a
+`verdicts-<judge>.json` copy per judge alongside the run.
+
+| Stamp     | Date       | Trial model                       | Setup                                                                                                                          | Judges and result                                                                    |
+| --------- | ---------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `sweep-1` | 2026-11-07 | `opencode-go/deepseek-v4.1-flash` | decision-only prompts; `docs` skill present in the sessions; zero docs-tool calls; zero writes; plugin 0.12.0 (main `f5a5882`) | workhorse judge 14/17; `zai-coding-plan/glm-5.3-flash` (host, current session) 17/17 |
+
+sweep-1 notes: the three workhorse-judge failures (E06, E09, E16) are all
+judge-disagreement cases resolved by manual review of the raw answers —
+E09 is a fixture defect (reusing an existing organisation policy page is
+correct, so the expected "linked: Organisation + Repository" overstates the
+requirement), E06 exposes a rubric gap (the stated destination and the
+operative action must agree), and E16 is genuinely borderline (focused
+questions were asked, but a destination was still named). Guidance prose was
+not changed on the strength of this sweep.
+
 ### What a run produces
 
 Per case, under `results/<stamp>/<case>/`:
