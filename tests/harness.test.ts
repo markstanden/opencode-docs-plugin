@@ -2974,6 +2974,186 @@ test("M04: discovery distinguishes attempted from verified help in the summary",
 });
 
 /* ------------------------------------------------------------------ *
+ * C02 — a completed tool response is not necessarily a successful read
+ * ------------------------------------------------------------------ */
+
+/** A successful knowledge-doc read's content: body plus the revision token. */
+const SUCCESSFUL_READ_OUTPUT =
+    "kb/test-commands.md — Running the suite\n\n" +
+    "---\nArea: kb\nKeywords: node, test, runner, commands\n" +
+    "Summary: How this repo is tested and typechecked.\n---\n\n" +
+    "# Running the suite\n\n### Facts\n\n- npm test runs everything.\n" +
+    "\n\ndocs: revision " + "a".repeat(64) + " — these bytes; " +
+    "cite it as expectedRevision when replacing (a stale token refuses).";
+
+/** Generate once and run R01 against a given trail; returns the verdict. */
+function runR01Trails(
+    root: string,
+    fake: string,
+    paths: ReturnType<typeof layout>,
+    stamp: string,
+    trail: string,
+) {
+    const out = file(root, `trail-${stamp}.jsonl`, trail);
+    runHarness(
+        root,
+        fake,
+        ["run", "R01", "--stamp", stamp, ...commandArgs(paths)],
+        { FAKE_TRIAL_OUT: out },
+    );
+    const marker = file(root, `judge-${stamp}`, "");
+    const judge = runHarness(
+        root,
+        fake,
+        ["judge", "R01", "--stamp", stamp, ...commandArgs(paths)],
+        {
+            FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()),
+            FAKE_JUDGE_HOOK: markerHook(root, marker),
+        },
+    );
+    return {
+        judge,
+        marker,
+        verdict: readJson(join(paths.results, stamp, "R01", "verdict.json")),
+    };
+}
+
+/** One completed (but failed) docs read plus the plain answer, exit 0. */
+const R01_TRAIL = (input: Record<string, unknown>, output: string) =>
+    TOOL_JSONL("docs", "call-1", "completed", input, output) + ANSWER_JSONL();
+
+const R01_SEARCH_MENTION = TOOL_JSONL(
+    "docs",
+    "call-2",
+    "completed",
+    { search: "kb/test-commands.md" },
+    "recent docs listing",
+);
+
+test("C02: a completed read that did not find the doc is not a verified read", () => {
+    const root = newRoot("c02-notfound");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [corpusCaseById("R01")]);
+    const { judge, marker, verdict } = runR01Trails(
+        root,
+        fake,
+        paths,
+        "s1",
+        R01_TRAIL(
+            { read: "kb/test-commands.md" },
+            "No doc at kb/test-commands.md.",
+        ),
+    );
+    assert.notEqual(judge.status, 0);
+    assert.equal(verdict.verdict, "invalid");
+    assert.match(
+        verdict.reason,
+        /kb\/test-commands\.md/,
+        "the gate must name the unmet relevant path",
+    );
+    assert.match(
+        verdict.reason,
+        /no successful retrieval of kb\/test-commands\.md — (not found)/,
+    );
+    assert.equal(
+        readFileSync(marker, "utf8"),
+        "",
+        "completed execution is not retrieval success: the semantic judge must not run",
+    );
+    rmRoot(root);
+});
+
+test("C02: a completed refusal is not retrieval evidence", () => {
+    const root = newRoot("c02-refusal");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [corpusCaseById("R01")]);
+    const { judge, marker, verdict } = runR01Trails(
+        root,
+        fake,
+        paths,
+        "s1",
+        R01_TRAIL(
+            { lake: "docs", read: "kb/test-commands.md" },
+            "Rejected: no doc at kb/test-commands.md — replace never creates.",
+        ),
+    );
+    assert.notEqual(judge.status, 0);
+    assert.equal(verdict.verdict, "invalid");
+    assert.match(verdict.reason, /no successful retrieval of kb\/test-commands\.md — refusal/);
+    assert.equal(readFileSync(marker, "utf8"), "");
+    rmRoot(root);
+});
+
+test("C02: a successful unrelated read plus a separate mention of the target cannot satisfy the gate", () => {
+    const root = newRoot("c02-mention");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [corpusCaseById("R01")]);
+    const { judge, marker, verdict } = runR01Trails(
+        root,
+        fake,
+        paths,
+        "s1",
+        R01_TRAIL(
+            { read: "kb/other.md" },
+            SUCCESSFUL_READ_OUTPUT,
+        ) +
+            R01_SEARCH_MENTION +
+            ANSWER_JSONL(),
+    );
+    assert.notEqual(judge.status, 0);
+    assert.equal(verdict.verdict, "invalid");
+    assert.match(
+        verdict.reason,
+        /no completed docs operation references/,
+        "a mention anywhere else in the input is not a typed read of the target",
+    );
+    assert.equal(readFileSync(marker, "utf8"), "");
+    rmRoot(root);
+});
+
+test("C02: a completed read with no retrieval evidence in its output is inconclusive", () => {
+    const root = newRoot("c02-unverifiable");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [corpusCaseById("R01")]);
+    const { judge, marker, verdict } = runR01Trails(
+        root,
+        fake,
+        paths,
+        "s1",
+        R01_TRAIL({ read: "kb/test-commands.md" }, "prose refuting nothing"),
+    );
+    assert.notEqual(judge.status, 0);
+    assert.equal(verdict.verdict, "invalid");
+    assert.match(
+        verdict.reason,
+        /no successful retrieval of kb\/test-commands\.md — no retrieval evidence recorded/,
+        "success must come from the plugin's actual result evidence",
+    );
+    assert.equal(readFileSync(marker, "utf8"), "");
+    rmRoot(root);
+});
+
+test("C02: a genuine successful retrieval satisfies the gate and reaches the semantic judge", () => {
+    const root = newRoot("c02-successful");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [corpusCaseById("R01")]);
+    const { judge, marker, verdict } = runR01Trails(
+        root,
+        fake,
+        paths,
+        "s1",
+        R01_TRAIL(
+            { read: "kb/test-commands.md" },
+            SUCCESSFUL_READ_OUTPUT,
+        ),
+    );
+    assert.equal(judge.status, 0, judge.stderr);
+    assert.equal(verdict.verdict, "pass");
+    assert.equal(readFileSync(marker, "utf8"), "invoked\n");
+    rmRoot(root);
+});
+
+/* ------------------------------------------------------------------ *
  * M05 — recording gates verify the actual artefacts
  * ------------------------------------------------------------------ */
 

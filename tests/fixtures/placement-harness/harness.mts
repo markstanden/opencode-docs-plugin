@@ -1098,21 +1098,77 @@ function tallyDocsEntry(entry: ToolCall, tallies: DocsTallies) {
     }
 }
 
+/** The revision token a successful knowledge-doc read leaves in its output. */
+const READ_REVISION_MARK = /docs: revision [0-9a-f]{64} —/;
+
+/**
+ * Whether one completed docs operation's own result establishes success.
+ * A completed status proves execution, not a successful read — the plugin
+ * serves refusals and lake not-founds as normal tool content without
+ * failing the tool call. Reads carry the plugin's retrieval token (the
+ * revision note served with the retrieved bytes); every other verb's own
+ * recorded output content is its result evidence, so refusals, not-founds
+ * and blanks oppose success and non-blank content establishes it.
+ * (ponytail: Code Mode attempts stay unverifiable here — their nested
+ * operation never emits a trail event.)
+ */
+function docsOpSuccessful(entry: ToolCall): boolean {
+    const kind = docsEntryKind(entry);
+    if (kind === null || kind === "code-mode" || entry.status !== "completed")
+        return false;
+    const output = typeof entry.output === "string" ? entry.output : "";
+    if (
+        output.startsWith("Rejected:") ||
+        output.startsWith("No doc at ")
+    )
+        return false;
+    const verb = docsEntryVerb(kind, entry);
+    return verb === "read"
+        ? READ_REVISION_MARK.test(output)
+        : output.trim() !== "";
+}
+
+/** The evidence labels a gate message can cite for one docs entry. */
+function docsOutcomeLabel(entry: ToolCall): string {
+    if (entry.status === "error") return "failed call";
+    const output = typeof entry.output === "string" ? entry.output : "";
+    if (output.startsWith("Rejected:")) return "refusal";
+    if (output.startsWith("No doc at ")) return "not found";
+    return output.trim() !== "" &&
+        docsOpSuccessful(entry)
+        ? "successful"
+        : "no retrieval evidence recorded";
+}
+
+/**
+ * Whether a completed docs operation's TYPED verb field — not a mention
+ * elsewhere in the input — targets a path fragment: verb, relevant path
+ * and the result must refer to the same operation.
+ */
+function typedPathHit(
+    kind: "native" | "twin",
+    entry: ToolCall,
+    fragment: string,
+): boolean {
+    const input = isRecord(entry.input ?? null) ? entry.input : undefined;
+    if (input === undefined) return false;
+    const verb = docsEntryVerb(kind, entry);
+    if (verb === "read")
+        return typeof input.read === "string" && input.read.includes(fragment);
+    if (verb === "add")
+        return isRecord(input.add) && JSON.stringify(input.add).includes(fragment);
+    return false;
+}
+
 /**
  * Docs-usage telemetry for one trail. Native `docs` calls, the native-facing
  * twin registration name `docs_search`, and Code Mode `execute` calls whose
  * code attempts `tools.docs.docs_search(…)` are counted separately. Counts
- * are reported at two levels: attempted operations (any status, plus
- * Code Mode attempts by code text) and verified completions (observable
- * docs operations that actually completed). A code-mode attempt is NOT
- * proof the nested operation ran: the nested call happens inside the
- * execute runtime and emits no separate event, so it is reported as
- * attempted only and is excluded from verified counts and from every gate
- * that needs verified usage.
- * @param entries Deduplicated tool calls.
- * @param parseFailures Unparsable trail lines.
- * @returns Counts and per-verb detail (attempted and completed) for
- *   reporting and criteria.
+ * report attempted operations (any status) and observable completions; a
+ * Code Mode attempt is NOT proof the nested operation ran (no separate
+ * event), so it stays attempted-only. Gates consume per-entry
+ * {@link docsOpSuccessful} verdicts instead of treating a completed status
+ * as a successful read.
  */
 function docsTelemetry(
     entries: ToolCall[],
@@ -3475,13 +3531,15 @@ function answerInvalidReason(resultDir: string) {
  * judge time is the SAVED definition's criterion, never the current corpus
  * (M01). Two semantics, pinned by which field the definition uses:
  *
- * `minVerifiedCalls` (current): a gate on verified completions only —
- * observable docs operations (native or twin) that completed. A failed or
- * denied call, and a Code Mode attempt (whose nested operation is
- * unobservable), never satisfies a gate. Required verbs must have been
- * completed, and each `paths` fragment must be referenced by a completed
- * docs operation's input, so an unrelated read does not stand in for the
- * relevant document.
+ * `minVerifiedCalls` (current): a gate on successful operations only —
+ * observable docs operations (native or twin) whose own output proves
+ * success. A failed or denied call, a refusal, a lake not-found, and a
+ * Code Mode attempt (whose nested operation is unobservable) never satisfy
+ * a gate. Required verbs must have succeeded — a read carries the plugin's
+ * revision token, other verbs their delivered content — and each `paths`
+ * fragment must be the typed verb field's target of the SAME operation
+ * that succeeded, so an unrelated read plus a stray mention of the target
+ * cannot stand in for the relevant document.
  *
  * `minDocsCalls` (legacy): the historical attempted-operations semantics,
  * applied to saved old definitions as they were recorded — labelled
@@ -3497,20 +3555,50 @@ function docsCriterionProblem(testCase: FullTrialCase, resultDir: string) {
         : legacyDocsCriterionProblem(criterion, resultDir);
 }
 
-/** Required document references a completed docs operation must include. */
-function missingRequiredPaths(trail: ToolTrail, paths: string[]): string[] {
-    return paths.filter(
-        (path) =>
-            !trail.entries.some(
-                (entry) =>
-                    docsEntryKind(entry) !== null &&
-                    entry.status === "completed" &&
-                    JSON.stringify(entry.input ?? "").includes(path),
-            ),
-    );
+/**
+ * The documents `pathsCriterion` gates on: each required fragment must be
+ * the target of one completed docs operation's typed verb field, and that
+ * same operation's own output must establish a successful retrieval.
+ * Returns one problem line per unmet fragment, or null.
+ * @returns The per-fragment refusal lines, or null when all paths are met.
+ */
+function requiredPathProblems(
+    trail: ToolTrail,
+    verbs: string[] | undefined,
+    fragments: string[],
+): string[] | null {
+    const unmet: string[] = [];
+    for (const fragment of fragments) {
+        const relevant = trail.entries.filter((entry) => {
+            const kind = docsEntryKind(entry);
+            return (
+                (kind === "native" || kind === "twin") &&
+                entry.status === "completed" &&
+                (verbs === undefined ||
+                    verbs.includes(docsEntryVerb(kind, entry))) &&
+                typedPathHit(kind, entry, fragment)
+            );
+        });
+        if (relevant.length === 0) {
+            unmet.push(
+                `no completed docs operation references ${fragment}`,
+            );
+            continue;
+        }
+        if (relevant.some(docsOpSuccessful)) continue;
+        const labels = [
+            ...new Set(relevant.map((entry) => docsOutcomeLabel(entry))),
+        ];
+        unmet.push(
+            `no successful retrieval of ${fragment} — ` +
+                `${labels.join(", ")}; a completed tool call is not a ` +
+                "successful read",
+        );
+    }
+    return unmet.length > 0 ? unmet : null;
 }
 
-/** The `minVerifiedCalls` criterion: verified completions only. */
+/** The `minVerifiedCalls` criterion: verified completions plus evidence. */
 function verifiedDocsCriterionProblem(
     criterion: VerifiedDocsCriterion,
     resultDir: string,
@@ -3525,19 +3613,35 @@ function verifiedDocsCriterionProblem(
                   `(0 verified docs op(s), required ${required})`
             : `docs criterion unmet: ${telemetry.verifiedDocs} verified docs op(s), required ${required}`;
     }
+    // Relevance and success come from the same operation: a completed
+    // relevant read must have actually retrieved the document, and a
+    // required verb counts only when its deliverable output proves it.
+    if (criterion.paths !== undefined) {
+        const problems = requiredPathProblems(
+            trail,
+            criterion.verbs,
+            criterion.paths,
+        );
+        if (problems !== null) {
+            return `docs criterion unmet: ${problems.join("; ")}`;
+        }
+        return null;
+    }
     if (
         criterion.verbs !== undefined &&
-        !criterion.verbs.some(
-            (verb) => (telemetry.verbsCompleted[verb] ?? 0) > 0,
+        !criterion.verbs.some((verb) =>
+            trail.entries.some((entry) => {
+                const kind = docsEntryKind(entry);
+                return (
+                    kind !== null &&
+                    kind !== "code-mode" &&
+                    docsEntryVerb(kind, entry) === verb &&
+                    docsOpSuccessful(entry)
+                );
+            }),
         )
     ) {
-        return `docs criterion unmet: no completed ${criterion.verbs.join("/")} operation (attempts are counted, never verified)`;
-    }
-    if (criterion.paths !== undefined) {
-        const missing = missingRequiredPaths(trail, criterion.paths);
-        if (missing.length > 0) {
-            return `docs criterion unmet: no completed docs operation references ${missing.join(", ")}`;
-        }
+        return `docs criterion unmet: no successful ${criterion.verbs.join("/")} operation (attempts and completed-but-failed calls are never success)`;
     }
     return null;
 }
