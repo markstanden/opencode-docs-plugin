@@ -783,7 +783,10 @@ function loadCases(fixturePath: string, requireFull: boolean): TrialCase[] {
  * @param requireFull Whether claim/destinations must be present.
  * @returns The narrowed case entry, or null when the shape fails.
  */
-function validatedCorpusEntry(entry: unknown, requireFull: boolean): TrialCase | null {
+function validatedCorpusEntry(
+    entry: unknown,
+    requireFull: boolean,
+): TrialCase | null {
     if (entry === null || typeof entry !== "object") return null;
     const record = entry as Record<string, unknown>;
     const id = record.id;
