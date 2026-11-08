@@ -16,6 +16,8 @@
 #   ./container-run.sh judge               # host-side judging (provider keys)
 #   ./container-run.sh export              # dossier from the latest stamp
 # Extra flags pass through to harness.mjs (--model, --judge-model, --stamp...).
+# `--discovery` runs the discovery variant: prompts carry no destinations, so
+# the lakes are reachable only through `docs help` (measured per case).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -151,7 +153,7 @@ parse_run_args() {
             RUN_ARGS+=("$1" "$2")
             shift 2
             ;;
-        --allow-writes | --no-judge)
+        --allow-writes | --no-judge | --discovery)
             RUN_ARGS+=("$1")
             shift
             ;;
