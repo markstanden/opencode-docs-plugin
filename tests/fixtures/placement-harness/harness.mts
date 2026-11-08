@@ -2296,7 +2296,7 @@ function sameKindChangeLabel(
     before: TreeEntry,
     after: TreeEntry,
 ): string {
-    if (before.kind !== kind || after.kind !== before.kind) return "";
+    if (kind !== before.kind || kind !== after.kind) return "";
     switch (before.kind) {
         case "file":
             if (after.kind === "file") return fileKindChangeLabel(before, after);
@@ -2307,18 +2307,20 @@ function sameKindChangeLabel(
             }
             return "";
         case "dir":
-            if (
-                after.kind === "dir" &&
-                before.mode !== undefined &&
-                after.mode !== undefined &&
-                before.mode !== after.mode
-            ) {
-                return "mode";
-            }
-            return "";
+            return dirModeChanged(before, after) ? "mode" : "";
         default:
             return "";
     }
+}
+
+/** The permission-only directory change between two dir entries. */
+function dirModeChanged(
+    before: { mode?: string | undefined },
+    after: { mode?: string | undefined },
+): boolean {
+    if (before.mode === undefined) return false;
+    if (after.mode === undefined) return false;
+    return before.mode !== after.mode;
 }
 
 /** Content first, then the permission-mode change. */
