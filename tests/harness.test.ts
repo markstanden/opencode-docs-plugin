@@ -2689,6 +2689,111 @@ test("F12: the wrapper mounts the selected corpus and stages per stamp+case", ()
     rmRoot(root);
 });
 
+test("F12: the redacted cache follows generation identity, not corpus bytes", () => {
+    // Arrange: one corpus, generated for two models in turn.
+    const root = newRoot("f12-redacted-identity");
+    const fake = writeFakeOpencode(root);
+    const stubDir = join(root, "stub");
+    mkdirSync(stubDir, { recursive: true });
+    chmodSync(writeStubPodman(stubDir), 0o755);
+    const corpus = [baselineCase("T01")];
+    const first = generate(root, fake, corpus, { model: "x/one" });
+    assert.equal(first.result.status, 0, first.result.stderr);
+
+    // Act: run the same generation twice (reuse), then regenerate for a
+    // different model and run again.
+    const runOne = () =>
+        runWrapper(root, fake, ["run", "T01", "--stamp", "one", "--model", "x/one"], {
+            PATH: stubDir + ":" + process.env.PATH,
+        });
+    const firstRun = runOne();
+    assert.equal(firstRun.status, 0, firstRun.stderr);
+    const firstFiles = readdirSync(join(root, "run-fixtures")).filter((name) =>
+        name.startsWith("cases-"),
+    );
+    const firstFile = firstFiles[0];
+    assert.ok(firstFile, "the first run stages one redacted list");
+    assert.equal(firstFiles.length, 1);
+    assert.equal(
+        readJson(join(root, "run-fixtures", firstFile))[0]
+            .generationInputsHash,
+        readJson(join(first.paths.fixtures, "T01", "generation.json"))
+            .inputsHash,
+    );
+    const runTwo = runWrapper(
+        root,
+        fake,
+        ["run", "T01", "--stamp", "two", "--model", "x/one"],
+        { PATH: stubDir + ":" + process.env.PATH },
+    );
+    assert.equal(runTwo.status, 0);
+    assert.deepEqual(
+        readdirSync(join(root, "run-fixtures"))
+            .filter((name) => name.startsWith("cases-"))
+            .sort(),
+        firstFiles.sort(),
+        "unchanged inputs reuse the same redacted list",
+    );
+
+    const second = generate(root, fake, corpus, {
+        model: "x/two",
+        force: true,
+    });
+    assert.equal(second.result.status, 0, second.result.stderr);
+    const runThree = runWrapper(
+        root,
+        fake,
+        ["run", "T01", "--stamp", "three", "--model", "x/two"],
+        { PATH: stubDir + ":" + process.env.PATH },
+    );
+
+    // Assert: the new generation names a new cache entry with its own hash.
+    assert.equal(runThree.status, 0, runThree.stderr);
+    const files = readdirSync(join(root, "run-fixtures"))
+        .filter((name) => name.startsWith("cases-"))
+        .sort();
+    assert.equal(files.length, 2);
+    const changed = files.find((name) => !firstFiles.includes(name));
+    assert.ok(changed, "a changed generation must not reuse the old cache");
+    assert.equal(
+        readJson(join(root, "run-fixtures", changed))[0].generationInputsHash,
+        readJson(join(first.paths.fixtures, "T01", "generation.json"))
+            .inputsHash,
+    );
+    rmRoot(root);
+});
+
+test("F12: a run model with no matching generation refuses before staging", () => {
+    // Arrange: fixtures generated for one model only.
+    const root = newRoot("f12-redacted-stale-model");
+    const fake = writeFakeOpencode(root);
+    const stubDir = join(root, "stub");
+    mkdirSync(stubDir, { recursive: true });
+    chmodSync(writeStubPodman(stubDir), 0o755);
+    generate(root, fake, [baselineCase("T01")], { model: "x/one" });
+
+    // Act: ask the wrapper to run the never-generated second model.
+    const run = runWrapper(
+        root,
+        fake,
+        ["run", "T01", "--stamp", "stale", "--model", "x/two"],
+        { PATH: stubDir + ":" + process.env.PATH },
+    );
+
+    // Assert: the freeze refuses rather than labelling stale config as x/two.
+    assert.notEqual(run.status, 0);
+    assert.match(
+        run.stderr,
+        /prepared generation does not match the frozen experiment/,
+    );
+    assert.equal(
+        existsSync(join(root, "results", "stale", "T01")),
+        false,
+        "no case is staged under a stale generation",
+    );
+    rmRoot(root);
+});
+
 test("F12: wrapper default selection enumerates the corpus ids", () => {
     const root = newRoot("f12-default");
     const fake = writeFakeOpencode(root);

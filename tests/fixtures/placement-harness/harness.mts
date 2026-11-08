@@ -5135,6 +5135,30 @@ function ensureRunDescription(
         }
         return true;
     }
+    // A new freeze must not label a prepared generation it does not own.
+    // The full corpus is authoritative here, so a changed model, plugin,
+    // variant or case definition refuses before any container stages a
+    // prompt whose config carries different inputs.
+    if (selectedAreFullDefinitions(selected)) {
+        const stale = selected
+            .map((testCase) => ({
+                id: testCase.id,
+                problems: validateGeneration(testCase, options, true).problems,
+            }))
+            .filter((entry) => entry.problems.length > 0);
+        if (stale.length > 0) {
+            console.error(
+                `prepared generation does not match the frozen experiment: ` +
+                    stale
+                        .map(
+                            (entry) =>
+                                `${entry.id} (${entry.problems.join("; ")})`,
+                        )
+                        .join(", "),
+            );
+            return false;
+        }
+    }
     if (boundaryOf().containerised === true) {
         // Inside a trial container this stamp's run description is neither
         // visible nor writable: the freeze must have happened host-side, and
