@@ -2307,7 +2307,10 @@ function sameKindChangeLabel(
             }
             return "";
         case "dir":
-            return dirModeChanged(before, after) ? "mode" : "";
+            if (after.kind === "dir") {
+                return dirModeChanged(before, after) ? "mode" : "";
+            }
+            return "";
         default:
             return "";
     }
