@@ -81,7 +81,8 @@ Summary: R01 access controls plus the A01 tool-availability diagnostic (2 workho
 - Does setting the child env's PWD to the spawn cwd restore plugin
   registration and a native help inventory in A01? That is the smallest
   justified next experiment; re-run in new stamps and keep the old
-  evidence untouched.
+  evidence untouched. **Answered 2026-11-08:** yes — see
+  [a-matching-pwd-restores-docs-registration-and-native-help.md](a-matching-pwd-restores-docs-registration-and-native-help.md).
 - What decides Code Mode dispatch success at per-session level (timing,
   prior tool use, catalogue assembly ordering), given reflection and
   dispatch disagreed within one session?

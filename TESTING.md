@@ -523,8 +523,11 @@ PLACEMENT_CASES="$PWD/tests/fixtures/diagnostic-cases.json" \
 ```
 
 The diagnostic run adds `--print-logs` to the child invocation and saves an
-`invocation.json` (exact argv, cwd, redacted config, prompt hash). It reports
-five separate facts per run, rendered into `summary.md` and the dossier:
+`invocation.json` (exact argv, cwd, child PWD, redacted config, prompt hash).
+It reports five separate facts per run, rendered into `summary.md` and the
+dossier. The cwd/PWD/host match lines make a stale launch (the pre-fix
+`PWD=/workspace` defect) visible in the report rather than inferred from a
+missing plugin log. The facts reported per run are:
 
 - **Registration** — observed from a plugin-load log record, absent only in a
   complete startup/shutdown trace with no such record, otherwise unknown.
