@@ -74,4 +74,3 @@ Summary: Family corpus ×2 models ×2 reps on frozen e9d3926: the control deepse
 - The per-session catalogue flip's cause (session-tool enumeration timing
   or config-dependent twin registration) and its smallest delta between
   probe and trial environments.
-
