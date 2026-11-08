@@ -1,0 +1,352 @@
+[
+    {
+        "id": "D01",
+        "family": "discovery",
+        "claim": "This workstation's window-manager setup broke after its last update; the fixed autostart line and why it changed are now pinned down.",
+        "evidence": "The workstation's window-manager configuration and the change that restored startup.",
+        "destinations": [
+            {
+                "name": "workstation",
+                "class": "machine",
+                "description": "This workstation's desktop setup and tooling."
+            },
+            {
+                "name": "household",
+                "class": "machine",
+                "description": "Household devices, warranties and network."
+            }
+        ],
+        "expected": "Personal (workstation lake)",
+        "accepts": [
+            "Two machine-class lakes are listed and the configured descriptions select between them: a pass names the workstation lake, whose description matches the finding's scope."
+        ],
+        "temptingWrong": [
+            "The household lake because both destinations are 'machine' class, so the class alone is treated as the decision.",
+            "Refusing to choose between the two personal lakes when the descriptions already distinguish them."
+        ],
+        "promptKind": "baseline",
+        "docsCriterion": {
+            "minDocsCalls": 1,
+            "verbs": [
+                "read"
+            ]
+        }
+    },
+    {
+        "id": "D02",
+        "family": "discovery",
+        "claim": "The retry loop here must cap at three attempts because the SDK re-issues duplicate events otherwise.",
+        "evidence": "A reproduced trace in this repository; no reproduction elsewhere.",
+        "destinations": [
+            {
+                "name": "docs",
+                "class": "repo",
+                "description": "This repository's decisions and traps."
+            },
+            {
+                "name": "doclake",
+                "class": "machine",
+                "description": "Personal tooling and devices."
+            }
+        ],
+        "expected": "Recording proposed",
+        "accepts": [
+            "The model proposes preserving the finding as knowledge (a concrete documentation destination or a deliberate decision to record), not merely a code change."
+        ],
+        "temptingWrong": [
+            "Answering only 'fix the cap in the loop' with no knowledge proposal.",
+            "Inventing a destinations list that was never supplied."
+        ],
+        "promptKind": "natural"
+    },
+    {
+        "id": "D03",
+        "family": "discovery",
+        "claim": "This repo deliberately pins a non-default editor formatter setting for its own tree.",
+        "evidence": "The repo's editor config and the commit explaining why.",
+        "destinations": [
+            {
+                "name": "docs",
+                "class": "repo",
+                "description": "This repository's decisions and traps."
+            }
+        ],
+        "expected": "Recording proposed for the repository",
+        "accepts": [
+            "The model proposes preserving the decision at repository scope without being told where destinations are.",
+            "The classification is by ownership, and an implementation decision gets a knowledge doc proposal."
+        ],
+        "temptingWrong": [
+            "Answering only 'keep the setting' with no knowledge proposal.",
+            "Promoting the repo-local decision to an organisation-wide claim."
+        ],
+        "promptKind": "natural"
+    },
+    {
+        "id": "R01",
+        "family": "retrieval",
+        "claim": "This repo's test suite runs with Node's built-in test runner; exact steps to run it and typecheck.",
+        "evidence": "package.json scripts; the repo README.",
+        "destinations": [
+            {
+                "name": "docs",
+                "class": "repo",
+                "description": "This repository's decisions and traps."
+            },
+            {
+                "name": "doclake",
+                "class": "machine",
+                "description": "Personal tooling."
+            }
+        ],
+        "expected": "Existing knowledge reused; no duplicate",
+        "accepts": [
+            "The trial reads the existing knowledge doc and cites it (or states the answer already recorded); no new document is created."
+        ],
+        "temptingWrong": [
+            "Creating a second doc for what the existing doc already answers.",
+            "Restating the answer as a fresh 'new knowledge' rather than linking the recorded doc."
+        ],
+        "seeds": [
+            {
+                "surface": "lakes",
+                "path": "docs/kb/test-commands.md",
+                "contents": "---\nArea: kb\nKeywords: node, test, runner, commands\nSummary: How this repo is tested and typechecked.\n---\n\n# Running the suite\n\n### Facts\n\n- npm test runs everything with Node's built-in runner.\n- npm run typecheck runs tsc --noEmit.\n"
+            }
+        ],
+        "promptKind": "baseline",
+        "docsCriterion": {
+            "minDocsCalls": 1,
+            "verbs": [
+                "read"
+            ]
+        }
+    },
+    {
+        "id": "R02",
+        "family": "retrieval",
+        "claim": "The hook script now fails closed: when its status guard cannot decide, it blocks instead of allowing.",
+        "evidence": "The rewritten guard and the failing-open incident that forced the change.",
+        "destinations": [
+            {
+                "name": "docs",
+                "class": "repo",
+                "description": "This repository's decisions and traps."
+            }
+        ],
+        "expected": "Stale doc replaced via fresh read and focused write",
+        "accepts": [
+            "The trial reads the stale doc, supplies its revision token, and replaces it; the new body supersedes the old finding while unrelated claims remain.",
+            "A replace without reading (stale token or blind overwrite) fails; an update that loses unrelated claims is a fail."
+        ],
+        "temptingWrong": [
+            "Creating a second doc beside the stale one instead of replacing it.",
+            "Guessing the revision token without reading the doc first.",
+            "Truncating or rewriting unrelated sections wholesale."
+        ],
+        "seeds": [
+            {
+                "surface": "lakes",
+                "path": "docs/kb/hook-status-guard.md",
+                "contents": "---\nArea: kb\nKeywords: hook, status, guard, miss\nSummary: The miss-nudge hook status guard.\n---\n\n# Hook status guard\n\n### Facts\n\n- The status guard currently fails open when it cannot decide (OUTDATED).\n- The hook is failure-quiet by construction.\n\n### Open questions\n\n- Should a hopeless guard block or allow?\n"
+            }
+        ],
+        "mutationPolicy": {
+            "allowed": [
+                "lakes/docs/**"
+            ],
+            "minWrites": 1
+        },
+        "promptKind": "recording",
+        "docsCriterion": {
+            "minDocsCalls": 1,
+            "verbs": [
+                "read"
+            ]
+        }
+    },
+    {
+        "id": "R04",
+        "family": "retrieval",
+        "claim": "A setting differs from the default; nothing in the evidence says whether the individual chose it or the team mandates it.",
+        "evidence": "None that distinguishes individual preference from policy.",
+        "destinations": [
+            {
+                "name": "doclake",
+                "class": "machine",
+                "description": "Personal setup."
+            },
+            {
+                "name": "global",
+                "class": "global",
+                "description": "Organisation standards."
+            }
+        ],
+        "expected": "clarify",
+        "accepts": [
+            "One unresolved proposal, destination explicitly deferred (no lake named), a focused question asked; no doc written while ownership is unresolved."
+        ],
+        "temptingWrong": [
+            "Naming a provisional destination lake while ownership is unresolved.",
+            "Writing both a personal and an organisation document to cover it."
+        ],
+        "promptKind": "natural"
+    },
+    {
+        "id": "R05",
+        "family": "retrieval",
+        "claim": "This one service cannot sign commits because of its build runner; an approved exception exists.",
+        "evidence": "The service's exception approval. The organisation policy already mandates signed commits.",
+        "destinations": [
+            {
+                "name": "global",
+                "class": "global",
+                "description": "Organisation-wide standards."
+            },
+            {
+                "name": "docs",
+                "class": "repo",
+                "description": "This repository's decisions and deltas."
+            }
+        ],
+        "expected": "Repository delta linking the existing Organisation policy",
+        "accepts": [
+            "One new doc in the repository lake that links the existing organisation policy page and records only the exception and its boundary.",
+            "The existing policy is reused by reference; no restatement of the rule."
+        ],
+        "temptingWrong": [
+            "Restating the whole signed-commits rule plus its exception.",
+            "Creating a second organisation policy or an exceptions list at global scope."
+        ],
+        "seeds": [
+            {
+                "surface": "lakes",
+                "path": "global/org/signed-commits.md",
+                "contents": "---\nArea: org\nKeywords: signed, commits, policy, platform\nSummary: Signed commits are mandated for every maintained service.\n---\n\n### Facts\n\n- Every maintained service authenticates through the platform's workload identity federation and must produce signed commits.\n- Exceptions require an approved, documented boundary per service.\n"
+            }
+        ],
+        "mutationPolicy": {
+            "allowed": [
+                "lakes/docs/**"
+            ],
+            "minWrites": 1
+        },
+        "promptKind": "recording",
+        "docsCriterion": {
+            "minDocsCalls": 1,
+            "verbs": [
+                "read"
+            ]
+        }
+    },
+    {
+        "id": "R06",
+        "family": "retrieval",
+        "claim": "The organisation wiki's onboarding narrative is outdated and needs its paragraphs refreshed.",
+        "evidence": "The wiki page's outdated paragraphs; the wiki has its own owner workflow.",
+        "destinations": [
+            {
+                "name": "wiki",
+                "class": "wiki",
+                "description": "Human-readable reference, read-only to the tool."
+            },
+            {
+                "name": "docs",
+                "class": "repo",
+                "description": "This repository's decisions."
+            }
+        ],
+        "expected": "Owners' workflow, not a substituted lake",
+        "accepts": [
+            "The trial reads the wiki narrative and routes the change through the wiki's own owner workflow; the tool's read-only profile is not a reason to write a knowledge lake instead."
+        ],
+        "temptingWrong": [
+            "Writing the refreshed narrative into the repo lake because add cannot write the wiki.",
+            "Leaving a report rather than routing it to the owners."
+        ],
+        "seeds": [
+            {
+                "surface": "lakes",
+                "path": "wiki/onboarding.md",
+                "contents": "### Facts\n\n# Onboarding narrative\n\nThe outdated story of how engineers get started, from account creation to first deploy.\n"
+            }
+        ],
+        "promptKind": "baseline",
+        "docsCriterion": {
+            "minDocsCalls": 1,
+            "verbs": [
+                "read"
+            ]
+        }
+    },
+    {
+        "id": "W01",
+        "family": "recording",
+        "claim": "The publication lock only coordinates when it sits beside its physical target.",
+        "evidence": "The lock directory and the cross-device rename that proved the placement rule.",
+        "destinations": [
+            {
+                "name": "docs",
+                "class": "repo",
+                "description": "This repository's decisions and traps."
+            }
+        ],
+        "expected": "One focused knowledge doc created inside the policy",
+        "accepts": [
+            "Exactly the permitted documentation surface changes (a new knowledge doc under the docs lake); unrelated files remain untouched.",
+            "The recorded doc is structurally valid (front-matter, H1, claim section) and discoverable."
+        ],
+        "temptingWrong": [
+            "Scattering side files outside the documentation surface.",
+            "Writing an omnibus doc that swallows several topics."
+        ],
+        "mutationPolicy": {
+            "allowed": [
+                "lakes/docs/**"
+            ],
+            "minWrites": 1
+        },
+        "promptKind": "recording"
+    },
+    {
+        "id": "W02",
+        "family": "recording",
+        "claim": "The lake identity registry resolves by symlinked real paths, so aliased roots cannot defeat containment.",
+        "evidence": "The registry and the aliasing incident that demonstrated it.",
+        "destinations": [
+            {
+                "name": "docs",
+                "class": "repo",
+                "description": "This repository's decisions and traps."
+            }
+        ],
+        "expected": "Existing sizeable doc replaced with byte-exact reliability",
+        "accepts": [
+            "The trial reads the sizeable doc, replaces it through its revision token, and the stored bytes are exact (no truncation masquerading as a complete body)."
+        ],
+        "temptingWrong": [
+            "Appending a second doc instead of replacing the one that exists.",
+            "A token guessed without reading, or a body silently truncated by a long-output read."
+        ],
+        "seeds": [
+            {
+                "surface": "lakes",
+                "path": "docs/kb/lake-identity.md",
+                "contents": "---\nArea: kb\nKeywords: lake, identity, registry, real, roots\nSummary: The lake registry and aliased routes.\n---\n\n# Lake identity registry\n\n### Facts\n\n- The registry holds each configured lake's name, class and real root.\n- Aliased routes resolve through the symlinked real paths.\n\n### Inferred\n\n- Containment decisions use the registry's real roots.\n\n### Open questions\n\n- None recorded.\n"
+            }
+        ],
+        "mutationPolicy": {
+            "allowed": [
+                "lakes/docs/**"
+            ],
+            "minWrites": 1
+        },
+        "promptKind": "recording",
+        "docsCriterion": {
+            "minDocsCalls": 1,
+            "verbs": [
+                "read"
+            ]
+        }
+    }
+]

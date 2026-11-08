@@ -699,6 +699,438 @@ function boundaryOf() {
 }
 
 /* ------------------------------------------------------------------ *
+ * Prompt, rubric and fixture generation (with fingerprints)
+ * ------------------------------------------------------------------ */
+
+const promptFor = (testCase, options) => {
+    // Discovery variant: the prompt names no destination and no tool — the
+    // lakes are reachable only through the session's normal tool inventory
+    // (the docs tool's own description points at `help`).
+    const kind = testCase.promptKind ?? (testCase.mutationPolicy ? "recording" : "baseline");
+    const destinations =
+        kind === "natural" || options.discovery
+            ? ""
+            : `Available documentation destinations:
+${testCase.destinations
+    .map(
+        (destination) =>
+            `- ${destination.name} (\`${destination.class}\`): ${destination.description}`,
+    )
+    .join("\n")}`;
+    // Baseline decisions suppress writes; recording authorises them inside
+    // the trial's own surfaces; natural prompts carry no documentation
+    // framing at all — they measure whether the trigger happens.
+    const closing =
+        kind === "natural"
+            ? "What do you recommend we do, if anything?"
+            : kind === "recording"
+            ? "Use your normal documentation guidance for this finding. For this trial, you are authorised to record documentation; changes are permitted only inside the trial's own documentation surfaces."
+            : "Use your normal documentation guidance to decide how to preserve this finding. For this trial, do not change files.";
+    return `We have established the following finding.
+
+Finding:
+${testCase.claim}
+
+Evidence:
+${testCase.evidence}
+
+${destinations ? `${destinations}\n\n` : ""}${closing}
+
+State:
+- Your intended action.
+- The exact destination lake, or other documentation workflow.
+- Whether this needs one document or several.
+- A brief reason.
+- Any clarification needed before proceeding.
+
+Treat the evidence descriptions as supplied facts for this synthetic trial.
+`;
+};
+
+const rubricFor = (testCase) => `# ${testCase.id} rubric
+
+Claim: ${testCase.claim}
+
+Expected: ${testCase.expected}
+
+Accepts:
+${testCase.accepts.map((line) => `- ${line}`).join("\n")}
+
+Tempting wrong answers:
+${testCase.temptingWrong.map((line) => `- ${line}`).join("\n")}
+`;
+
+/**
+ * The requested sandbox permission set. Trails have shown these denials are
+ * not reliably enforced in every run context, so the container mount stays
+ * the real boundary.
+ */
+const SANDBOX_PERMISSIONS = [
+    { action: "shell", resource: "*", effect: "deny" },
+    { action: "edit", resource: "*", effect: "deny" },
+    { action: "external_directory", resource: "*", effect: "deny" },
+];
+
+const WORK_FILES_E06 = {
+    "package.json":
+        JSON.stringify(
+            {
+                name: "trial-app",
+                private: true,
+                scripts: { test: "node --test", typecheck: "tsc --noEmit" },
+            },
+            null,
+            2,
+        ) + "\n",
+    "README.md": "# Trial app\n\n```sh\nnpm test\nnpm run typecheck\n```\n",
+};
+
+const WORK_FILES_E17 = {
+    "package.json":
+        JSON.stringify(
+            {
+                name: "trial-app",
+                private: true,
+                scripts: { build: "node build.mjs" },
+            },
+            null,
+            2,
+        ) + "\n",
+    "build.sh":
+        "#!/usr/bin/env bash\nset -euo pipefail\n" +
+        "# The trap this case is about: the flag must stay inside this repo's wrapper.\n" +
+        "npm run build -- --legacy-peer-deps\n",
+};
+
+function writeWorkFiles(work, files) {
+    for (const [name, contents] of Object.entries(files))
+        write(join(work, name), contents);
+}
+
+/** Lake specs for the trial config; roots are relative to the work directory. */
+function lakesFor(testCase) {
+    const listed = testCase.destinations.map((destination) => ({
+        class: destination.class,
+        // E17 nests the repo lake inside the wider outer repo lake.
+        root:
+            testCase.id === "E17" && destination.name === "docs"
+                ? "../lakes/outer/docs"
+                : `../lakes/${destination.name}`,
+        name: destination.name,
+        description: destination.description,
+    }));
+    if (
+        testCase.destinations.some(
+            (destination) => destination.class === "repo",
+        )
+    )
+        return listed;
+    return [
+        ...listed,
+        {
+            class: "repo",
+            root: "docs",
+            name: "docs",
+            writable: false,
+            description:
+                "Read-only placeholder; not a listed destination in this trial.",
+        },
+    ];
+}
+
+/** Create the case's work and lake directories, plus its code-shaped context. */
+function buildFixtureTree(testCase, caseDir) {
+    const work = join(caseDir, "work");
+    mkdirSync(work, { recursive: true });
+    mkdirSync(join(caseDir, "lakes"), { recursive: true });
+    mkdirSync(join(caseDir, "config-home", "opencode"), { recursive: true });
+
+    for (const destination of testCase.destinations) {
+        mkdirSync(join(caseDir, "lakes", destination.name), {
+            recursive: true,
+        });
+    }
+    // E17 deliberately nests the repo lake "docs" inside the wider repo lake "outer".
+    if (testCase.id === "E17")
+        mkdirSync(join(caseDir, "lakes", "outer", "docs"), { recursive: true });
+
+    // The plugin adds an implicit writable repo lake at <location>/docs when no
+    // repo lake is configured. E13 and E16 list no repo destination, so pin a
+    // read-only placeholder: it suppresses the implicit writable lake without
+    // offering a destination the case does not list.
+    if (
+        !testCase.destinations.some(
+            (destination) => destination.class === "repo",
+        )
+    ) {
+        mkdirSync(join(work, "docs"), { recursive: true });
+    }
+
+    if (testCase.id === "E06") writeWorkFiles(work, WORK_FILES_E06);
+    if (testCase.id === "E17") writeWorkFiles(work, WORK_FILES_E17);
+    seedFixture(testCase, caseDir);
+    gitInitQuiet(work);
+}
+
+/** Seed documents and links a case relies on (families beyond the baseline). */
+function seedFixture(testCase, caseDir) {
+    for (const seed of testCase.seeds ?? []) {
+        const path = join(caseDir, seed.surface, seed.path);
+        if (seed.target !== undefined) {
+            mkdirSync(dirname(path), { recursive: true });
+            symlinkSync(seed.target, path);
+            continue;
+        }
+        write(path, seed.contents ?? "");
+    }
+}
+
+
+/**
+ * Fingerprint every input that affects a case's generated content or
+ * configuration: the case definition, the generator/template version, the
+ * model baked into the config, the plugin identity and the variant flags.
+ */
+function generationInputsHash(testCase, options) {
+    return sha256(
+        JSON.stringify({
+            generationVersion: GENERATION_VERSION,
+            caseEntry: testCase,
+            model: options.model,
+            plugin: pluginIdentity(options).contentHash,
+            lockHash: pluginIdentity(options).lockHash,
+            discovery: options.discovery === true,
+            permissions: SANDBOX_PERMISSIONS,
+        }),
+    );
+}
+
+/** The file identities a generation record certifies. */
+function generationOutputs(testCase, options) {
+    const promptText = promptFor(testCase, options);
+    const rubricText = rubricFor(testCase);
+    const caseJson = JSON.stringify(testCase, null, 2) + "\n";
+    const configJson =
+        JSON.stringify(
+            {
+                $schema: "https://opencode.ai/config.json",
+                model: options.model,
+                plugins: [
+                    {
+                        package: options.plugin,
+                        options: { lakes: lakesFor(testCase) },
+                    },
+                ],
+                permissions: SANDBOX_PERMISSIONS,
+            },
+            null,
+            2,
+        ) + "\n";
+    return { promptText, rubricText, caseJson, configJson };
+}
+
+/** Whether the recorded prompt, config and (when present) rubric are byte-intact. */
+function fixtureOutputsIntact(options, fixture, outputs) {
+    const matches = (path, text) =>
+        existsSync(path) && readFileSync(path, "utf8") === text;
+    return (
+        matches(fixture.promptPath, outputs.promptText) &&
+        matches(fixture.configPath, outputs.configJson) &&
+        (!existsSync(options.rubrics) ||
+            matches(fixture.rubricPath, outputs.rubricText))
+    );
+}
+
+/**
+ * Refusal for reusing a recorded fixture: the fingerprint went stale, the
+ * recorded outputs were altered, or a pre-fingerprint fixture exists with no
+ * generation record. Null when the recorded fixture may be kept.
+ */
+function reusedFixtureRefusal(testCase, options, stored, fingerprint, fixture) {
+    if (stored !== undefined) {
+        if (stored.inputsHash !== fingerprint) {
+            return {
+                status: "stale",
+                detail:
+                    "case definition, model, plugin or variant changed " +
+                    "since this fixture was generated; rerun generate --force",
+            };
+        }
+        const outputs = generationOutputs(testCase, options);
+        if (!fixtureOutputsIntact(options, fixture, outputs)) {
+            return {
+                status: "incomplete",
+                detail:
+                    "recorded generation outputs are missing or altered " +
+                    `(prompt, config${existsSync(options.rubrics) ? ", rubric" : ""}); rerun generate --force`,
+            };
+        }
+        return null;
+    }
+    return existsSync(fixture.promptPath)
+        ? {
+              status: "stale",
+              detail:
+                  "existing fixture has no generation fingerprint " +
+                  "(pre-fingerprint harness); rerun generate --force",
+          }
+        : null;
+}
+
+/** Write one case's generated prompt, rubric, case.json, config and generation record. */
+function writeGeneratedFixture(testCase, options, fingerprint, fixture) {
+    const outputs = generationOutputs(testCase, options);
+    buildFixtureTree(testCase, fixture.caseDir);
+    write(fixture.promptPath, outputs.promptText);
+    write(fixture.rubricPath, outputs.rubricText);
+    write(join(fixture.rubricDir, "case.json"), outputs.caseJson);
+    write(join(fixture.caseDir, "work", "opencode.json"), outputs.configJson);
+    write(
+        join(fixture.caseDir, "generation.json"),
+        JSON.stringify(
+            {
+                schemaVersion: 1,
+                id: testCase.id,
+                inputsHash: fingerprint,
+                generationVersion: GENERATION_VERSION,
+                createdAt: new Date().toISOString(),
+                files: {
+                    promptHash: sha256(outputs.promptText),
+                    configHash: sha256(outputs.configJson),
+                    rubricHash: sha256(outputs.rubricText),
+                },
+                pluginHash: pluginIdentity(options).contentHash,
+            },
+            null,
+            2,
+        ) + "\n",
+    );
+}
+
+/**
+ * Generate (or verify) one case fixture. Reuse requires a matching
+ * fingerprint AND intact recorded outputs; anything else refuses clearly —
+ * `--force` recreates deliberately. The returned status object tells
+ * generateAll what happened; callers never silently regenerate.
+ */
+function generateCase(testCase, options) {
+    const caseDir = join(options.fixtures, testCase.id);
+    const rubricDir = join(options.rubrics, testCase.id);
+    const fixture = {
+        caseDir,
+        rubricDir,
+        promptPath: join(options.prompts, `${testCase.id}.md`),
+        rubricPath: join(rubricDir, "rubric.md"),
+        configPath: join(caseDir, "work", "opencode.json"),
+        generationPath: join(caseDir, "generation.json"),
+    };
+
+    const fingerprint = generationInputsHash(testCase, options);
+    const stored = readJson(fixture.generationPath);
+    if (!options.force) {
+        const refusal = reusedFixtureRefusal(
+            testCase,
+            options,
+            stored,
+            fingerprint,
+            fixture,
+        );
+        if (refusal !== null) return refusal;
+        if (stored !== undefined) return { status: "kept" };
+    }
+    if (options.force) {
+        rmSync(caseDir, { recursive: true, force: true });
+        rmSync(rubricDir, { recursive: true, force: true });
+        rmSync(fixture.promptPath, { force: true });
+    }
+
+    writeGeneratedFixture(testCase, options, fingerprint, fixture);
+    return { status: "created" };
+}
+
+function generateAll(options) {
+    const selected = select(options);
+    const rows = [];
+    let failures = 0;
+    for (const testCase of selected) {
+        const outcome = generateCase(testCase, options);
+        rows.push([testCase.id, outcome]);
+        if (outcome.status !== "kept" && outcome.status !== "created")
+            failures += 1;
+    }
+    const manifest = {
+        generatedAt: new Date().toISOString(),
+        harnessVersion: HARNESS_VERSION,
+        generationVersion: GENERATION_VERSION,
+        ...provenance(options),
+        model: options.model,
+        prompts: options.prompts,
+        fixture: options.fixture,
+        plugin: options.plugin,
+        cases: selected.map((testCase) => {
+            const prompt = join(options.prompts, `${testCase.id}.md`);
+            const fixture = join(options.fixtures, testCase.id);
+            const rubric = join(options.rubrics, testCase.id, "rubric.md");
+            return {
+                id: testCase.id,
+                prompt,
+                promptHash: existsSync(prompt) ? fileHash(prompt) : "unknown",
+                fixture,
+                generation: join(fixture, "generation.json"),
+                rubric,
+                rubricHash: existsSync(rubric) ? fileHash(rubric) : "unknown",
+                expected: testCase.expected,
+            };
+        }),
+    };
+    write(
+        join(options.fixtures, "manifest.json"),
+        JSON.stringify(manifest, null, 2) + "\n",
+    );
+    for (const [id, outcome] of rows) {
+        const detail =
+            outcome.status === "kept" || outcome.status === "created"
+                ? outcome.status
+                : `${outcome.status} — ${outcome.detail}`;
+        console.log(`${id}: ${detail}`);
+    }
+    console.log(`prompts:  ${options.prompts}`);
+    console.log(`fixtures: ${options.fixtures}`);
+    if (failures > 0) {
+        console.error(
+            `generate: ${failures} case(s) refused; the recorded fixtures were left untouched`,
+        );
+        return 1;
+    }
+    return 0;
+}
+
+/**
+ * Validate that a run's prepared generation is the current one. A run never
+ * regenerates shared inputs: missing or stale preparation is an error.
+ * Inside the per-case run container only the prompt, config and generation
+ * record are mounted, so verification covers exactly those surfaces.
+ */
+function validateGeneration(testCase, options) {
+    const problems = [];
+    const promptPath = join(options.prompts, `${testCase.id}.md`);
+    const generationPath = join(options.fixtures, testCase.id, "generation.json");
+    const configPath = join(options.fixtures, testCase.id, "work", "opencode.json");
+    const stored = readJson(generationPath);
+    if (stored === undefined) {
+        problems.push("no generation fingerprint; run generate first");
+        return { problems, generation: undefined };
+    }
+    if (!existsSync(promptPath)) problems.push("no prompt generated");
+    else if (stored.files?.promptHash !== fileHash(promptPath))
+        problems.push("prompt does not match the recorded generation");
+    if (!existsSync(configPath)) problems.push("no fixture config generated");
+    else if (stored.files?.configHash !== fileHash(configPath))
+        problems.push("fixture config does not match the recorded generation");
+    return { problems, generation: stored };
+}
+
+/* ------------------------------------------------------------------ *
  * Mutation snapshot: final-state proof, symlink-aware
  * ------------------------------------------------------------------ */
 
