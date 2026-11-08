@@ -2550,6 +2550,7 @@ type DiagnosticDispatchStatus = "succeeded" | "failed" | "not attempted";
 type DiagnosticHelpStatus =
     "inventory returned" | "refusal or blank" | "unknown";
 type DiagnosticObservability = "operation-level" | "wrapper-only" | "no event";
+type DiagnosticCriterionStatus = "met" | "unmet" | "not declared";
 
 interface DiagnosticSurface {
     status: DiagnosticPresence;
@@ -2614,6 +2615,11 @@ interface DiagnosticRecord {
     };
     observability: {
         status: DiagnosticObservability;
+        source: string;
+        detail: string;
+    };
+    criterion: {
+        status: DiagnosticCriterionStatus;
         source: string;
         detail: string;
     };
@@ -3072,7 +3078,25 @@ function diagnosticInvocation(
 function diagnosticPositive(
     help: DiagnosticRecord["help"],
     observability: DiagnosticRecord["observability"],
+    criterion: DiagnosticRecord["criterion"],
 ): DiagnosticRecord["positive"] {
+    // A declared criterion is evaluated on its own evidence: a read-only
+    // control must not be labelled unsuccessful merely because it made no
+    // help call, and a help/inventory response does not satisfy a read.
+    if (criterion.status === "met") {
+        return {
+            status: "yes",
+            reason: "the declared docs criterion is met by a verified operation",
+        };
+    }
+    if (criterion.status === "unmet") {
+        return {
+            status: "no",
+            reason:
+                `the declared docs criterion is unmet: ${criterion.detail}; ` +
+                "help/inventory evidence is separate and does not satisfy it",
+        };
+    }
     if (
         help.status === "inventory returned" &&
         observability.status === "operation-level"
@@ -3096,6 +3120,45 @@ function diagnosticPositive(
     return {
         status: "no",
         reason: "no operation-level help/inventory response",
+    };
+}
+
+/**
+ * The declared docs criterion of a report-only diagnostic, evaluated through
+ * the same deterministic operation verifier used before semantic judging. A
+ * diagnostic without a criterion keeps the legacy help/inventory behaviour.
+ * The verifier proves an observable successful operation against the typed
+ * target path; it does not compare the retrieved bytes with the seed, so the
+ * exact content and revision are checked in the live control evidence.
+ */
+function diagnosticCriterion(resultDir: string): DiagnosticRecord["criterion"] {
+    const caseAt = jsonAt(join(resultDir, "case.json"));
+    const recorded =
+        caseAt.kind === "value" && isRecord(caseAt.value) ? caseAt.value : null;
+    const caseDef: TrialCase | null =
+        recorded !== null && typeof recorded.id === "string"
+            ? (recorded as unknown as TrialCase)
+            : null;
+    if (caseDef === null || caseDef.docsCriterion == null) {
+        return {
+            status: "not declared",
+            source: "case.json",
+            detail:
+                "the diagnostic case declares no docs criterion; " +
+                "help/inventory evidence applies",
+        };
+    }
+    const problem = docsCriterionProblem(caseDef, resultDir);
+    if (problem !== null) {
+        return { status: "unmet", source: "tools.jsonl", detail: problem };
+    }
+    return {
+        status: "met",
+        source: "tools.jsonl",
+        detail:
+            "an observable successful docs operation met the declared " +
+            "criterion; the verifier checks operation success and the typed " +
+            "target path, not exact seeded content",
     };
 }
 
@@ -3173,6 +3236,7 @@ function diagnosticFor(resultDir: string): DiagnosticRecord | null {
     const firstRequestAt = firstRequestTimestamp(resultDir);
     const help = diagnosticHelp(entries);
     const observability = diagnosticObservability(entries);
+    const criterion = diagnosticCriterion(resultDir);
     return {
         invocation,
         timestamps: diagnosticTimestamps(
@@ -3198,7 +3262,8 @@ function diagnosticFor(resultDir: string): DiagnosticRecord | null {
         },
         help,
         observability,
-        positive: diagnosticPositive(help, observability),
+        criterion,
+        positive: diagnosticPositive(help, observability, criterion),
         supporting: { modelReported: diagnosticModelReport(resultDir) },
     };
 }
@@ -3277,6 +3342,7 @@ function diagnosticLines(record: DiagnosticRecord): string[] {
         diagnosticDispatchLine("Code Mode docs", record.dispatch.codeModeDocs),
         `- Help: **${record.help.status}** — ${record.help.source}: ${record.help.detail}`,
         `- Observability: **${record.observability.status}** — ${record.observability.source}: ${record.observability.detail}`,
+        `- Declared docs criterion: **${record.criterion.status}** — ${record.criterion.source}: ${record.criterion.detail}`,
         `- Positive: **${record.positive.status}** — ${record.positive.reason}`,
         diagnosticModelReportLine(record),
         "",
@@ -5677,7 +5743,7 @@ function answerInvalidReason(resultDir: string) {
  * silently applied.
  * @returns The gate problem, or null when the criterion is met or absent.
  */
-function docsCriterionProblem(testCase: FullTrialCase, resultDir: string) {
+function docsCriterionProblem(testCase: TrialCase, resultDir: string) {
     const criterion = testCase?.docsCriterion;
     if (!criterion) return null;
     return "minVerifiedCalls" in criterion

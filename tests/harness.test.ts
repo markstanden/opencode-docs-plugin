@@ -6450,6 +6450,168 @@ test("CONTROL: the explicit read variant keeps its authored prompt and seed", ()
 });
 
 /* ------------------------------------------------------------------ *
+ * CONTROL — declared read criterion evaluated in diagnostic reporting
+ * ------------------------------------------------------------------ */
+
+const READ_CONTROL_FILE = join(HERE, "fixtures", "read-control-cases.json");
+
+/** The checked-in explicit read control, as its frozen definition. */
+const readControlCase = () =>
+    (
+        readJson(READ_CONTROL_FILE) as Array<Record<string, unknown>>
+    )[0] as Record<string, unknown>;
+
+const generateReadControl = (root: string, fake: string) =>
+    generate(root, fake, [readControlCase()]);
+
+/** A plugin-shaped successful read envelope for the control's seeded path. */
+const controlReadTrail = (path = "kb/test-commands.md") =>
+    TOOL_JSONL_META(
+        "docs",
+        "read-1",
+        "completed",
+        { read: path },
+        "# Running the suite\n\ndocs: revision " + "a".repeat(64) + " —\n",
+        { read: path },
+    );
+
+test("CONTROL: a verified read of the required seed is a positive diagnostic without a help call", () => {
+    // Arrange: the declared control is a read-only criterion with no help
+    // call in the trail at all.
+    const root = newRoot("control-read-verified");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generateReadControl(root, fake);
+    // Act: run and report.
+    const { run, summary, text } = runDiagnostic(
+        root,
+        fake,
+        paths,
+        "R01",
+        "s1",
+        controlReadTrail() + ANSWER_JSONL("Read the seeded document."),
+        { stderr: DIAGNOSTIC_LOG },
+    );
+    // Assert: the read criterion stands on its own evidence.
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(summary.status, 0, summary.stderr);
+    assert.match(text, /Help: \*\*unknown\*\*/);
+    assert.match(text, /Observability: \*\*operation-level\*\*/);
+    assert.match(text, /Declared docs criterion: \*\*met\*\*/);
+    assert.match(text, /Positive: \*\*yes\*\*/);
+    assert.match(text, /not exact seeded content/);
+    rmRoot(root);
+});
+
+test("CONTROL: a failed or wrong-path read never satisfies the declared criterion", () => {
+    // Arrange: one read that targets a different document, and one that
+    // targets the seed but returns a refusal envelope.
+    const root = newRoot("control-read-unmet");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generateReadControl(root, fake);
+    // Act: run both through the same reporting path.
+    const wrong = runDiagnostic(
+        root,
+        fake,
+        paths,
+        "R01",
+        "wrong-path",
+        controlReadTrail("kb/other.md") + ANSWER_JSONL("Read another doc."),
+        { stderr: DIAGNOSTIC_LOG },
+    );
+    const failed = runDiagnostic(
+        root,
+        fake,
+        paths,
+        "R01",
+        "failed-read",
+        TOOL_JSONL_META(
+            "docs",
+            "read-1",
+            "completed",
+            { read: "kb/test-commands.md" },
+            "Rejected: the document is unreadable.\n",
+            { read: null },
+        ) + ANSWER_JSONL("The read was refused."),
+        { stderr: DIAGNOSTIC_LOG },
+    );
+    // Assert: a wrong path and a refusal each leave the read criterion unmet.
+    for (const observed of [wrong, failed]) {
+        assert.match(observed.text, /Declared docs criterion: \*\*unmet\*\*/);
+        assert.match(observed.text, /Positive: \*\*no\*\*/);
+    }
+    assert.match(
+        wrong.text,
+        /no completed docs read references kb\/test-commands\.md/,
+    );
+    assert.match(
+        failed.text,
+        /no successful retrieval of kb\/test-commands\.md/,
+    );
+    rmRoot(root);
+});
+
+test("CONTROL: help-only evidence does not satisfy the declared read criterion", () => {
+    // Arrange: a successful native help inventory, but no read operation.
+    const root = newRoot("control-help-only");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generateReadControl(root, fake);
+    // Act: run and report.
+    const { text } = runDiagnostic(
+        root,
+        fake,
+        paths,
+        "R01",
+        "s1",
+        TOOL_JSONL(
+            "docs",
+            "help-1",
+            "completed",
+            { search: "help" },
+            "- docs (Repository [repo]): this repository's knowledge\n",
+        ) + ANSWER_JSONL("The help inventory listed the repository lake."),
+        { stderr: DIAGNOSTIC_LOG },
+    );
+    // Assert: help is real evidence, but it is not the declared read.
+    assert.match(text, /Help: \*\*inventory returned\*\*/);
+    assert.match(text, /Observability: \*\*operation-level\*\*/);
+    assert.match(text, /Declared docs criterion: \*\*unmet\*\*/);
+    assert.match(text, /Positive: \*\*no\*\*/);
+    assert.match(text, /help\/inventory evidence is separate/);
+    rmRoot(root);
+});
+
+test("CONTROL: wrapper-only read evidence never satisfies the declared criterion", () => {
+    // Arrange: a Code Mode execute wrapper completes with read-like output,
+    // but the nested docs operation emits no event.
+    const root = newRoot("control-wrapper-read");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generateReadControl(root, fake);
+    // Act: run and report.
+    const { text } = runDiagnostic(
+        root,
+        fake,
+        paths,
+        "R01",
+        "s1",
+        TOOL_JSONL(
+            "execute",
+            "cm-1",
+            "completed",
+            {
+                code: 'return await tools.docs.docs_search({ read: "kb/test-commands.md" });',
+            },
+            "# Running the suite\n\ndocs: revision " + "a".repeat(64) + " —\n",
+        ) + ANSWER_JSONL("The Code Mode read returned the document."),
+        { stderr: DIAGNOSTIC_LOG },
+    );
+    // Assert: the wrapper is recorded, never promoted to a verified read.
+    assert.match(text, /Observability: \*\*wrapper-only\*\*/);
+    assert.match(text, /Declared docs criterion: \*\*unmet\*\*/);
+    assert.match(text, /Positive: \*\*no\*\*/);
+    rmRoot(root);
+});
+
+/* ------------------------------------------------------------------ *
  * Scenario naming — display-only map, saved per run
  * ------------------------------------------------------------------ */
 
