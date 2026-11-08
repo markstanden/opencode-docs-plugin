@@ -160,6 +160,7 @@ const FAKE_OPENCODE_LINES = [
     '    [ -n "$FAKE_JUDGE_OUT" ] && cat "$FAKE_JUDGE_OUT"',
     '    [ -n "$FAKE_JUDGE_ERR" ] && cat "$FAKE_JUDGE_ERR" >&2',
     '    [ -n "$FAKE_JUDGE_HOOK" ] && sh "$FAKE_JUDGE_HOOK"',
+    '    if [ -n "$FAKE_JUDGE_SIGTERM_DELAY" ]; then trap \'\' TERM; sleep "$FAKE_JUDGE_SIGTERM_DELAY"; exit 0; fi',
     '    [ -n "$FAKE_JUDGE_DELAY" ] && exec sleep "$FAKE_JUDGE_DELAY"',
     '    exit "${FAKE_JUDGE_EXIT:-0}" ;;',
     "  placement-*)",
@@ -169,6 +170,7 @@ const FAKE_OPENCODE_LINES = [
     '    [ -n "$FAKE_TRIAL_OUT" ] && cat "$FAKE_TRIAL_OUT"',
     '    [ -n "$FAKE_TRIAL_ERR" ] && cat "$FAKE_TRIAL_ERR" >&2',
     '    [ -n "$FAKE_TRIAL_HOOK" ] && sh "$FAKE_TRIAL_HOOK"',
+    '    if [ -n "$FAKE_TRIAL_SIGTERM_DELAY" ]; then trap \'\' TERM; sleep "$FAKE_TRIAL_SIGTERM_DELAY"; exit 0; fi',
     '    [ -n "$FAKE_TRIAL_DELAY" ] && exec sleep "$FAKE_TRIAL_DELAY"',
     '    exit "${FAKE_TRIAL_EXIT:-0}" ;;',
     "esac",
@@ -198,17 +200,20 @@ function envFor(root: string, fake: string, extra: Env = {}): Env {
     return env;
 }
 
-/** Run the harness exactly as production does: as a subprocess. */
+/** Run the harness exactly as production does: as a subprocess, watchdog-bounded. */
 const runHarness = (
     root: string,
     fake: string,
     args: string[],
     extraEnv: Env = {},
+    watchdogMs?: number,
 ) =>
     spawnSync(process.execPath, [HARNESS, ...args], {
         cwd: root,
         encoding: "utf8",
         env: envFor(root, fake, extraEnv),
+        timeout: watchdogMs,
+        killSignal: "SIGKILL",
     });
 
 /** Generate one corpus; the corpus name decides whether a test shares it. */
@@ -395,8 +400,180 @@ test("F08: timed-out trial is invalid and reports the timeout", () => {
     rmRoot(root);
 });
 
-test("F08: mixed selection keeps the good case judgeable and fails the sweep", () => {
-    const root = newRoot("f08-mixed");
+/* ------------------------------------------------------------------ *
+ * M03 — a timeout is failure regardless of exit code, and driveway
+ * completion evidence must be real
+ * ------------------------------------------------------------------ */
+
+test("M03: a SIGTERM-ignoring CLI that exits 0 after the timeout is still invalid", () => {
+    const root = newRoot("m03-ignore-term");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [baselineCase("T01")]);
+    const result = runHarness(
+        root,
+        fake,
+        ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        {
+            FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()),
+            FAKE_TRIAL_SIGTERM_DELAY: "10",
+            TRIAL_TIMEOUT_MS: "400",
+            TRIAL_TERM_GRACE_MS: "350",
+        },
+        20_000,
+    );
+    assert.match(result.stdout + result.stderr, /timed out after 400/);
+    assert.notEqual(result.status, 0, result.stderr);
+    const meta = readJson(join(paths.results, "s1", "T01", "meta.json"));
+    assert.equal(meta.timedOut, true);
+    assert.equal(meta.answerValid, false);
+    assert.match(meta.invalidReason, /timed out after 400 ms/);
+    assert.equal(
+        meta.killEscalated,
+        true,
+        "an ignored SIGTERM must escalate",
+    );
+    rmRoot(root);
+});
+
+test("M03: judge with a SIGTERM-ignoring CLI is judge-error, never a pass", () => {
+    const root = newRoot("m03-judge-ignore");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [baselineCase("T01")]);
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+            { FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()) },
+        ).status,
+        0,
+    );
+    const judge = runHarness(
+        root,
+        fake,
+        [
+            "judge",
+            "T01",
+            "--stamp",
+            "s1",
+            "--judge-model",
+            "x/ignorer",
+            ...commandArgs(paths),
+        ],
+        {
+            FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()),
+            FAKE_JUDGE_SIGTERM_DELAY: "10",
+            TRIAL_TIMEOUT_MS: "400",
+            TRIAL_TERM_GRACE_MS: "350",
+        },
+        20_000,
+    );
+    assert.notEqual(judge.status, 0);
+    const verdict = readJson(join(paths.results, "s1", "T01", "verdict.json"));
+    assert.equal(verdict.verdict, "judge-error");
+    assert.match(verdict.reason, /timed out/);
+    rmRoot(root);
+});
+
+test("M03: output beyond the capture cap is visible overflow and invalid evidence", () => {
+    const root = newRoot("m03-overflow");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [baselineCase("T01")]);
+    const bigPart = "x".repeat(66 * 1024 * 1024);
+    const out = JSON.stringify({ part: { type: "text", text: bigPart } }) + "\n";
+    const results = runHarness(
+        root,
+        fake,
+        ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_TRIAL_OUT: file(root, "huge.jsonl", out) },
+        60_000,
+    );
+    assert.notEqual(results.status, 0);
+    const meta = readJson(join(paths.results, "s1", "T01", "meta.json"));
+    assert.equal(meta.outputOverflow, true);
+    assert.match(meta.invalidReason, /capture limit/);
+    if (existsSync(join(root, "huge.jsonl"))) rmRoot(root);
+});
+
+test("M03: a judge exceeding the capture cap is judge-error", () => {
+    const root = newRoot("m03-judge-overflow");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [baselineCase("T01")]);
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+            { FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()) },
+        ).status,
+        0,
+    );
+    const bigPart = "x".repeat(66 * 1024 * 1024);
+    const out = JSON.stringify({ part: { type: "text", text: bigPart } }) + "\n";
+    const judge = runHarness(
+        root,
+        fake,
+        [
+            "judge",
+            "T01",
+            "--stamp",
+            "s1",
+            "--judge-model",
+            "x/flood",
+            ...commandArgs(paths),
+        ],
+        { FAKE_JUDGE_OUT: file(root, "judges.jsonl", out) },
+        60_000,
+    );
+    assert.notEqual(judge.status, 0);
+    const verdict = readJson(join(paths.results, "s1", "T01", "verdict.json"));
+    assert.equal(verdict.verdict, "judge-error");
+    assert.match(verdict.reason, /capture limit/);
+    rmRoot(root);
+});
+
+test("M03: text plus malformed JSONL is invalid — a broken trail is not completed evidence", () => {
+    const root = newRoot("m03-partial");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [baselineCase("T01")]);
+    const out = ANSWER_JSONL() + "this line is not json\n";
+    const results = runHarness(
+        root,
+        fake,
+        ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_TRIAL_OUT: file(root, "partial.jsonl", out) },
+    );
+    assert.notEqual(results.status, 0);
+    const meta = readJson(join(paths.results, "s1", "T01", "meta.json"));
+    assert.equal(meta.telemetry.parseFailures, 1);
+    assert.equal(meta.answerValid, false);
+    assert.match(meta.invalidReason, /unparsable output line/);
+    rmRoot(root);
+});
+
+test("M03: a tool trail without a final completion event is not a completed answer", () => {
+    const root = newRoot("m03-tool-last");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [baselineCase("T01")]);
+    const out =
+        ANSWER_JSONL("Working piece of an answer.") +
+        TOOL_JSONL("read", "call-1", "completed", { path: "/etc/hosts" }, "ok");
+    const results = runHarness(
+        root,
+        fake,
+        ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_TRIAL_OUT: file(root, "tool-last.jsonl", out) },
+    );
+    assert.notEqual(results.status, 0);
+    const meta = readJson(join(paths.results, "s1", "T01", "meta.json"));
+    assert.equal(
+        meta.invalidReason,
+        "trial produced no final completion event",
+    );
+    rmRoot(root);
+});
+
+test("F08: mixed selection keeps the good case judgeable and fails the sweep", () => {    const root = newRoot("f08-mixed");
     const fake = writeFakeOpencode(root);
     const { paths } = generate(root, fake, [
         baselineCase("T01"),
@@ -440,6 +617,29 @@ test("F08: mixed selection keeps the good case judgeable and fails the sweep", (
 function markerHook(root: string, marker: string) {
     return file(root, "marker-hook.sh", 'echo invoked >> "' + marker + '"\n');
 }
+
+/* ------------------------------------------------------------------ *
+ * M06 — natural prompts carry no documentation framing at all
+ * ------------------------------------------------------------------ */
+
+test("M06: the natural template asks nothing about destinations, lakes or documents", () => {
+    const root = newRoot("m06-natural");
+    const fake = writeFakeOpencode(root);
+    const natural = {
+        ...baselineCase("N01"),
+        claim: "The retry loop here must cap at three attempts.",
+        evidence: "A reproduced trace in this repository.",
+        expected: "Recording proposed",
+        promptKind: "natural",
+    };
+    const { paths, result } = generate(root, fake, [natural]);
+    assert.equal(result.status, 0, result.stderr);
+    const prompt = readFileSync(join(paths.prompts, "N01.md"), "utf8");
+    assert.equal(!/doc|lake|destination|record|State:/i.test(prompt), true,
+        "natural prompt must not frame documentation:\n" + prompt);
+    assert.match(prompt, /What do you recommend we do, if anything\?/);
+    rmRoot(root);
+});
 
 /* ------------------------------------------------------------------ *
  * F03 — generation fingerprints: reuse only a matching generation
@@ -665,7 +865,203 @@ test("F06: explicit --stamp must name an existing run", () => {
 });
 
 /* ------------------------------------------------------------------ *
- * F02 — reports render frozen run descriptions, never current inputs
+ * M02 — runs certify current inputs and the prepared tree
+ * ------------------------------------------------------------------ */
+
+test("M02: a changed corpus case refuses a run instead of executing the stale prompt", () => {
+    const root = newRoot("m02-changed-case");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [baselineCase("T01")]);
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+            { FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()) },
+        ).status,
+        0,
+    );
+    const changed = baselineCase("T01");
+    changed.claim = "A DIFFERENT claim the run must not silently adopt.";
+    writeCorpus(root, [changed]);
+    const rerun = runHarness(
+        root,
+        fake,
+        ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()) },
+    );
+    assert.notEqual(rerun.status, 0);
+    assert.match(
+        rerun.stderr,
+        /definition of T01 differs from the frozen experiment/,
+    );
+    rmRoot(root);
+});
+
+test("M02: a different plugin at run time refuses both the generation and the stamp", () => {
+    const root = newRoot("m02-plugin");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [baselineCase("T01")]);
+    const otherPlugin = join(root, "other-plugin");
+    mkdirSync(join(otherPlugin, "src"), { recursive: true });
+    writeFileSync(join(otherPlugin, "package.json"), "{}\n");
+    writeFileSync(join(otherPlugin, "src", "index.ts"), "// other\n");
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+            { FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()) },
+        ).status,
+        0,
+    );
+    const rerun = runHarness(root, fake, [
+        "run",
+        "T01",
+        "--stamp",
+        "s1",
+        "--plugin",
+        otherPlugin,
+        ...commandArgs(paths),
+    ]);
+    assert.notEqual(rerun.status, 0);
+    assert.match(rerun.stderr, /orchestration: .*vs/);
+    rmRoot(root);
+});
+
+test("M02: a mutated, missing or added prepared file refuses the run", () => {
+    const root = newRoot("m02-tree");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [recordingCase("T01")]);
+    const base = ["run", "T01", "--stamp", "s1", ...commandArgs(paths)];
+    const env = { FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()) };
+
+    writeFileSync(
+        join(paths.fixtures, "T01", "lakes", "kb", "existing.md"),
+        "# Tampered seed\n",
+    );
+    const tampered = runHarness(root, fake, base, env);
+    assert.notEqual(tampered.status, 0);
+    assert.match(
+        tampered.stderr,
+        /prepared file lakes\/kb\/existing\.md does not match the recorded generation/,
+    );
+
+    rmSync(join(paths.fixtures, "T01", "lakes", "kb", "existing.md"));
+    const missing = runHarness(root, fake, base, env);
+    assert.notEqual(missing.status, 0);
+    assert.match(
+        missing.stderr,
+        /prepared file lakes\/kb\/existing\.md is missing/,
+    );
+
+    file(root, "regenerate-placeholder", "");
+    // Restore the seed by regenerating, then add an unrecorded file.
+    generate(root, fake, [recordingCase("T01")], { force: true });
+    writeFileSync(
+        join(paths.fixtures, "T01", "lakes", "kb", "stray.md"),
+        "# stray\n",
+    );
+    const added = runHarness(root, fake, base, env);
+    assert.notEqual(added.status, 0);
+    assert.match(
+        added.stderr,
+        /prepared tree contains an unrecorded entry lakes\/kb\/stray\.md/,
+    );
+    rmRoot(root);
+});
+
+test("M02: unchanged prepared inputs keep being reusable", () => {
+    const root = newRoot("m02-kept");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [baselineCase("T01")]);
+    const again = generate(root, fake, [baselineCase("T01")]);
+    assert.equal(again.result.status, 0);
+    assert.match(again.result.stdout, /T01: kept/);
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+            { FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()) },
+        ).status,
+        0,
+    );
+    rmRoot(root);
+});
+
+/* ------------------------------------------------------------------ *
+ * M07 — the freeze must be verifiable, and the wrapper's limits are honest
+ * ------------------------------------------------------------------ */
+
+test("M07: a container-keyed run without a verifiable host freeze refuses", () => {
+    const root = newRoot("m07-freeze");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [baselineCase("T01")]);
+    const run = runHarness(
+        root,
+        fake,
+        ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        {
+            FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()),
+            PLACEMENT_IMAGE: "localhost/trial-image:latest",
+        },
+    );
+    assert.notEqual(run.status, 0);
+    assert.match(run.stderr, /no verified host freeze/);
+    assert.ok(!existsSync(join(paths.results, "s1", "T01", "meta.json")));
+    rmRoot(root);
+});
+
+test("M07: an unwritable results root fails a host run instead of assuming a freeze", () => {
+    const root = newRoot("m07-ro");
+    if (typeof process.getuid === "function" && process.getuid() === 0) {
+        return; // root ignores directory modes; the refusal is not exercisable
+    }
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [baselineCase("T01")]);
+    mkdirSync(paths.results, { recursive: true });
+    chmodSync(paths.results, 0o555);
+    try {
+        const run = runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+            { FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()) },
+        );
+        assert.notEqual(run.status, 0);
+        assert.match(run.stderr, /cannot freeze/);
+    } finally {
+        chmodSync(paths.results, 0o755);
+        rmRoot(root);
+    }
+});
+
+test("M07: the wrapper refuses a >1 worker request instead of feigning parallelism", () => {
+    const root = newRoot("m07-jobs");
+    const fake = writeFakeOpencode(root);
+    const stubDir = join(root, "stub");
+    mkdirSync(stubDir, { recursive: true });
+    chmodSync(writeStubPodman(stubDir), 0o755);
+    generate(root, fake, [baselineCase("T01")]);
+    const run = runWrapper(root, fake, ["run", "T01", "--jobs", "2"], {
+        PATH: stubDir + ":" + process.env.PATH,
+    });
+    assert.equal(run.status, 2);
+    assert.match(run.stderr, /not supported by the wrapper/);
+    const log = existsSync(join(root, "podman.log"))
+        ? readFileSync(join(root, "podman.log"), "utf8")
+        : "";
+    assert.ok(
+        !log.includes(":/fixtures/"),
+        "no per-case container may be dispatched after the refusal",
+    );
+    rmRoot(root);
+});
+
+/* ------------------------------------------------------------------ *
+ * M01 — judging answers the frozen experiment, not today's corpus
+ * (tests below; the F02 reporting tests continue after them)
  * ------------------------------------------------------------------ */
 
 /** Per-experiment sub-layout so two experiments never share fixture roots. */
@@ -792,24 +1188,27 @@ test("F02: a later experiment cannot relabel an earlier stamp", () => {
     rmRoot(root);
 });
 
-test("F02: container boundary is recorded when the run saw an image", () => {
+test("F02: the trial container boundary is recorded when the run is wrapped", () => {
     const root = newRoot("f02-boundary");
     const fake = writeFakeOpencode(root);
     const { paths } = generate(root, fake, [baselineCase("T01")]);
+    // M07: the wrapper reaches the harness with the TRIAL image facts, so the
+    // frozen description names the containers the cases run in — not the
+    // orchestrating host process.
     const run = runHarness(
         root,
         fake,
         ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
         {
             FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()),
-            PLACEMENT_IMAGE: "localhost/trial-image:latest",
-            PLACEMENT_IMAGE_ID: "sha256:fake",
+            PLACEMENT_TRIAL_IMAGE: "localhost/trial-image:latest",
+            PLACEMENT_TRIAL_IMAGE_ID: "sha256:fake",
         },
     );
-    assert.equal(run.status, 0);
+    assert.equal(run.status, 0, run.stderr);
     const runJson = readJson(join(paths.results, "s1", "run.json"));
-    assert.equal(runJson.boundary.containerised, true);
-    assert.equal(runJson.boundary.image, "localhost/trial-image:latest");
+    assert.equal(runJson.trialBoundary.containerised, true);
+    assert.equal(runJson.trialBoundary.image, "localhost/trial-image:latest");
     const summary = runHarness(root, fake, [
         "summary",
         "--stamp",
@@ -868,9 +1267,9 @@ test("F02: dirty plugin identity is content-reproducible", () => {
             0,
         );
     }
-    const hash1 = readJson(join(paths.results, "d1", "run.json")).provenance
+    const hash1 = readJson(join(paths.results, "d1", "run.json")).orchestration
         .pluginHash;
-    const hash2 = readJson(join(paths.results, "d2", "run.json")).provenance
+    const hash2 = readJson(join(paths.results, "d2", "run.json")).orchestration
         .pluginHash;
     assert.equal(hash1, hash2, "same content must produce the same identity");
     withSkill("# skill v2 — edited\n");
@@ -892,7 +1291,7 @@ test("F02: dirty plugin identity is content-reproducible", () => {
         ).status,
         0,
     );
-    const hash3 = readJson(join(paths.results, "d3", "run.json")).provenance
+    const hash3 = readJson(join(paths.results, "d3", "run.json")).orchestration
         .pluginHash;
     assert.notEqual(hash3, hash1, "edited guidance must change the identity");
     rmRoot(root);
@@ -1150,6 +1549,113 @@ test("F04: decision-only baseline keeps the legacy --allow-writes semantics", ()
 });
 
 /* ------------------------------------------------------------------ *
+ * M08 — permission modes are mutation evidence; labels use structured data
+ * ------------------------------------------------------------------ */
+
+test("M08: a chmod-only change is a detected mutation and invalidates a decision-only run", () => {
+    const root = newRoot("m08-mode");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [baselineCase("T01")]);
+    const hook = file(
+        root,
+        "chmod.sh",
+        "#!/bin/sh\nchmod 640 opencode.json\n",
+    );
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+            {
+                FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()),
+                FAKE_TRIAL_HOOK: hook,
+            },
+            20_000,
+        ).status,
+        0,
+    );
+    const caseDir = join(paths.results, "s1", "T01");
+    const meta = readJson(join(caseDir, "meta.json"));
+    assert.equal(
+        meta.writes,
+        1,
+        "a permission-only change must count as a write",
+    );
+    assert.match(
+        readFileSync(join(caseDir, "writes.txt"), "utf8"),
+        /modified: work\/opencode\.json \(mode\)/,
+    );
+    const judge = runHarness(
+        root,
+        fake,
+        ["judge", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+    );
+    assert.notEqual(
+        judge.status,
+        0,
+        "a decision-only trial that changed a file is invalid",
+    );
+    const summary = runHarness(root, fake, [
+        "summary",
+        "--stamp",
+        "s1",
+        ...commandArgs(paths),
+    ]);
+    assert.match(
+        summary.stdout,
+        /\| 1 file\(s\)( \+ 1 violation\(s\))? \|/,
+        "the Writes column must come from structured mutation evidence",
+    );
+    assert.doesNotMatch(summary.stdout, /\| 2 file/);
+    rmRoot(root);
+});
+
+test("M08: an unreadable directory is recorded as evidence, not an empty success", () => {
+    const root = newRoot("m08-unreadable");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [recordingCase("T01")]);
+    const hook = file(
+        root,
+        "hide-dir.sh",
+        "#!/bin/sh\nmkdir ../lakes/kb/subdir\nmkdir ../lakes/kb/subdir/deep\nchmod 000 ../lakes/kb/subdir\n",
+    );
+    try {
+        assert.equal(
+            runHarness(
+                root,
+                fake,
+                ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+                {
+                    FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()),
+                    FAKE_TRIAL_HOOK: hook,
+                },
+                20_000,
+            ).status,
+            0,
+        );
+        const caseDir = join(paths.results, "s1", "T01");
+        assert.match(
+            readFileSync(join(caseDir, "writes.txt"), "utf8"),
+            /subdir/,
+            "the snapshot must not silently document an unreadable subtree as empty",
+        );
+    } finally {
+        // Restore traversal so the temp root can be removed.
+        for (const candidate of [
+            join(root, "results", "s1", "T01", "live", "lakes", "kb", "subdir"),
+        ]) {
+            try {
+                chmodSync(candidate, 0o755);
+            } catch {
+                /* already gone */
+            }
+        }
+        rmRoot(root);
+    }
+});
+
+/* ------------------------------------------------------------------ *
  * F07 — telemetry: dedup, twin and code-mode visibility, honest gaps
  * ------------------------------------------------------------------ */
 
@@ -1202,7 +1708,10 @@ test("F07: trail is deduplicated by call id and classified by surface", () => {
         ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
         { FAKE_TRIAL_OUT: file(root, "trail.jsonl", trail) },
     );
-    assert.equal(run.status, 0);
+    // M03: a trailing tool part after the answer plus an unparsable line is
+    // an incomplete trail — the run is invalid, but every attempt count and
+    // exposure classification below is still recorded evidence.
+    assert.notEqual(run.status, 0);
     const caseDir = join(paths.results, "s1", "T01");
     const toolsLines = readFileSync(join(caseDir, "tools.jsonl"), "utf8")
         .split("\n")
@@ -2094,11 +2603,27 @@ test("F12: the wrapper mounts the selected corpus and stages per stamp+case", ()
     const redacted = readJson(join(root, "run-fixtures", redactedPath));
     assert.deepEqual(Object.keys(redacted[0]).sort(), [
         "docsCriterion",
+        "generationInputsHash",
         "id",
         "mutationPolicy",
     ]);
-    // The staged fixture carries the generation fingerprint, never rubrics.
+    // The frozen stamp description records the TRIAL boundary from the
+    // wrapper's image facts, not the host orchestrator (M07).
     const staged = join(root, "run-fixtures", "wx", "T01");
+    const runJson = readJson(join(layout(root).results, "wx", "run.json"));
+    assert.equal(runJson.trialBoundary.containerised, true);
+    assert.equal(
+        runJson.trialBoundary.image,
+        "localhost/opencode-placement-trials",
+    );
+    // Each staged case carries a nonsecret freeze receipt naming this
+    // stamp and case — the container-verifiable proof of a host freeze.
+    const receipt = readJson(join(staged, "frozen.json"));
+    assert.equal(receipt.kind, "placement-freeze-receipt");
+    assert.equal(receipt.stamp, "wx");
+    assert.equal(receipt.caseId, "T01");
+    assert.match(receipt.runJsonSha256, /^[0-9a-f]{64}$/);
+    // The staged fixture carries the generation fingerprint, never rubrics.
     assert.ok(existsSync(join(staged, "generation.json")));
     assert.ok(!existsSync(join(staged, "rubric.md")));
     rmRoot(root);
@@ -2124,6 +2649,774 @@ test("F12: wrapper default selection enumerates the corpus ids", () => {
         2,
         "one container per corpus case, any id namespace",
     );
+    rmRoot(root);
+});
+
+/* ------------------------------------------------------------------ *
+ * M01 — judging answers the frozen experiment, not today's corpus
+ * ------------------------------------------------------------------ */
+
+/** A recording case with an explicit replace/create artefact expectation. */
+function docGateCase(
+    id: string,
+    expectedDocs: Record<string, unknown> | null,
+    extra: Record<string, unknown> = {},
+) {
+    return {
+        ...baselineCase(id),
+        seeds: [
+            {
+                surface: "lakes",
+                path: "kb/existing.md",
+                contents:
+                    "---\nArea: kb\nKeywords: existing, seed\nSummary: The seeded knowledge doc.\n---\n\n# Existing\n\n### Facts\n\n- prior knowledge\n- Retained open question line.\n- Stale outdated claim\n",
+            },
+        ],
+        mutationPolicy: { allowed: ["lakes/kb/**"], minWrites: 1 },
+        expectedDocs,
+        ...extra,
+    };
+}
+
+const VALID_CREATE_DOC = [
+    "---",
+    "Area: kb",
+    "Keywords: trial, creation, gate",
+    "Summary: A deterministically valid trial creation.",
+    "---",
+    "",
+    "# Trial Creation",
+    "",
+    "### Facts",
+    "",
+    "- Recorded by the trial.",
+].join("\n") + "\n";
+
+test("M01: loosening today's corpus cannot resurrect a frozen recording minimum", () => {
+    const root = newRoot("m01-loosen");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [docGateCase("T01", null)]);
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+            { FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()) },
+        ).status,
+        0,
+    );
+    // The CURRENT corpus is loosened after the run: judging must still use
+    // the frozen definition, which required the write.
+    const loosened: Record<string, unknown> = { ...docGateCase("T01", null) };
+    delete loosened.mutationPolicy;
+    writeCorpus(root, [loosened]);
+    const judge = runHarness(
+        root,
+        fake,
+        ["judge", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+    );
+    assert.notEqual(judge.status, 0);
+    const verdict = readJson(join(paths.results, "s1", "T01", "verdict.json"));
+    assert.equal(verdict.verdict, "invalid");
+    assert.match(verdict.reason, /wrote 0 file\(s\)/);
+    rmRoot(root);
+});
+
+test("M01: an explicit id outside the saved experiment is refused", () => {
+    const root = newRoot("m01-ids");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [baselineCase("T01")]);
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+            { FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()) },
+        ).status,
+        0,
+    );
+    const judge = runHarness(
+        root,
+        fake,
+        ["judge", "T02", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+    );
+    assert.equal(judge.status, 2);
+    assert.match(judge.stderr, /not part of experiment s1/);
+    rmRoot(root);
+});
+
+test("M01: an edited recorded answer refuses judging instead of being adopted", () => {
+    const root = newRoot("m01-answer");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [baselineCase("T01")]);
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+            { FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()) },
+        ).status,
+        0,
+    );
+    writeFileSync(
+        join(paths.results, "s1", "T01", "final.md"),
+        "Rewritten answer claiming the personal lake.\n",
+    );
+    const judge = runHarness(
+        root,
+        fake,
+        ["judge", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+    );
+    assert.notEqual(judge.status, 0);
+    const verdict = readJson(join(paths.results, "s1", "T01", "verdict.json"));
+    assert.equal(verdict.verdict, "invalid");
+    assert.match(verdict.reason, /recorded answer altered after the run/);
+    rmRoot(root);
+});
+
+test("M01: an edited recorded rubric refuses judging instead of being adopted", () => {
+    const root = newRoot("m01-rubric");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [docGateCase("T01", null)]);
+    const hook = file(
+        root,
+        "create-rubric-rig.sh",
+        "#!/bin/sh\ncat > ../lakes/kb/trial-doc.md <<'EOD'\n" +
+            VALID_CREATE_DOC +
+            "EOD\n",
+    );
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+            {
+                FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()),
+                FAKE_TRIAL_HOOK: hook,
+            },
+            20_000,
+        ).status,
+        0,
+    );
+    writeFileSync(
+        join(paths.results, "s1", "T01", "rubric.md"),
+        "# Replaced rubric\n\nAccepts: anything at all.",
+    );
+    const judge = runHarness(
+        root,
+        fake,
+        ["judge", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+    );
+    assert.notEqual(judge.status, 0);
+    const verdict = readJson(join(paths.results, "s1", "T01", "verdict.json"));
+    assert.equal(verdict.verdict, "invalid");
+    assert.match(verdict.reason, /recorded rubric does not match/);
+    rmRoot(root);
+});
+
+/* ------------------------------------------------------------------ *
+ * M04 — gates consume verified completions, not attempts or dead code
+ * ------------------------------------------------------------------ */
+
+test("M04: a failed docs read does not satisfy a verified read gate", () => {
+    const root = newRoot("m04-denied");
+    const fake = writeFakeOpencode(root);
+    const docCase = docGateCase(
+        "T01",
+        null,
+        {
+            docsCriterion: { minVerifiedCalls: 1, verbs: ["read"] },
+            mutationPolicy: { allowed: ["lakes/kb/**"], minWrites: 0 },
+        },
+    );
+    const { paths } = generate(root, fake, [docCase]);
+    const trail = [
+        TOOL_JSONL(
+            "docs",
+            "call-1",
+            "error",
+            { read: "kb/existing.md" },
+            "denied",
+        ),
+        ANSWER_JSONL(),
+    ].join("");
+    const run = runHarness(
+        root,
+        fake,
+        ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_TRIAL_OUT: file(root, "trail.jsonl", trail) },
+    );
+    // The denied read alone does not make the run incomplete: the answer
+    // still trails the trail properly. The rejection happens at the gate.
+    assert.equal(run.status, 0);
+    const judge = runHarness(
+        root,
+        fake,
+        ["judge", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+    );
+    assert.notEqual(judge.status, 0);
+    const verdict = readJson(join(paths.results, "s1", "T01", "verdict.json"));
+    assert.equal(verdict.verdict, "invalid");
+    assert.match(verdict.reason, /0 verified docs op/);
+    rmRoot(root);
+});
+
+test("M04: a completed read of an unrelated doc does not satisfy a relevant-path gate", () => {
+    const root = newRoot("m04-unrelated");
+    const fake = writeFakeOpencode(root);
+    const docCase = docGateCase(
+        "T01",
+        null,
+        {
+            docsCriterion: {
+                minVerifiedCalls: 1,
+                verbs: ["read"],
+                paths: ["kb/existing.md"],
+            },
+            mutationPolicy: { allowed: ["lakes/kb/**"], minWrites: 0 },
+        },
+    );
+    const { paths } = generate(root, fake, [docCase]);
+    const trail = [
+        TOOL_JSONL("docs", "call-1", "completed", { read: "kb/other.md" }, "contents"),
+        ANSWER_JSONL(),
+    ].join("");
+    runHarness(
+        root,
+        fake,
+        ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_TRIAL_OUT: file(root, "trail.jsonl", trail) },
+    );
+    const judge = runHarness(
+        root,
+        fake,
+        ["judge", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+    );
+    assert.notEqual(judge.status, 0);
+    const verdict = readJson(join(paths.results, "s1", "T01", "verdict.json"));
+    assert.match(verdict.reason, /no completed docs operation references/);
+    rmRoot(root);
+});
+
+test("M04: code-mode-only attempts make the docs gate inconclusive, never satisfied", () => {
+    const root = newRoot("m04-codemode");
+    const fake = writeFakeOpencode(root);
+    const docCase = docGateCase(
+        "T01",
+        null,
+        {
+            docsCriterion: { minVerifiedCalls: 1, verbs: ["read"] },
+            mutationPolicy: { allowed: ["lakes/kb/**"], minWrites: 0 },
+        },
+    );
+    const { paths } = generate(root, fake, [docCase]);
+    const trail = [
+        TOOL_JSONL(
+            "execute",
+            "call-1",
+            "completed",
+            { code: "const r = await tools.docs.docs_search({read:'kb/existing.md'}); return r;" },
+            "ok",
+        ),
+        ANSWER_JSONL(),
+    ].join("");
+    runHarness(
+        root,
+        fake,
+        ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_TRIAL_OUT: file(root, "trail.jsonl", trail) },
+    );
+    const judge = runHarness(
+        root,
+        fake,
+        ["judge", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+    );
+    assert.notEqual(judge.status, 0);
+    const verdict = readJson(join(paths.results, "s1", "T01", "verdict.json"));
+    assert.match(verdict.reason, /unobservable nested operations/);
+    assert.match(verdict.reason, /inconclusive/);
+    rmRoot(root);
+});
+
+test("M04: discovery distinguishes attempted from verified help in the summary", () => {
+    const root = newRoot("m04-discovery");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [baselineCase("T01")]);
+    const trail = [
+        TOOL_JSONL(
+            "execute",
+            "call-1",
+            "completed",
+            { code: "if (false) { await tools.docs.docs_search({ search: 'help' }); }" },
+            "ok",
+        ),
+        ANSWER_JSONL(),
+    ].join("");
+    runHarness(
+        root,
+        fake,
+        ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_TRIAL_OUT: file(root, "trail.jsonl", trail) },
+    );
+    const summary = runHarness(root, fake, [
+        "summary",
+        "--stamp",
+        "s1",
+        ...commandArgs(paths),
+    ]);
+    assert.match(summary.stdout, /no help \(1 attempted\)/);
+    assert.doesNotMatch(summary.stdout, /help×1/);
+    rmRoot(root);
+});
+
+/* ------------------------------------------------------------------ *
+ * M05 — recording gates verify the actual artefacts
+ * ------------------------------------------------------------------ */
+
+test("M05: a junk non-Markdown file cannot satisfy a required knowledge write", () => {
+    const root = newRoot("m05-junk");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [
+        docGateCase("T01", { kind: "create" }),
+    ]);
+    const hook = file(
+        root,
+        "junk.sh",
+        "#!/bin/sh\nmkdir -p ../lakes/kb\necho 'not a doc at all' > ../lakes/kb/notes.txt\n",
+    );
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+            {
+                FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()),
+                FAKE_TRIAL_HOOK: hook,
+            },
+            20_000,
+        ).status,
+        0,
+    );
+    const judge = runHarness(
+        root,
+        fake,
+        ["judge", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+    );
+    assert.notEqual(judge.status, 0);
+    const verdict = readJson(join(paths.results, "s1", "T01", "verdict.json"));
+    assert.match(verdict.reason, /no created knowledge doc/);
+    rmRoot(root);
+});
+
+test("M05: directory-only changes cannot satisfy a required knowledge write", () => {
+    const root = newRoot("m05-dirs");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [
+        docGateCase("T01", { kind: "create" }),
+    ]);
+    const hook = file(root, "dirs.sh", "#!/bin/sh\nmkdir ../lakes/kb/empty-dir\n");
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+            {
+                FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()),
+                FAKE_TRIAL_HOOK: hook,
+            },
+            20_000,
+        ).status,
+        0,
+    );
+    const judge = runHarness(
+        root,
+        fake,
+        ["judge", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+    );
+    assert.notEqual(judge.status, 0);
+    const verdict = readJson(join(paths.results, "s1", "T01", "verdict.json"));
+    assert.match(verdict.reason, /no created knowledge doc/);
+    rmRoot(root);
+});
+
+test("M05: structurally invalid Markdown cannot satisfy a required knowledge write", () => {
+    const root = newRoot("m05-structure");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [
+        docGateCase("T01", { kind: "create" }),
+    ]);
+    const hook = file(
+        root,
+        "flat.sh",
+        "#!/bin/sh\ncat > ../lakes/kb/trial-doc.md <<'EOD'\n# No front-matter at all\n\nJust prose with no claim section.\nEOD\n",
+    );
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+            {
+                FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()),
+                FAKE_TRIAL_HOOK: hook,
+            },
+            20_000,
+        ).status,
+        0,
+    );
+    const judge = runHarness(
+        root,
+        fake,
+        ["judge", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+    );
+    assert.notEqual(judge.status, 0);
+    const verdict = readJson(join(paths.results, "s1", "T01", "verdict.json"));
+    assert.match(verdict.reason, /structurally valid knowledge doc/);
+    rmRoot(root);
+});
+
+test("M05: a valid creation passes the gate and reaches the semantic judge", () => {
+    const root = newRoot("m05-valid-create");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [
+        docGateCase("T01", { kind: "create" }),
+    ]);
+    const hook = file(
+        root,
+        "create.sh",
+        "#!/bin/sh\nmkdir -p ../lakes/kb\ncat > ../lakes/kb/trial-doc.md <<'EOD'\n" +
+            VALID_CREATE_DOC +
+            "EOD\n",
+    );
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+            {
+                FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()),
+                FAKE_TRIAL_HOOK: hook,
+            },
+            20_000,
+        ).status,
+        0,
+    );
+    const marker = file(root, "judge-invoked", "");
+    const judge = runHarness(
+        root,
+        fake,
+        ["judge", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        {
+            FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()),
+            FAKE_JUDGE_HOOK: markerHook(root, marker),
+        },
+    );
+    assert.equal(judge.status, 0, judge.stderr);
+    assert.equal(
+        readJson(join(paths.results, "s1", "T01", "verdict.json")).verdict,
+        "pass",
+    );
+    assert.equal(readFileSync(marker, "utf8"), "invoked\n");
+    rmRoot(root);
+});
+
+test("M05: an unrelated change beside a valid replacement cannot satisfy the case", () => {
+    const root = newRoot("m05-unrelated");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [
+        docGateCase("T01", {
+            kind: "replace",
+            target: "lakes/kb/existing.md",
+            retains: ["Retained open question line."],
+            omits: ["Stale outdated claim"],
+        }),
+    ]);
+    // Valid in-place replacement of the target AND an extra in-policy edit.
+    const hook = file(
+        root,
+        "replace-plus.sh",
+        "#!/bin/sh\ncat > ../lakes/kb/existing.md <<'EOD'\n---\nArea: kb\nKeywords: existing, seed\nSummary: The seeded knowledge doc.\n---\n\n# Existing\n\n### Facts\n\n- prior knowledge\n- Retained open question line.\nEOD\n" +
+            'echo "extra churn" > ../lakes/kb/scratch-note.md\n',
+    );
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+            {
+                FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()),
+                FAKE_TRIAL_HOOK: hook,
+            },
+            20_000,
+        ).status,
+        0,
+    );
+    const judge = runHarness(
+        root,
+        fake,
+        ["judge", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+    );
+    assert.notEqual(judge.status, 0);
+    const verdict = readJson(join(paths.results, "s1", "T01", "verdict.json"));
+    assert.match(verdict.reason, /unrelated change/);
+    rmRoot(root);
+});
+
+test("M05: writing beside the target does not satisfy a replace case, but a valid in-place replacement does", () => {
+    const root = newRoot("m05-replace");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [
+        docGateCase("T01", {
+            kind: "replace",
+            target: "lakes/kb/existing.md",
+            retains: ["Retained open question line."],
+            omits: ["Stale outdated claim"],
+        }),
+    ]);
+
+    // Wrong target: a NEW doc beside the unchanged existing one.
+    const beside = file(
+        root,
+        "beside.sh",
+        "#!/bin/sh\ncat > ../lakes/kb/other.md <<'EOD'\n" +
+            VALID_CREATE_DOC +
+            "EOD\n",
+    );
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "wrong", ...commandArgs(paths)],
+            {
+                FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()),
+                FAKE_TRIAL_HOOK: beside,
+            },
+            20_000,
+        ).status,
+        0,
+    );
+    const wrongJudged = runHarness(
+        root,
+        fake,
+        ["judge", "T01", "--stamp", "wrong", ...commandArgs(paths)],
+        { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+    );
+    assert.notEqual(wrongJudged.status, 0);
+    const wrong = readJson(
+        join(paths.results, "wrong", "T01", "verdict.json"),
+    );
+    assert.match(wrong.reason, /expected replacement of lakes\/kb\/existing\.md did not happen/);
+
+    // Deleting the target does not satisfy the case either.
+    const deletion = file(
+        root,
+        "delete.sh",
+        "#!/bin/sh\nrm ../lakes/kb/existing.md\n",
+    );
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "deleted", ...commandArgs(paths)],
+            {
+                FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()),
+                FAKE_TRIAL_HOOK: deletion,
+            },
+            20_000,
+        ).status,
+        0,
+    );
+    const deletedJudged = runHarness(
+        root,
+        fake,
+        ["judge", "T01", "--stamp", "deleted", ...commandArgs(paths)],
+        { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+    );
+    const deleted = readJson(
+        join(paths.results, "deleted", "T01", "verdict.json"),
+    );
+    assert.match(deleted.reason, /was deleted/);
+
+    // Valid in-place replacement retains the open question, drops the stale
+    // claim, and passes to the semantic judge.
+    const marked = file(
+        root,
+        "replace.sh",
+        "#!/bin/sh\ncat > ../lakes/kb/existing.md <<'EOD'\n---\nArea: kb\nKeywords: existing, seed\nSummary: The seeded knowledge doc.\n---\n\n# Existing\n\n### Facts\n\n- prior knowledge\n- Retained open question line.\nEOD\n",
+    );
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "good", ...commandArgs(paths)],
+            {
+                FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()),
+                FAKE_TRIAL_HOOK: marked,
+            },
+            20_000,
+        ).status,
+        0,
+    );
+    const goodJudged = runHarness(
+        root,
+        fake,
+        ["judge", "T01", "--stamp", "good", ...commandArgs(paths)],
+        { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+    );
+    assert.equal(goodJudged.status, 0, goodJudged.stderr);
+    assert.equal(
+        readJson(join(paths.results, "good", "T01", "verdict.json")).verdict,
+        "pass",
+    );
+    rmRoot(root);
+});
+
+test("M05: a replacement that loses required content fails the gate", () => {
+    const root = newRoot("m05-lost");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [
+        docGateCase("T01", {
+            kind: "replace",
+            target: "lakes/kb/existing.md",
+            retains: ["Retained open question line."],
+            omits: ["Stale outdated claim"],
+        }),
+    ]);
+    const hook = file(
+        root,
+        "lossy.sh",
+        "#!/bin/sh\ncat > ../lakes/kb/existing.md <<'EOD'\n---\nArea: kb\nKeywords: existing, seed\nSummary: The seeded knowledge doc.\n---\n\n# Existing\n\n### Facts\n\n- Rewritten while dropping the retained line.\nEOD\n",
+    );
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+            {
+                FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()),
+                FAKE_TRIAL_HOOK: hook,
+            },
+            20_000,
+        ).status,
+        0,
+    );
+    const judge = runHarness(
+        root,
+        fake,
+        ["judge", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+    );
+    assert.notEqual(judge.status, 0);
+    const verdict = readJson(join(paths.results, "s1", "T01", "verdict.json"));
+    assert.match(verdict.reason, /lost required content/);
+    rmRoot(root);
+});
+
+test("M05: a preserved path edited alongside the expected write fails the gate", () => {
+    const root = newRoot("m05-preserve");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [
+        docGateCase(
+            "T01",
+            {
+                kind: "create",
+                link: "org/signed-commits.md",
+                preserve: ["lakes/org/signed-commits.md"],
+            },
+            { mutationPolicy: { allowed: ["lakes/**"], minWrites: 2 },
+              seeds: [
+                  ...docGateCase("T01", null).seeds,
+                  {
+                      surface: "lakes",
+                      path: "org/signed-commits.md",
+                      contents: "# Signed commits policy\n\n### Facts\n\n- The organisation mandates signed commits.\n",
+                  },
+              ] },
+        ),
+    ]);
+    const hook = file(
+        root,
+        "messy.sh",
+        "#!/bin/sh\nmkdir -p ../lakes/kb ../lakes/org\n" +
+            "cat > ../lakes/kb/trial-doc.md <<'EOD'\n" +
+            VALID_CREATE_DOC +
+            "EOD\n" +
+            "echo tempered > ../lakes/org/signed-commits.md\n",
+    );
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+            {
+                FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()),
+                FAKE_TRIAL_HOOK: hook,
+            },
+            20_000,
+        ).status,
+        0,
+    );
+    const judge = runHarness(
+        root,
+        fake,
+        ["judge", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+    );
+    assert.notEqual(judge.status, 0);
+    const verdict = readJson(join(paths.results, "s1", "T01", "verdict.json"));
+    assert.match(verdict.reason, /preserved lakes\/org\/signed-commits\.md was modified/);
+    rmRoot(root);
+});
+
+test("M05: mutation evidence edited after the run is refused, not graded", () => {
+    const root = newRoot("m05-tamper");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [
+        docGateCase("T01", { kind: "create" }),
+    ]);
+    const hook = file(
+        root,
+        "create.sh",
+        "#!/bin/sh\ncat > ../lakes/kb/trial-doc.md <<'EOD'\n" +
+            VALID_CREATE_DOC +
+            "EOD\n",
+    );
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+            {
+                FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()),
+                FAKE_TRIAL_HOOK: hook,
+            },
+            20_000,
+        ).status,
+        0,
+    );
+    writeFileSync(
+        join(paths.results, "s1", "T01", "live", "lakes", "kb", "trial-doc.md"),
+        VALID_CREATE_DOC.replace("Recorded by the trial.", "Forged afterwards."),
+    );
+    const judge = runHarness(
+        root,
+        fake,
+        ["judge", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+    );
+    assert.notEqual(judge.status, 0);
+    const verdict = readJson(join(paths.results, "s1", "T01", "verdict.json"));
+    assert.match(verdict.reason, /final-state digest mismatch/);
     rmRoot(root);
 });
 

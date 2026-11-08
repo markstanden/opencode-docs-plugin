@@ -26,8 +26,8 @@
         ],
         "promptKind": "baseline",
         "docsCriterion": {
-            "minDocsCalls": 1,
-            "verbs": ["read"]
+            "minVerifiedCalls": 1,
+            "verbs": ["help"]
         }
     },
     {
@@ -114,8 +114,9 @@
         ],
         "promptKind": "baseline",
         "docsCriterion": {
-            "minDocsCalls": 1,
-            "verbs": ["read"]
+            "minVerifiedCalls": 1,
+            "verbs": ["read"],
+            "paths": ["kb/test-commands.md"]
         }
     },
     {
@@ -153,8 +154,15 @@
         },
         "promptKind": "recording",
         "docsCriterion": {
-            "minDocsCalls": 1,
-            "verbs": ["read"]
+            "minVerifiedCalls": 1,
+            "verbs": ["read"],
+            "paths": ["kb/hook-status-guard.md"]
+        },
+        "expectedDocs": {
+            "kind": "replace",
+            "target": "lakes/docs/kb/hook-status-guard.md",
+            "retains": ["Should a hopeless guard block or allow?"],
+            "omits": ["currently fails open"]
         }
     },
     {
@@ -223,8 +231,14 @@
         },
         "promptKind": "recording",
         "docsCriterion": {
-            "minDocsCalls": 1,
-            "verbs": ["read"]
+            "minVerifiedCalls": 1,
+            "verbs": ["read"],
+            "paths": ["org/signed-commits.md"]
+        },
+        "expectedDocs": {
+            "kind": "create",
+            "link": "signed-commits",
+            "preserve": ["lakes/global/org/signed-commits.md"]
         }
     },
     {
@@ -261,8 +275,9 @@
         ],
         "promptKind": "baseline",
         "docsCriterion": {
-            "minDocsCalls": 1,
-            "verbs": ["read"]
+            "minVerifiedCalls": 1,
+            "verbs": ["read"],
+            "paths": ["onboarding.md"]
         }
     },
     {
@@ -290,7 +305,10 @@
             "allowed": ["lakes/docs/**"],
             "minWrites": 1
         },
-        "promptKind": "recording"
+        "promptKind": "recording",
+        "expectedDocs": {
+            "kind": "create"
+        }
     },
     {
         "id": "W02",
@@ -304,9 +322,10 @@
                 "description": "This repository's decisions and traps."
             }
         ],
-        "expected": "Existing sizeable doc replaced with byte-exact reliability",
+        "expected": "Existing doc replaced in place with the preservation marker kept verbatim",
         "accepts": [
-            "The trial reads the sizeable doc, replaces it through its revision token, and the stored bytes are exact (no truncation masquerading as a complete body)."
+            "The trial reads the existing doc, replaces it through its revision token, and the deterministic preservation marker survives verbatim (no truncation passing as a complete body, no appended second doc).",
+            "Large-body reliability itself is measured by the checked-in size ladder tests, not implied by this case."
         ],
         "temptingWrong": [
             "Appending a second doc instead of replacing the one that exists.",
@@ -316,7 +335,7 @@
             {
                 "surface": "lakes",
                 "path": "docs/kb/lake-identity.md",
-                "contents": "---\nArea: kb\nKeywords: lake, identity, registry, real, roots\nSummary: The lake registry and aliased routes.\n---\n\n# Lake identity registry\n\n### Facts\n\n- The registry holds each configured lake's name, class and real root.\n- Aliased routes resolve through the symlinked real paths.\n\n### Inferred\n\n- Containment decisions use the registry's real roots.\n\n### Open questions\n\n- None recorded.\n"
+                "contents": "---\nArea: kb\nKeywords: lake, identity, registry, real, roots\nSummary: The lake registry and aliased routes.\n---\n\n# Lake identity registry\n\n### Facts\n\n- The registry holds each configured lake's name, class and real root.\n- Aliased routes resolve through the symlinked real paths.\n\n### Inferred\n\n- Containment decisions use the registry's real roots.\n\n### Preserved replacement marker\n\n- Deterministic preservation marker for replacement trials, line 001: a correct in-place replace keeps every marker line verbatim.\n- Deterministic preservation marker for replacement trials, line 002: a correct in-place replace keeps every marker line verbatim.\n- Deterministic preservation marker for replacement trials, line 003: a correct in-place replace keeps every marker line verbatim.\n- Deterministic preservation marker for replacement trials, line 004: a correct in-place replace keeps every marker line verbatim.\n- Deterministic preservation marker for replacement trials, line 005: a correct in-place replace keeps every marker line verbatim.\n- Deterministic preservation marker for replacement trials, line 006: a correct in-place replace keeps every marker line verbatim.\n- Deterministic preservation marker for replacement trials, line 007: a correct in-place replace keeps every marker line verbatim.\n- Deterministic preservation marker for replacement trials, line 008: a correct in-place replace keeps every marker line verbatim.\n- Deterministic preservation marker for replacement trials, line 009: a correct in-place replace keeps every marker line verbatim.\n- Deterministic preservation marker for replacement trials, line 010: a correct in-place replace keeps every marker line verbatim.\n- Deterministic preservation marker for replacement trials, line 011: a correct in-place replace keeps every marker line verbatim.\n- Deterministic preservation marker for replacement trials, line 012: a correct in-place replace keeps every marker line verbatim.\n- Deterministic preservation marker for replacement trials, line 013: a correct in-place replace keeps every marker line verbatim.\n- Deterministic preservation marker for replacement trials, line 014: a correct in-place replace keeps every marker line verbatim.\n- Deterministic preservation marker for replacement trials, line 015: a correct in-place replace keeps every marker line verbatim.\n\n### Open questions\n\n- None recorded.\n"
             }
         ],
         "mutationPolicy": {
@@ -325,8 +344,17 @@
         },
         "promptKind": "recording",
         "docsCriterion": {
-            "minDocsCalls": 1,
-            "verbs": ["read"]
+            "minVerifiedCalls": 1,
+            "verbs": ["read"],
+            "paths": ["kb/lake-identity.md"]
+        },
+        "expectedDocs": {
+            "kind": "replace",
+            "target": "lakes/docs/kb/lake-identity.md",
+            "retains": [
+                "Deterministic preservation marker for replacement trials, line 001",
+                "Deterministic preservation marker for replacement trials, line 015"
+            ]
         }
     }
 ]

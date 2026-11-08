@@ -96,46 +96,96 @@ loudly with the path in the message.
 
 ### Frozen provenance
 
-Every `run`/`all` first freezes `results/<stamp>/run.json`: a versioned
-schema-v1 description recording the selected case ids and definitions,
-the model and variant, the timeout, the plugin identity (content hash of
-`package.json`, `src/index.ts`, `src/SKILL.md`, `CONVENTION.md` plus the
-lockfile hash so a dirty checkout is reproducible by content, not a
-boolean), the CLI version, the actual execution boundary (container vs
-host, image and id) and the harness version. `summary` and `export`
-render ONLY from that saved description and the per-case artefacts: run a
-reporting command today against yesterday's stamp and yesterday's model,
-variant, expected labels and case selection come back intact. A stamp
-without `run.json` (pre-freeze legacy evidence) renders with visible
-`unknown (legacy)` labels instead of silently adopting current inputs;
-mixed evidence renders a per-case `[model: …]` suffix. Rendering time is
-always shown apart from run time.
+Every `run`/`all` first freezes `results/<stamp>/run.json` (`describe`
+behaves identically): written atomically, a versioned schema-v2 description
+recording the selected case ids and their full definitions, the model and
+variant, the timeout, the trials' execution boundary (`trialBoundary` —
+the wrapper passes the trial container image/id to it, so a containerised
+sweep is described as one), the host orchestration identity
+(`orchestration`: fixture/plugin content hashes, lockfile hash, plugin
+commit and dirty state, CLI version — of the *describing* process), each
+case's criteria (`mutationPolicy`, `docsCriterion`, `expectedDocs`) and the
+harness version. Re-invoking `run` on an existing stamp verifies the whole
+identity — corpus edits, a different plugin or changed settings refuse
+instead of relabelling; inside a staged container the per-case `frozen.json`
+freeze receipt proves the host freeze (the description itself is never
+mounted into a case).
+
+`summary` and `export` render ONLY from that saved description and the
+per-case artefacts: run a reporting command today against yesterday's stamp
+and yesterday's model, variant, expected labels and case selection come
+back intact. A stamp without `run.json` (pre-freeze legacy evidence)
+renders with visible `unknown (legacy)` labels instead of silently adopting
+current inputs; mixed evidence renders a per-case `[model: …]` suffix.
+Rendering time is always shown apart from run time.
+
+### Judging answers the frozen experiment
+
+`judge` scores each case against the SAVED run.json definitions: selection,
+policy, docs criterion and recorded-rubric identity all come from the
+stamp, never from the reporting CLI's current corpus — a corpus edit cannot
+change a historical grade. Before any semantic judge call the harness
+verifies the recorded identity: an edited `final.md` (answer hash mismatch)
+or an edited `rubric.md` (does not match the saved definition's own
+deterministic rubric) is refused as altered evidence, not adopted. Explicit
+case ids must belong to the experiment. Legacy stamps without run.json warn
+openly and use the current corpus (a documented limitation, not a pass).
 
 ### Generation fingerprints
 
 `generate` records a `generation.json` fingerprint per case — a hash over
 the case definition, the model, the plugin identity, the variant flags
-and the generator version — plus the identity of the outputs it wrote.
-Reuse requires a matching fingerprint AND intact outputs; anything else
-refuses with `stale` or `incomplete` and points at `--force`, leaving the
-recorded fixtures untouched. A `run` never regenerates: it validates the
-prepared generation (prompt, config and fingerprint agreement on the
-run-visible surfaces) and refuses a missing/tampered one, so a mid-run
-corpus edit can never silently rewrite a shared fixture.
+and the generator version — the identity of the outputs it wrote
+(prompt/config/rubric hashes), and a prepared-tree certificate: a
+deterministic identity of every generated sandbox file (relative path,
+kind, content hash or symlink target; no timestamps, no modes, `.git`
+excluded). Reuse requires a matching fingerprint AND intact outputs AND an
+unmutated prepared tree; anything else refuses with `stale` or
+`incomplete` and points at `--force`, leaving the recorded fixtures
+untouched. A `run` never regenerates: it validates the prepared
+generation — output hashes, the recomputed inputs fingerprint on full
+corpus flows (a changed case, model, plugin or variant refuses rather than
+executing the stale prompt), the redacted corpus's embedded generation
+hash in container flows, and the tree certificate (an edited seed, a
+missing file or an added stray refuses the run) — so a mid-run corpus or
+fixture edit can never silently rewrite a shared fixture.
 
 ### Mutation policy
 
 The write-detection snapshot covers `work`, `lakes` and `config-home`
-with lstat: regular-file contents, directories, symlink targets, kind
-changes (a file replaced by a link), and git-state changes reported
-separately (`.git/HEAD`, index, refs) which never count as trial writes.
-The snapshot proves final-state changes only — a transient write that
-reverts is invisible without execution instrumentation. Each case may
-declare an explicit `mutationPolicy` (allowed path globs plus optional
+with lstat: regular-file contents, directories (including permission
+bits), symlink targets, kind changes (a file replaced by a link) and
+permission-only changes (`chmod` with no content change is a modification,
+labelled `(mode)`). An unreadable directory is recorded as an explicit
+`dir-unreadable` entry — never silently documented as an empty, readable
+inventory. Git-state changes reported separately NEVER count as trial
+writes. The snapshot proves final-state changes only — a transient write
+that reverts is invisible without execution instrumentation — and the run
+records a final-state digest that judging re-verifies, so mutation
+evidence edited after the run is refused rather than graded. The `Writes`
+column reports structured counts (`N file(s) + M violation(s)`); each case
+may declare an explicit `mutationPolicy` (allowed path globs plus optional
 `runtimeAllow` for genuine CLI-owned state). A policy-bearing case with
 out-of-policy writes is invalid for judging even with `--allow-writes`;
 `--allow-writes` only widens the legacy decision-only baseline, which is
 otherwise any-write-is-a-failure.
+
+### Recording reproducibility (`expectedDocs`)
+
+`minWrites` counts mutations, not knowledge, so recording cases can also
+declare `expectedDocs` — the deterministic gate the semantic judge sees
+behind: the expected create/replace target, structural validity of the
+produced doc (front-matter Area/Keywords/Summary, an H1, a claim section),
+required and absent content (`retains`/`omits` — lost unrelated claims or
+surviving stale claims fail), required references (`link`), untouched
+preservation paths (`preserve`), and a single-document surface rule. An
+empty directory, a junk or non-Markdown file, a wrong target, an
+unrelated in-policy edit, or deleting the target cannot satisfy a
+recording case. The gate also includes bounded excerpts of the verified
+artefacts in the judge prompt (clearly marked as truncated, with the
+recorded tree stated authoritative). Definitions without `expectedDocs`
+skip the gate — a stated limitation of those recorded runs, never
+rendered as verified.
 
 ### Telemetry and verdict gating
 
@@ -144,13 +194,40 @@ operation, several events). The `Docs` column separates native `docs`
 calls, the twin registration name `docs_search`, and Code Mode `execute`
 calls whose code attempts `tools.docs.docs_search(…)` — a nested attempt
 is counted as attempted, never as a verified nested execution, because
-the CLI emits no separate event for it. Failed docs calls are labelled
-`(attempt)` in the Exposure column rather than as successful access.
-Judge success requires a completed process AND a complete, valid verdict
-object (enum fields plus nonblank destination and reason); a failed judge
-becomes a visible `judge-error` verdict and never a pass. A stamp's
-rows may carry a `[model: …]` suffix where evidence contradicts the
-stamp's own model.
+the CLI emits no separate event for it. Discoverable help use is likewise
+reported as verified completions apart from attempts (`no help (N
+attempted)`); dead code mentioning the tool proves nothing.
+
+Docs criteria are deterministic and answer to two pinned semantics, keyed
+by which field the SAVED definition uses:
+
+- `minVerifiedCalls` (current): only observable docs operations that
+  COMPLETED count — a failed or denied call and a code-mode attempt are
+  attempts. Required verbs must have been completed; `paths` narrows the
+  gate to relevant documents (an unrelated read does not stand in for the
+  seeded doc). Code-mode-only attempts render the case INCONCLUSIVE at the
+  gate — recorded as `invalid` with the reason (the nested operation is
+  unobservable; the case needs either native/twin usage or an honest
+  unknown), never a pass, never silently dropped.
+- `minDocsCalls` (legacy, for stamps recorded before this change): the
+  historical attempted-operations semantics, applied to the frozen
+  definition as recorded, with `(legacy attempted-operations)` visibly
+  labelled in the refusal — old evidence keeps its meaning rather than
+  being quietly regraded today.
+
+A completed trial answer must be real completion evidence: the process
+exits 0 with no signal, no triggered timeout (a timeout fails regardless
+of the final exit code, with SIGTERM escalating to SIGKILL after a short
+grace so an ignoring child cannot hold the harness), no stdout overflow
+past the capture limit (recorded as `outputOverflow`, invalidating
+incomplete evidence), no unparsable output lines, a nonblank answer, and
+a trail that ends on its final text part — a mid-turn tool echo is not a
+completed answer. Judge success requires the same process discipline plus
+a complete, valid verdict object; a failed judge becomes a visible
+`judge-error` verdict and never a pass. Historical zero-native-call
+stamps remain measurement limitations about Code Mode, not established
+events. A stamp's rows may carry a `[model: …]` suffix where evidence
+contradicts the stamp's own model.
 
 ### Schedules
 
@@ -171,17 +248,29 @@ even when an artefact is missing.
 (`Containerfile`): Debian slim, Node LTS, the current `@opencode/cli`
 installed at build time so trials test what users run. The root filesystem is
 read-only. `generate` mounts the repository read-only and writes prompts,
-fixtures and rubrics; `run` starts **one container per case**, mounting only a
-curated plugin package (`package.json`, `src`, `node_modules`,
-`CONVENTION.md`), that case's sandbox, its prompt, an id-only case list and
-its result directory. Rubrics and case JSON are copied into the result only
-after the container exits, so a trial cannot read its own or another case's
-expectations; the case list it does see carries ids plus the case's mutation
-policy and docs criterion (instrumentation, not rubric content), no claims or
-expected labels. The container shares the host network namespace, so provider
+fixtures and rubrics; `run` starts **one container per case, serially** —
+`--jobs` above 1 is refused by the wrapper with a clear message (worker
+pools are a host/direct-harness feature; container parallelism is not
+built) — mounting only a curated plugin package (`package.json`, `src`,
+`node_modules`, `CONVENTION.md`), that case's sandbox, its prompt, an
+id-only case list and its result directory. Rubrics and case JSON are
+copied into the result only after the container exits, so a trial cannot
+read its own or another case's expectations; the case list it does see
+carries ids plus the case's mutation policy, docs criterion and generation
+inputs hash (instrumentation, not rubric content), no claims or expected
+labels. The container shares the host network namespace, so provider
 traffic uses the host's loopback proxy overlay unchanged — no routes or
 credentials live in this repository.
 
+Before the loop the wrapper freezes the stamp's run.json host-side with
+the FULL corpus ("describe") — carrying the trial container's
+image and image id in `trialBoundary` so the frozen description describes
+the trials, not the host orchestrator — and stages a per-case
+`frozen.json` receipt (ids, image facts, the run.json digest) beside each
+staged sandbox. The container must find that receipt; it proves the
+freeze the container can never read, and an unwritable or absent freeze is
+a refusal — a filesystem permission error is never treated as evidence
+that a valid host-side freeze exists.
 Host-only commands — `judge`, `summary`, `export` and `describe` — dispatch
 before any podman check and run directly against the harness with the host's
 Node and provider keys; a scorched machine without podman can still score
@@ -189,11 +278,9 @@ and export recorded evidence. `all` accepts `--no-judge` to skip the judge
 stage (reports still render), and propagates a nonzero generate/run/judge
 status — report steps may themselves fail without masking it. Per-case
 staging lives under `$PLACEMENT_RUN_FIXTURES/<stamp>/<case>/` (sandbox
-surfaces plus the case's `generation.json`, never rubrics), and the
-redacted run list is keyed by corpus hash, so two sweeps cannot stage over
-each other. Before the container loop the wrapper freezes the stamp's run
-description host-side with the full corpus ("describe"), so the id-only
-container runs can never relabel the evidence.
+surfaces plus the case's `generation.json` and its nonsecret freeze
+receipt, never rubrics), and the redacted run list is keyed by corpus
+hash, so two sweeps cannot stage over each other.
 
 Default output roots (overridable with `PLACEMENT_PROMPTS`,
 `PLACEMENT_FIXTURES`, `PLACEMENT_RUBRICS`, `PLACEMENT_RESULTS`,
@@ -235,7 +322,9 @@ judge-prompt hashes, the judge model, timings and completion metadata.
 The top-level `verdict.json` is only a pointer to the latest attempt; a
 judge whose process failed or whose output is invalid records
 `judge-error` there, never a pass. Judging refuses an incomplete run —
-a blank answer, no parsable trail, nonzero exit or timeout,
+a blank answer or missing final completion, no parsable trail, stdout
+overflow, nonzero exit or timeout, altered recorded answers or rubrics,
+an unmet docs criterion, unmet `expectedDocs` artefact expectations,
 out-of-policy writes in a policy-bearing case, or writes in a
 decision-only trial without `--allow-writes` — and records `invalid`
 without calling the judge model. Rejudging with unchanged inputs
@@ -273,14 +362,21 @@ plugin `hardening/pre-trial-fixes`), plus one tool-inventory probe:
 - **Retrieval (R01)** — the trial never consulted the docs tool; the docs
   criterion gate invalidated it (`0 docs call(s), required 1`) before any
   judge call.
-- **Discovery (D02)** — a natural prompt, no destinations, no tool mention:
-  the model proposed a focused repo doc unprompted (`pass`; `Discovery`
-  column `none` by design for this case).
+- **Discovery (D02)** — a natural prompt of the pre-fix template: no
+  destinations and no tool mention, but the template still appended a
+  State block naming "the exact destination lake, or other documentation
+  workflow" and a document count, so the recorded proposal was a valid
+  PROMPTED response. The interpretation "unprompted trigger" attached to
+  this run was unsupported; the natural template has since been corrected
+  to carry no documentation framing at all (M06), and D02/D03 must be
+  re-run under it before an unprompted trigger is claimed.
 - **Host/transport (tool-inventory probe)** — asking a real container
   session to list its tools returned both registered surfaces (`docs`
   native and `docs_search` Code Mode twin) plus the built-ins, so plugin
   registration through the actual CLI path is verified, not inferred from
-  plugin-core tests.
+  plugin-core tests. A tool-inventory probe proves registration only —
+  it is not a full live write/read round trip and no sweep-1 R03 trial
+  evidence exists or is claimed.
 
 What this smoke does NOT establish (and nothing else here claims to):
 
@@ -347,7 +443,7 @@ supplied-evidence-only families beyond the E01 legislative no.18 placements:
 | Family    | Cases         | What it measures                                         |
 | --------- | ------------- | -------------------------------------------------------- |
 | Discovery | D01           | same-class lakes picked by description                   |
-| Discovery | D02, D03      | natural triggers — no destination list, no "record this" |
+| Discovery | D02, D03      | natural triggers — genuinely undirected (M06-corrected template) |
 | Retrieval | R01, R05, R06 | existing knowledge reused; policy linked, not restated   |
 | Retrieval | R02           | stale doc read, token refreshed, replaced in place       |
 | Retrieval | R04           | justify ambiguity, ask rather than guess                 |
@@ -357,12 +453,16 @@ supplied-evidence-only families beyond the E01 legislative no.18 placements:
 The corpus schema adds optional fields the baseline never uses: `family`,
 `promptKind` (`baseline` | `recording` | `natural`), `seeds` (documents or
 symlinks written into a configured lake's root at generation time),
-`mutationPolicy` (allowed-path globs; `runtimeAllow` for CLI-owned state)
-and `docsCriterion` (deterministic pre-judge gate: minimum docs calls and
-required verbs observed in the decoded trail). Baseline prompt wording for
+`mutationPolicy` (allowed-path globs; `runtimeAllow` for CLI-owned state),
+`docsCriterion` (deterministic pre-judge gate on docs usage — verified
+completed operations, required verbs, and optionally the relevant document
+paths; the legacy `minDocsCalls` field keeps its old attempted-operations
+semantics for stamps recorded before this change) and `expectedDocs`
+(recording reproducibility: create/replace target, structural validity,
+retains/omits/link and preserved paths). Baseline prompt wording for
 E01–E18 stays byte-identical; the family prompting varies by `promptKind`:
 decision-only baseline, an authorised-recording variant, and natural
-prompts that carry no documentation framing so the trigger is genuinely
+prompts that carry no documentation framing — so the trigger is genuinely
 measured. The R03 antirace (an external edit between read and replace)
 is deliberately a deterministic integration test — the repair path is
 already under `revisions.test.ts` (R05), so no model trial is raced.

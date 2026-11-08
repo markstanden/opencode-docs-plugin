@@ -8,12 +8,17 @@ Summary: A judge process that did not succeed, or an invalid verdict object, bec
 
 ### Facts
 
-- The placement harness judge gate requires three things before any verdict
-  gets a pass/fail pointer: the judge process completed (exit 0, no signal,
-  no spawn error, no timeout), it emitted exactly one JSON object, and that
-  object is complete and valid — `verdict` ∈ pass|fail, `documents` ∈
-  one|several|none, `clarification` ∈ yes|no, nonblank `destination` and
-  `reason`.
+- The placement harness judge gate requires four things before any verdict
+  gets a pass/fail pointer: the judge process completed with no spawn
+  error, no triggered timeout (a timeout is failure regardless of the exit
+  code or signal — the runner escalates SIGTERM to SIGKILL after a grace
+  window, and a judge that ignored SIGTERM but exited 0 is still a
+  failure), no capture-limit overflow, an exit of 0; then it must emit
+  exactly one JSON object that is complete and valid — `verdict` ∈
+  pass|fail, `documents` ∈ one|several|none, `clarification` ∈ yes|no,
+  nonblank `destination` and `reason` — with no unparsable output lines
+  (a broken judge trail is incomplete completion evidence, reported as
+  `invalid`, not judged on the intact fragment).
 - Any failed attempt writes a `judge-error` verdict pointer with the reason
   and preserves the attempt directory: stdout, stderr, raw text, timings,
   exit/signal/error, input identities (answer, rubric and judge-prompt
@@ -25,10 +30,11 @@ Summary: A judge process that did not succeed, or an invalid verdict object, bec
 ### Tested
 
 - `node --test tests/harness.test.ts` (harness sight): valid pass, valid
-  fail, nonzero exit after a valid-looking pass body, timeout kill, spawn
-  failure, prose without JSON, truncated JSON, `{"verdict":"pass"}` alone,
-  and bad enum values all behave as above; 7 pre-fix regressions fail
-  against the pre-fix harness and pass after.
+  fail, nonzero exit after a valid-looking pass body, timeout kill,
+  SIGTERM-ignoring zero-exit (M03 — pre-fix this recorded a pass), capture
+  overflow on both trial and judge sides, malformed-JSONL-with-text,
+  spawn failure, prose without JSON, truncated JSON, `{"verdict":"pass"}`
+  alone, and bad enum values all behave as above.
 
 ### Inferred
 
