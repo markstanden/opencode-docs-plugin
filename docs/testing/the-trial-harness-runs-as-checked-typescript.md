@@ -1,7 +1,7 @@
 ---
 Area: testing
-Keywords: typescript, mts, type-stripping, harness, erasable-syntax-only, boundary-validation, discriminated-union
-Summary: The trial harness ships as checked TypeScript (.mts) under Node's type-stripping: no build, no any; JSON shapes are validated at the IO boundaries, and the tool-part fold models the CLI's raw part/state shape.
+Keywords: typescript, mts, type-stripping, harness, erasable-syntax-only, boundary-validation, recordat, discriminated-union
+Summary: The trial harness ships as checked TypeScript (.mts) under Node's type-stripping: no build, no any; recorded JSON schemas are proven by concrete validators at the IO boundary with absent and corrupt distinguishable, and the tool-part fold models the CLI's raw part/state shape.
 ---
 
 # The trial harness runs as checked TypeScript
@@ -14,13 +14,20 @@ Summary: The trial harness ships as checked TypeScript (.mts) under Node's type-
   The tsconfig include covers `tests/**/*.mts` (and `src/**/*.mts`), so the
   normal `npm run typecheck` checks the file the CLI actually runs; the
   file list can be proven with `tsc --noEmit --listFilesOnly`.
-- Decoded JSON is treated as unknown and narrowed at the real IO
-  boundaries by predicates (`isRecord`, `isFullCase`, validated corpus
-  entry readers, typed record readers for `run.json`, per-case meta,
-  verdict pointers, judge attempts and freeze receipts) — not by bare
-  `as` casts. One field-narrowing-by-inspection cast inside
-  `validatedCorpusEntry` goes through `unknown` first: the widening is
-  only what the inspection above it proves.
+- Every recorded JSON record is read through `recordAt`/`jsonAt`, which
+  keeps three outcomes the callers must not merge: `absent` (no file — a
+  legacy record), `malformed` (exists but unparsable, or fails its
+  per-schema validator's consumed-field proofs), and `value` (the
+  validated record). The validators prove the fields each consumer
+  touches — types, required presence, enum and numeric ranges, and the
+  relevant nested structures (certification tree entries, criteria,
+  mutation policies, expected docs, destinations, seeds) — so the single
+  `as T` at the validated boundary carries exactly that proof, never an
+  inspection-by-inspection widening.
+- Absent and malformed must stay distinguishable: a corrupt frozen run
+  description refuses judging and reporting instead of silently becoming
+  a legacy stamp whose criteria come from the current corpus, and a run
+  never rewrites a corrupt run.json over itself.
 - The CLI's raw tool part carries its payload inside `state`, not at the
   top level; `RawToolPart` models that shape and `mergedToolCall` folds
   repeated events for one call id latest-state-wins. Typing this fold
@@ -38,17 +45,22 @@ Summary: The trial harness ships as checked TypeScript (.mts) under Node's type-
 ### Tested
 
 - `tests/harness.test.ts` drives the actual `.mts` CLI black-box
-  (575 suite-wide tests), `npm run typecheck` includes the file
+  (590 suite-wide tests), `npm run typecheck` includes the file
   (proved via tsc's file list), and a real podman container smoke ran
   `node /harness/harness.mts` inside the trial image end to end (freeze,
   receipt, trial, judge) — the container's Node LTS strips the types the
   same way.
+- The C03 counterexamples (corrupt run.json refusing judge/summary, a
+  corrupt run.json surviving a rewrite attempt, corrupt meta, a
+  malformed generation record, and per-field corpus problems) all fail
+  against the pre-fix harness: read, never guessed at.
 
 ### Inferred (failed approaches)
 
-- A self-vouching `readJson<T>` returning "any shape" typed at compile
-  time would have lied at every boundary; the predicate readers cost a
-  dozen small functions and keep the file honest.
+- A self-vouching `readJson<T>` asserting a schema after checking only
+  `isRecord` lied at every boundary — a corrupt record became a legacy
+  fallback instead of evidence. The per-schema validators cost a dozen
+  small functions and keep the file honest.
 - Comparing a value against a type name (`state.status === "string"`)
   compiles fine and silently records every status as "other" — the
   black-box counters caught it immediately; `typeof` is required.

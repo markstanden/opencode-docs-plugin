@@ -17,13 +17,17 @@ Summary: Docs telemetry separates native calls, the twin name and code-mode atte
 - The harness's docs telemetry reports each docs surface at two levels:
   attempted operations (any status, plus code-mode attempts by code text)
   and verified completions (observable native or twin operations that
-  actually completed). Deduplication of multi-event tool calls keys on the
-  call id. A code-mode entry is always "attempted"; its nested success is
-  unknown and never reported as verified, because the CLI emits no event
-  for the nested call. Every retrieval-facing docs gate consumes verified
-  completions only: a failed or denied read, and a completed outer execute
-  whose nested call cannot be observed, make a verified criterion
-  inconclusive — recorded as `invalid` with the reason, never a pass.
+  actually completed). Deduplication of multi-event tool calls keys on
+  the call id. A code-mode entry is always "attempted"; its nested
+  success is unknown and never reported as verified, because the CLI
+  emits no event for the nested call. Retrieval-facing docs gates have
+  consumed successful operations only since the C02 correction
+  (`testing/a-completed-call-is-not-a-successful-retrieval.md`): a
+  failed or denied read, a completed call whose own output records a
+  refusal or not-found, a completed-but-unverifiable output, and a
+  completed outer execute whose nested call cannot be observed keep a
+  criterion inconclusive — recorded as `invalid` with the reason, never
+  a pass.
 - Retrieval gates can name the relevant document (`paths`): a completed
   read of some unrelated document does not satisfy a relevant-path
   criterion. Legacy saved definitions using `minDocsCalls` keep their
