@@ -2338,22 +2338,6 @@ function dirKindChangeLabel(before: TreeEntry, after: TreeEntry): string {
     return before.mode !== after.mode ? "mode" : "";
 }
 
-/** Content first, then the permission-mode change. */
-function fileKindChangeLabel(
-    before: { hash: string; mode?: string | undefined },
-    after: { hash: string; mode?: string | undefined },
-): string {
-    if (before.hash !== after.hash) return "content";
-    if (
-        before.mode !== undefined &&
-        after.mode !== undefined &&
-        before.mode !== after.mode
-    ) {
-        return "mode";
-    }
-    return "";
-}
-
 /**
  * One entry's change label for {@link snapshotDiff}: a kind change
  * (file→symlink replacement etc.) wins, then content/target, then — the
