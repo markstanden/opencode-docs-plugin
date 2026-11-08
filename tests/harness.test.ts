@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Black-box regression suite for the placement harness (harness.mjs) and
+ * Black-box regression suite for the placement harness (harness.mts) and
  * its container wrapper (container-run.sh). No network, no models: every
  * trial session or judge call is a generated fake OpenCode binary that
  * emits canned CLI-shaped JSONL, so the full CLI surface is exercised the
@@ -26,7 +26,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const HARNESS = join(HERE, "fixtures", "placement-harness", "harness.mjs");
+const HARNESS = join(HERE, "fixtures", "placement-harness", "harness.mts");
 const WRAPPER = join(HERE, "fixtures", "placement-harness", "container-run.sh");
 
 /** Extra env for a harness or wrapper invocation; undefined values deleted. */

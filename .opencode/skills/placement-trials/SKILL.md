@@ -1,11 +1,11 @@
 ---
 name: placement-trials
-description: Run and score the behavioural placement-guidance trials (tests/fixtures/placement-cases.json) through tests/fixtures/placement-harness/harness.mjs. Use for /placement, "placement trials", or when asked to evaluate the placement guidance against real model sessions.
+description: Run and score the behavioural placement-guidance trials (tests/fixtures/placement-cases.json) through tests/fixtures/placement-harness/harness.mts. Use for /placement, "placement trials", or when asked to evaluate the placement guidance against real model sessions.
 ---
 
 # Placement trials
 
-`tests/fixtures/placement-harness/harness.mjs` runs the cases in
+`tests/fixtures/placement-harness/harness.mts` runs the cases in
 `tests/fixtures/placement-cases.json` (E01–E18) through real headless
 OpenCode sessions against pristine fixture trees.
 
@@ -26,7 +26,7 @@ Per-case wrappers live in `~/tmp/docs-placement/E01.sh`…`E18.sh`.
   when that model is free-tier; otherwise fall back to the trial's free
   workhorse tier. Judging with yourself makes the default UX sense; say
   which model judged when reporting. Judges run **host-side**
-  (`node …/harness.mjs judge …`): provider keys live with the host session,
+  (`node …/harness.mts judge …`): provider keys live with the host session,
   and judging reads local result artefacts, so it needs no sandbox.
 - **Cost policy — free by default:** trials and judging must stay on
   free/flash-tier models unless the Guv explicitly names a paid one. The
@@ -47,7 +47,7 @@ Per-case wrappers live in `~/tmp/docs-placement/E01.sh`…`E18.sh`.
   (wrappers: `~/tmp/docs-placement/E01.sh`).
 - A sweep: `container-run.sh all`. Eighteen trials plus judging costs real
   minutes and tokens — ask before starting one.
-- Host invocation (`node …/harness.mjs …`) works for development, but fixture
+- Host invocation (`node …/harness.mts …`) works for development, but fixture
   configs embed the plugin path from generation time — generate and run from
   the same environment, or regenerate (`generate --force`) when switching.
 - Name stamps for comparisons: `--stamp <plugin-version-or-topic>`; diff

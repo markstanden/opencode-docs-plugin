@@ -1,6 +1,6 @@
 ---
 Area: Testing
-Keywords: placement-trials, discovery-variant, docs-help, exposure, discovery-column, variant-comparability, harness.mjs, config-leak
+Keywords: placement-trials, discovery-variant, docs-help, exposure, discovery-column, variant-comparability, harness.mts, config-leak
 Summary: The settled discovery variant: trial prompts carry no destinations and no tool mention; discovery (docs help use) is reported separately from the rubric-judged placement verdict. discovery-1 showed the workhorse never calls the tool — the fixture's own project config leaks the lakes instead.
 ---
 
@@ -15,7 +15,7 @@ Summary: The settled discovery variant: trial prompts carry no destinations and 
   plugin's own tool description points at `help`, and `docs help` lists each
   lake's name, class label, writability and configured description.
 - Run it with `container-run.sh all E02 E06 E11 E16 E18 --stamp <name>
---discovery`; `--discovery` passes through `parse_run_args` to harness.mjs
+--discovery`; `--discovery` passes through `parse_run_args` to harness.mts
   and is recorded in provenance args and the summary/dossier Variant line.
 - Discovery is observed from the tool trail, not judged: the summary's
   `Discovery` column reads `help×N` (N docs-help calls), `no help (N)` (docs

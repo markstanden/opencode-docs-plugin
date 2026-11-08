@@ -17,7 +17,7 @@
 #   ./container-run.sh summary             # host-side results table
 #   ./container-run.sh export              # dossier from the selected stamp
 #   ./container-run.sh describe --stamp X  # write the stamp's run.json host-side
-# Extra flags pass through to harness.mjs (--model, --judge-model, --stamp...).
+# Extra flags pass through to harness.mts (--model, --judge-model, --stamp...).
 # `--no-judge` runs `all` without the judge stage. `--discovery` runs the
 # discovery variant: prompts carry no destinations, so the lakes are
 # reachable only through `docs help` (measured per case).
@@ -54,7 +54,7 @@ overlay="${OPENCODE_CONFIG_CONTENT:-}"
 # dispatch BEFORE any container machinery so a podman-less machine can still
 # score and export recorded evidence.
 host_harness() {
-    node "$HERE/harness.mjs" "$@" \
+    node "$HERE/harness.mts" "$@" \
         --results "$RESULTS" \
         --fixture "$CASES" \
         --rubrics "$RUBRICS"
@@ -124,7 +124,7 @@ run_generate() {
         -v "$RUBRICS:/rubrics" \
         -v "$RESULTS:/results" \
         "$IMAGE" \
-        node /repo/tests/fixtures/placement-harness/harness.mjs \
+        node /repo/tests/fixtures/placement-harness/harness.mts \
         generate \
         --plugin /repo \
         --fixture /cases/cases.json \
@@ -291,7 +291,7 @@ run_cases() {
     # facts travel with it (M07).
     PLACEMENT_TRIAL_IMAGE="$IMAGE" \
         PLACEMENT_TRIAL_IMAGE_ID="$IMAGE_ID" \
-        node "$HERE/harness.mjs" \
+        node "$HERE/harness.mts" \
         describe \
         --stamp "$STAMP" \
         --results "$RESULTS" \
@@ -322,7 +322,7 @@ run_cases() {
             -v "$REPO/node_modules:/repo/node_modules:ro" \
             -v "$REPO/CONVENTION.md:/repo/CONVENTION.md:ro" \
             "$IMAGE" \
-            node /harness/harness.mjs \
+            node /harness/harness.mts \
             run "$id" \
             --plugin /repo \
             --fixture /fixtures/cases.json \
