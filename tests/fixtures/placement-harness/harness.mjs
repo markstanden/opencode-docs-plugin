@@ -1268,6 +1268,17 @@ function selectedAreFullDefinitions(selected) {
     );
 }
 
+/** Output-hash problems for the rubric, when this host can see one. */
+function rubricOutputProblems(stored, testCase, options) {
+    if (!existsSync(options.rubrics)) return [];
+    const rubricPath = join(options.rubrics, testCase.id, "rubric.md");
+    if (!existsSync(rubricPath)) return ["no rubric generated"];
+    if (stored.files?.rubricHash !== fileHash(rubricPath)) {
+        return ["rubric does not match the recorded generation"];
+    }
+    return [];
+}
+
 /** Output-hash problems for one prepared generation (prompt/config/rubric). */
 function generationOutputProblems(stored, testCase, options) {
     const problems = [];
@@ -1284,12 +1295,7 @@ function generationOutputProblems(stored, testCase, options) {
     if (!existsSync(configPath)) problems.push("no fixture config generated");
     else if (stored.files?.configHash !== fileHash(configPath))
         problems.push("fixture config does not match the recorded generation");
-    if (existsSync(options.rubrics)) {
-        const rubricPath = join(options.rubrics, testCase.id, "rubric.md");
-        if (!existsSync(rubricPath)) problems.push("no rubric generated");
-        else if (stored.files?.rubricHash !== fileHash(rubricPath))
-            problems.push("rubric does not match the recorded generation");
-    }
+    problems.push(...rubricOutputProblems(stored, testCase, options));
     return problems;
 }
 
@@ -3813,16 +3819,25 @@ function dossierBoundaryText(run) {
 }
 
 /** The provenance bullets, or the legacy warning when the stamp recorded none. */
+/** The dossier's stamp-level provenance info, legacy names tolerated. */
+function dossierProvenanceInfo(run) {
+    return run?.orchestration ?? run?.provenance;
+}
+
+/** The dossier's stamp-level boundary facts, legacy names tolerated. */
+function dossierProvenanceBoundary(run) {
+    return run?.trialBoundary ?? run?.boundary;
+}
+
 /** The provenance bullets, or the legacy warning when the stamp recorded none. */
 function dossierProvenanceLines(run) {
-    const provenanceInfo = run?.orchestration ?? run?.provenance;
+    const provenanceInfo = dossierProvenanceInfo(run);
     if (!provenanceInfo) return [dossierLegacyLine(run)];
-    const boundary = run?.trialBoundary ?? run?.boundary;
     return [
         dossierFixtureBullet(provenanceInfo),
         dossierPluginBullet(provenanceInfo),
         `- CLI: ${provenanceInfo.opencode ?? "unknown"}`,
-        `- Image: ${boundary?.image || "none (host run)"}`,
+        `- Image: ${dossierProvenanceBoundary(run)?.image || "none (host run)"}`,
     ];
 }
 
