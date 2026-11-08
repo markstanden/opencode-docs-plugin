@@ -3236,3 +3236,121 @@ describe("search harness (fixture corpus)", () => {
         assert.equal(result.closest, false);
     });
 });
+
+describe("prepareAdd single-line metadata", () => {
+    it("refuses a Summary whose line break would forge a Date field", async () => {
+        const outcome = prepareAdd(
+            addRequest({
+                metadata: {
+                    Area: "aa",
+                    Keywords: ["alpha"],
+                    Summary: "A review finding\nDate: 2026-11-08",
+                },
+            }),
+            [],
+        );
+
+        assert.equal(outcome.action, "refuse");
+        assert.match(String(outcome.reason), /must be a single line/);
+        assert.match(String(outcome.reason), /Summary/);
+    });
+
+    it("refuses a carriage return in a scalar value", async () => {
+        const outcome = prepareAdd(
+            addRequest({
+                metadata: {
+                    Area: "aa",
+                    Keywords: ["alpha"],
+                    Summary: "A\rB",
+                },
+            }),
+            [],
+        );
+
+        assert.equal(outcome.action, "refuse");
+        assert.match(String(outcome.reason), /must be a single line/);
+        assert.match(String(outcome.reason), /Summary/);
+    });
+
+    it("refuses a Keywords element carrying a line break", async () => {
+        const outcome = prepareAdd(
+            addRequest({
+                metadata: {
+                    Area: "aa",
+                    Keywords: ["alpha", "two\nlines"],
+                    Summary: "S",
+                },
+            }),
+            [],
+        );
+
+        assert.equal(outcome.action, "refuse");
+        assert.match(String(outcome.reason), /must be a single line/);
+        assert.match(String(outcome.reason), /Keywords/);
+    });
+
+    it("refuses a delimiter-shaped Summary that would shadow a field", async () => {
+        const outcome = prepareAdd(
+            addRequest({
+                metadata: {
+                    Area: "aa",
+                    Keywords: ["alpha"],
+                    Summary: "alpha\nKeywords: beta",
+                },
+            }),
+            [],
+        );
+
+        assert.equal(outcome.action, "refuse");
+        assert.match(String(outcome.reason), /must be a single line/);
+        assert.match(String(outcome.reason), /Summary/);
+    });
+
+    it("refuses multiline metadata before reconcile looks at the request", async () => {
+        // prepareAdd is pure: the guard fires at the content boundary, before
+        // any near-twin (or filesystem) work that a refusal could otherwise
+        // mask.
+        const entries = [
+            entry({
+                path: "aa/fresh.md",
+                area: "aa",
+                keywords: ["alpha"],
+            }),
+        ];
+
+        const outcome = prepareAdd(
+            addRequest({
+                metadata: {
+                    Area: "aa",
+                    Keywords: ["alpha"],
+                    Summary: "A review finding\nDate: 2026-11-08",
+                },
+            }),
+            entries,
+        );
+
+        assert.equal(outcome.action, "refuse");
+        assert.match(String(outcome.reason), /must be a single line/);
+        assert.doesNotMatch(String(outcome.reason), /fresh\.md/);
+    });
+
+    it("serialises single-line values that survive a full round-trip", async () => {
+        const metadata = {
+            Area: "aa",
+            Keywords: ["alpha very-distinct", "two"],
+            Summary: "S: colons, commas and hyphens are fine on one line.",
+        };
+
+        const raw = serializeDoc(metadata, addRequest().body);
+
+        assert.ok(!raw.includes("\r"));
+        const roundTripped = parseFrontMatter(raw);
+        assert.deepEqual(roundTripped.meta, {
+            Area: metadata.Area,
+            Keywords: metadata.Keywords.join(", "),
+            Summary: metadata.Summary,
+        });
+        assert.deepEqual(roundTripped.body, addRequest().body);
+        assert.deepEqual(validateDoc("aa/fresh.md", raw), []);
+    });
+});

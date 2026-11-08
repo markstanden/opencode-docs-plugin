@@ -1157,11 +1157,43 @@ function readDirectory(directory: string): Dirent[] {
 }
 
 /**
+ * The one collection-visibility rule for a root-relative doc path: the
+ * path segment that makes it invisible to collection, or null when the path
+ * is collected. Knowledge lakes skip the scratch and mirror areas at the
+ * top level; every profile skips dot-directories and `node_modules` at any
+ * depth. Shared by the collection walk ({@link collectDocPaths}) and the
+ * `add` target validation, so a write can never land where collection
+ * refuses to look.
+ * @param path Root-relative doc path, `/`-separated.
+ * @param profile The lake's writing convention.
+ * @returns The offending segment, or null when the path is collected.
+ */
+export function uncollectedSegment(
+    path: string,
+    profile: LakeProfile,
+): string | null {
+    const segments = path.split("/");
+    const top = segments[0] ?? "";
+    if (
+        profile === "knowledge" &&
+        (EXCLUDED_AREAS as readonly string[]).includes(top)
+    ) {
+        return top;
+    }
+    for (const segment of segments) {
+        if (segment.startsWith(".") || segment === "node_modules") {
+            return segment;
+        }
+    }
+    return null;
+}
+
+/**
  * Whether a directory is outside the lake's collection rules.
  * @param item The directory entry.
  * @param directory Its parent directory.
  * @param root The lake root.
- * @param excluded Top-level areas the profile excludes.
+ * @param profile The lake's writing convention.
  * @param nested Other lake roots nested inside this one.
  * @returns True when the walk should not enter it.
  */
@@ -1169,12 +1201,9 @@ function skipDirectory(
     item: Dirent,
     directory: string,
     root: string,
-    excluded: readonly string[],
+    profile: LakeProfile,
     nested: readonly string[],
 ): boolean {
-    if (item.name.startsWith(".") || item.name === "node_modules") {
-        return true;
-    }
     if (item.isSymbolicLink()) {
         return true;
     }
@@ -1182,7 +1211,12 @@ function skipDirectory(
     if (nested.some((other) => isUnder(path, other))) {
         return true;
     }
-    return directory === root && excluded.includes(item.name);
+    return (
+        uncollectedSegment(
+            relative(root, path).split(sep).join("/"),
+            profile,
+        ) !== null
+    );
 }
 
 /**
@@ -1223,14 +1257,12 @@ export function collectDocPaths(
     const nested = skip.filter(
         (other) => other !== root && isUnder(other, root),
     );
-    const excluded =
-        profile === "knowledge" ? (EXCLUDED_AREAS as readonly string[]) : [];
     const paths: string[] = [];
     const walk = (directory: string): void => {
         for (const item of readDirectory(directory)) {
             const path = join(directory, item.name);
             if (item.isDirectory()) {
-                if (!skipDirectory(item, directory, root, excluded, nested)) {
+                if (!skipDirectory(item, directory, root, profile, nested)) {
                     walk(path);
                 }
                 continue;
@@ -1238,7 +1270,11 @@ export function collectDocPaths(
             if (
                 !item.isFile() ||
                 item.isSymbolicLink() ||
-                !item.name.endsWith(".md")
+                !item.name.endsWith(".md") ||
+                uncollectedSegment(
+                    relative(root, path).split(sep).join("/"),
+                    profile,
+                ) !== null
             ) {
                 continue;
             }
@@ -1343,12 +1379,44 @@ function isReadme(name: string): boolean {
 }
 
 /**
+ * Resolve an `add` request's target path and apply the collection-visibility
+ * rule: the resolved path (derived or explicit) must be a path the target
+ * lake would actually collect, or the refusal explains why.
+ * @param add The typed request.
+ * @param profile The target lake's writing convention.
+ * @returns The target path, or the refusal reason.
+ */
+function resolvedTargetOf(
+    add: DocsAdd,
+    profile: LakeProfile,
+): { path: string } | { reason: string } {
+    const target = targetOf(add);
+    if ("reason" in target) {
+        return target;
+    }
+    const invisible = uncollectedSegment(target.path, profile);
+    if (invisible !== null) {
+        return {
+            reason:
+                `'${invisible}' in ${target.path} is never collected by a ` +
+                `${profile} lake — the write would succeed yet stay ` +
+                "invisible to search, read and check. Choose a visible " +
+                "Area or path.",
+        };
+    }
+    return target;
+}
+
+/**
  * The project's nested README paths, relative to `location`. Inside a git work
  * tree git supplies the list — tracked plus untracked, honouring `.gitignore` —
  * so dependency, build and scratch directories follow the project's own rules.
  * Outside one, a walk skips {@link README_EXCLUDED_DIRS} and dot-directories.
- * Paths under `skip` (the lake root) are dropped: they are already lake docs.
- * A tracked file deleted from disk is dropped too — git still lists it.
+ * Both sources filter with lstat and keep regular files only: a symlinked
+ * README (untracked, or a link planted mid-path) is not the project's own
+ * content, and following it could index a file outside the tree. Paths under
+ * `skip` (the lake root) are dropped: they are already lake docs. A tracked
+ * file deleted from disk is dropped too — git still lists it.
  * @param location The project directory the plugin loaded in.
  * @param skip Absolute roots whose READMEs are collected elsewhere.
  * @returns Project-relative README paths, ordered by path.
@@ -1359,11 +1427,20 @@ export function readmePaths(
 ): string[] {
     const candidates = gitReadmePaths(location) ?? walkedReadmePaths(location);
     return candidates
-        .filter((path) => existsSync(join(location, path)))
+        .filter((path) => isRegularFile(join(location, path)))
         .filter(
             (path) => !skip.some((root) => isUnder(join(location, path), root)),
         )
         .sort(compareText);
+}
+
+/** Whether a path exists and is a regular file, never following a symlink. */
+function isRegularFile(path: string): boolean {
+    try {
+        return lstatSync(path).isFile();
+    } catch {
+        return false;
+    }
 }
 
 /**
@@ -1745,6 +1822,30 @@ function revisionRefusal(add: DocsAdd): string | null {
 }
 
 /**
+ * The first required metadata field whose value carries a line break, or
+ * null. The front-matter serialisation is flat `Key: value` lines: a break
+ * inside a value would emit a second line that parses as its own field (a
+ * hand-maintained `Date`, a shadowed `Keywords`), so multiline values are
+ * refused at the boundary rather than corrupted on disk.
+ * @param metadata The typed request metadata.
+ * @returns The offending field name, or null.
+ */
+function multilineMetadataField(metadata: DocMetadata): string | null {
+    for (const { name } of FRONT_MATTER_FIELDS) {
+        const value = metadata[name];
+        const pieces = Array.isArray(value) ? value : [value];
+        if (
+            pieces.some(
+                (piece) => typeof piece === "string" && /[\r\n]/.test(piece),
+            )
+        ) {
+            return name;
+        }
+    }
+    return null;
+}
+
+/**
  * The refusal for DTO content a knowledge doc may not carry: blank required
  * metadata, an `Area` off the root, a missing `H1`, no claim section, or an
  * identity too weak to reconcile.
@@ -1755,6 +1856,15 @@ function contentRefusal(add: DocsAdd): string | null {
     const blank = blankRequiredField(add.metadata);
     if (blank !== null) {
         return `${blank} is required and must not be blank.`;
+    }
+    const multiline = multilineMetadataField(add.metadata);
+    if (multiline !== null) {
+        return (
+            `${multiline} must be a single line: line breaks in serialized ` +
+            "front-matter would corrupt the doc's metadata (a second line " +
+            "becomes a field of its own). Keep each value one line; pass " +
+            "Keywords as several elements, not one delimited string."
+        );
     }
     if (/[/\\]|\.\./.test(add.metadata.Area)) {
         return "Area must be a single folder name under the lake root.";
@@ -1790,19 +1900,23 @@ function contentRefusal(add: DocsAdd): string | null {
  * path or `Area` escaping the lake root, a non-`.md` target and a title that
  * yields no slug are all refused. A same-area near-twin — a doc matching every
  * reconcile query term ({@link reconcileQuery}) — refuses a create unless a
- * non-blank `allowNearTwinReason` explains the deliberate distinct doc.
+ * non-blank `allowNearTwinReason` explains the deliberate distinct doc. A
+ * target the lake would never collect ({@link uncollectedSegment}) is
+ * refused too: a successful write that search cannot see is a silent loss.
  * Target existence is the caller seam's to verify: creates must not overwrite
  * and replaces must exist.
  * @param add The typed request.
  * @param entries The current docs, for reconcile and neighbours.
- * @param options Soft-limit configuration.
+ * @param options Soft-limit configuration and the target lake's profile.
  * @param options.maxDocLines Note when the body exceeds this line count; `0` disables.
+ * @param options.profile The target lake's writing convention, for the
+ * collection-visibility rule; defaults to `knowledge`.
  * @returns The prepared write, or the refusal.
  */
 export function prepareAdd(
     add: DocsAdd,
     entries: readonly DocEntry[],
-    options: { maxDocLines?: number } = {},
+    options: { maxDocLines?: number; profile?: LakeProfile } = {},
 ): AddOutcome {
     const refuse = (reason: string): AddOutcome => ({
         action: "refuse",
@@ -1826,7 +1940,7 @@ export function prepareAdd(
     if (content !== null) {
         return refuse(content);
     }
-    const target = targetOf(add);
+    const target = resolvedTargetOf(add, options.profile ?? "knowledge");
     if ("reason" in target) {
         return refuse(target.reason);
     }
@@ -4382,6 +4496,7 @@ function addDoc(
     const entries = target.collect();
     const outcome = prepareAdd(add, entries, {
         maxDocLines: runtime.maxDocLines,
+        profile: target.profile,
     });
     if (outcome.action === "refuse") {
         return { content: outcome.reason, written: false };

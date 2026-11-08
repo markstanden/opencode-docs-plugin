@@ -15,6 +15,7 @@ import { join } from "node:path";
 import {
     checkDocs,
     collectDocPaths,
+    collectReadmes,
     createDocsTool,
     createLakes,
     fallbackDates,
@@ -25,6 +26,7 @@ import {
     missNudgeFor,
     prepareAdd,
     rankDocs,
+    readmePaths,
     render,
     resolveLakes,
     resolveNonNegativeInt,
@@ -2012,5 +2014,94 @@ describe("dates and collection edges", () => {
         );
 
         assert.match(String(line), /knowledge lakes/);
+    });
+});
+
+describe("readmePaths symlink filtering", () => {
+    /** A git repository with the given files tracked and committed. */
+    function trackedProject(files: string[]): string {
+        const project = tempDir();
+        git(project, ["init", "-q"]);
+        for (const file of files) {
+            writeFileSync(join(project, file), `# ${file}\n`);
+        }
+        git(project, ["add", ...files]);
+        git(project, ["commit", "-qm", "fixture"]);
+        return project;
+    }
+
+    it("excludes an untracked symlinked README that points outside the tree", () => {
+        const project = tempDir();
+        const outside = tempDir();
+        git(project, ["init", "-q"]);
+        writeFileSync(join(outside, "notes.md"), "# Not ours\n");
+        symlinkSync(outside, join(project, "linked"), "dir");
+        symlinkSync(join(outside, "notes.md"), join(project, "README.md"));
+
+        assert.deepEqual(readmePaths(project), []);
+        assert.ok(
+            !collectReadmes(project, (_paths) => new Map(), []).some(
+                (readme) => readme.path === "README.md",
+            ),
+        );
+    });
+
+    it("excludes a broken symlinked README", () => {
+        const project = tempDir();
+        git(project, ["init", "-q"]);
+        symlinkSync(
+            join(project, "never-written.md"),
+            join(project, "README.md"),
+        );
+
+        assert.deepEqual(readmePaths(project), []);
+    });
+
+    it("includes an untracked regular README", async () => {
+        const project = tempDir();
+        git(project, ["init", "-q"]);
+        writeFileSync(join(project, "README.md"), "# Ours\n");
+
+        assert.deepEqual(readmePaths(project), ["README.md"]);
+    });
+
+    it("includes a tracked regular README", async () => {
+        const project = trackedProject(["README.md"]);
+
+        assert.deepEqual(readmePaths(project), ["README.md"]);
+        assert.deepEqual(
+            collectReadmes(project, () => new Map(), []).map(
+                (entry) => entry.path,
+            ),
+            ["README.md"],
+        );
+    });
+
+    it("excludes a tracked README deleted from disk", () => {
+        const project = trackedProject(["README.md"]);
+        rmSync(join(project, "README.md"));
+
+        assert.deepEqual(readmePaths(project), []);
+    });
+
+    it("still includes a tracked nested README committed under a directory", async () => {
+        const project = tempDir();
+        git(project, ["init", "-q"]);
+        mkdirSync(join(project, "docs"));
+        writeFileSync(join(project, "docs", "README.md"), "# Nested\n");
+        git(project, ["add", "docs/README.md"]);
+        git(project, ["commit", "-qm", "fixture"]);
+
+        assert.deepEqual(readmePaths(project), ["docs/README.md"]);
+    });
+
+    it("filters a symlinked README through the fallback walk outside git", async () => {
+        const project = tempDir();
+        const outside = tempDir();
+        writeFileSync(join(outside, "notes.md"), "# Not ours\n");
+        writeFileSync(join(project, "README.md"), "# Ours\n");
+        symlinkSync(join(outside, "notes.md"), join(project, "readme.md"));
+
+        assert.deepEqual(readmePaths(project), ["README.md"]);
     });
 });
