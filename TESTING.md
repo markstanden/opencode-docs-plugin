@@ -499,6 +499,48 @@ already under `revisions.test.ts` (R05), so no model trial is raced.
   the fixture (e.g. `docs/kb/…`, `global/org/…`, `wiki/…`), so a seeded doc
   is genuinely retrievable through the plugin.
 
+## Tool-availability diagnostic (A01)
+
+`tests/fixtures/diagnostic-cases.json` carries the report-only A01
+tool-availability probe. It runs through the same generate → frozen
+description → container child → capture → summary/export path as the
+behavioural corpora, but it is never semantically judged and is not a
+pass/fail preflight for any existing case:
+
+```bash
+PLACEMENT_CASES="$PWD/tests/fixtures/diagnostic-cases.json" \
+  tests/fixtures/placement-harness/container-run.sh generate
+PLACEMENT_CASES="$PWD/tests/fixtures/diagnostic-cases.json" \
+  tests/fixtures/placement-harness/container-run.sh run A01 \
+  --model opencode-go/deepseek-v4.1-flash --stamp diag-dv4f
+PLACEMENT_CASES="$PWD/tests/fixtures/diagnostic-cases.json" \
+  tests/fixtures/placement-harness/container-run.sh summary --stamp diag-dv4f
+```
+
+The diagnostic run adds `--print-logs` to the child invocation and saves an
+`invocation.json` (exact argv, cwd, redacted config, prompt hash). It reports
+five separate facts per run, rendered into `summary.md` and the dossier:
+
+- **Registration** — observed from a plugin-load log record, absent only in a
+  complete startup/shutdown trace with no such record, otherwise unknown.
+- **Advertisement** — native `docs`/`docs_search` and the Code Mode
+  `docs.docs_search` method are each present/absent/unknown. A host that
+  exposes the first request's definitions may save them as
+  `tool-definitions.json` in the result directory; without that capture,
+  advertisement stays unknown and a model's inventory answer is recorded only
+  as supporting evidence.
+- **Dispatch** — succeeded/failed/not attempted, preserving an exact error.
+- **Help result** — inventory returned / refusal or blank / unknown.
+- **Observability** — operation-level docs event, wrapper-only Code Mode
+  result, or no event.
+
+A positive diagnostic requires an operation-level help/inventory response. A
+completed Code Mode `execute` wrapper is preserved but never promoted to
+verified docs use; a model's success claim is never a substitute for the
+operation. Timestamps record plugin load, server start, the first request and
+the delta between them, so delayed availability can be compared rather than
+assumed. No startup sleep is added.
+
 ## Host/transport integration
 
 `tests/host-integration.test.ts` proves the plugin through a PACKED

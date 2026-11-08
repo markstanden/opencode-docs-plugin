@@ -5767,3 +5767,426 @@ test("F04: a recording minimum invalidates a run that wrote nothing", () => {
     assert.equal(judge2.status, 0);
     rmRoot(root);
 });
+
+/* ------------------------------------------------------------------ *
+ * A01 — tool-availability diagnostic, report-only
+ * ------------------------------------------------------------------ */
+
+const DIAGNOSTIC_CORPUS = join(HERE, "fixtures", "diagnostic-cases.json");
+
+/** A diagnostic case with a short prompt; prompt bytes are asserted separately. */
+function diagnosticCase(id: string) {
+    return {
+        ...baselineCase(id),
+        family: "diagnostic",
+        promptKind: "diagnostic",
+        diagnosticPrompt:
+            "Before doing any repository work, check which tools are " +
+            "available in this session.\n",
+        mutationPolicy: { allowed: ["lakes/docs/**"], minWrites: 0 },
+    };
+}
+
+/** A plugin-load trace with a fixed timestamp, so timing output is stable. */
+const DIAGNOSTIC_LOG =
+    [
+        'timestamp=2026-11-08T10:00:00.000Z level=INFO run=r1 message="cli starting" version=2.2.6 role=cli',
+        'timestamp=2026-11-08T10:00:00.100Z level=INFO run=r1 msg="loading plugin" id=/repo entrypoint=file:///repo/src/index.ts role=server',
+        'timestamp=2026-11-08T10:00:00.200Z level=INFO run=r1 message="shutdown started" signal=SIGTERM role=cli',
+    ].join("\n") + "\n";
+
+/** A complete startup/shutdown trace that records no plugin load. */
+const DIAGNOSTIC_LOG_NO_PLUGIN =
+    [
+        'timestamp=2026-11-08T10:00:00.000Z level=INFO run=r1 message="cli starting" version=2.2.6 role=cli',
+        'timestamp=2026-11-08T10:00:00.200Z level=INFO run=r1 message="shutdown started" signal=SIGTERM role=cli',
+    ].join("\n") + "\n";
+
+/** Tool definitions a host export would save for the first model request. */
+const DIAGNOSTIC_CAPTURE = {
+    nativeTools: ["docs", "docs_search"],
+    codeModeTools: ["docs.docs_search"],
+};
+
+const CODE_MODE_HELP_INPUT = {
+    code: 'return await tools.docs.docs_search({ search: "help" });',
+};
+
+/** Run one diagnostic case, optionally drop in a definitions capture, render summary. */
+function runDiagnostic(
+    root: string,
+    fake: string,
+    paths: ReturnType<typeof layout>,
+    id: string,
+    stamp: string,
+    trail: string,
+    options: { stderr?: string; capture?: unknown } = {},
+) {
+    const env: Env = {
+        FAKE_TRIAL_OUT: file(root, `diag-trail-${id}-${stamp}.jsonl`, trail),
+    };
+    if (options.stderr !== undefined) {
+        env.FAKE_TRIAL_ERR = file(
+            root,
+            `diag-stderr-${id}-${stamp}.log`,
+            options.stderr,
+        );
+    }
+    const run = runHarness(
+        root,
+        fake,
+        ["run", id, "--stamp", stamp, ...commandArgs(paths)],
+        env,
+    );
+    const resultDir = join(paths.results, stamp, id);
+    if (options.capture !== undefined) {
+        file(
+            resultDir,
+            "tool-definitions.json",
+            JSON.stringify(options.capture, null, 2) + "\n",
+        );
+    }
+    const summary = runHarness(root, fake, [
+        "summary",
+        "--stamp",
+        stamp,
+        ...commandArgs(paths),
+    ]);
+    const text = readFileSync(join(paths.results, stamp, "summary.md"), "utf8");
+    return { run, summary, resultDir, text };
+}
+
+test("A01: an advertised native help inventory is a positive operation-level diagnostic", () => {
+    // Arrange: a native docs help call completed with the lake inventory,
+    // and the host exported the first request's tool definitions.
+    const root = newRoot("a01-native-help");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [diagnosticCase("A01")]);
+    // Act: run and report through the same harness child path.
+    const { run, summary, text } = runDiagnostic(
+        root,
+        fake,
+        paths,
+        "A01",
+        "s1",
+        TOOL_JSONL(
+            "docs",
+            "call-1",
+            "completed",
+            { search: "help" },
+            "- docs (Repository [repo]): this repository's knowledge\n",
+        ) + ANSWER_JSONL("The docs tool returned the inventory."),
+        { stderr: DIAGNOSTIC_LOG, capture: DIAGNOSTIC_CAPTURE },
+    );
+    // Assert: advertisement, dispatch, help and observability are separate.
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(summary.status, 0, summary.stderr);
+    assert.match(text, /Plugin registration: \*\*observed\*\*/);
+    assert.match(text, /Advertisement \(native docs\): \*\*present\*\*/);
+    assert.match(
+        text,
+        /Advertisement \(Code Mode docs method\): \*\*present\*\*/,
+    );
+    assert.match(text, /Dispatch \(native docs\): \*\*succeeded\*\*/);
+    assert.match(text, /Help: \*\*inventory returned\*\*/);
+    assert.match(text, /Observability: \*\*operation-level\*\*/);
+    assert.match(text, /Positive: \*\*yes\*\*/);
+    rmRoot(root);
+});
+
+test("A01: an advertised Code Mode method with a failed dispatch keeps the exact error", () => {
+    // Arrange: definitions advertise the Code Mode docs method, but dispatch
+    // returns the campaign's exact Unknown-tool error.
+    const root = newRoot("a01-failed-dispatch");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [diagnosticCase("A01")]);
+    const error =
+        "Unknown tool docs.docs_search. Did you mean " +
+        "tools.opencode.list_mcp_resources?";
+    // Act: run and report.
+    const { text } = runDiagnostic(
+        root,
+        fake,
+        paths,
+        "A01",
+        "s1",
+        TOOL_JSONL("execute", "call-1", "error", CODE_MODE_HELP_INPUT, error) +
+            ANSWER_JSONL("I tried the Code Mode docs method."),
+        { stderr: DIAGNOSTIC_LOG, capture: DIAGNOSTIC_CAPTURE },
+    );
+    // Assert: advertisement stays present, dispatch failed, no help result.
+    assert.match(
+        text,
+        /Advertisement \(Code Mode docs method\): \*\*present\*\*/,
+    );
+    assert.match(text, /Dispatch \(Code Mode docs\): \*\*failed\*\*/);
+    assert.match(text, /Unknown tool docs\.docs_search/);
+    assert.match(text, /Help: \*\*unknown\*\*/);
+    assert.match(text, /Positive: \*\*no\*\*/);
+    rmRoot(root);
+});
+
+test("A01: a missing catalogue is distinct from an unknown catalogue", () => {
+    // Arrange: no definitions capture in either run.
+    const root = newRoot("a01-catalogue");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [diagnosticCase("A01")]);
+    // Act: one dispatch whose error names the missing method...
+    const missing = runDiagnostic(
+        root,
+        fake,
+        paths,
+        "A01",
+        "missing",
+        TOOL_JSONL(
+            "execute",
+            "call-1",
+            "error",
+            CODE_MODE_HELP_INPUT,
+            "Unknown tool docs.docs_search.",
+        ) + ANSWER_JSONL("The catalogue does not list docs."),
+        { stderr: DIAGNOSTIC_LOG },
+    );
+    // ...and one run that never inspects the catalogue.
+    const unknown = runDiagnostic(
+        root,
+        fake,
+        paths,
+        "A01",
+        "unknown",
+        ANSWER_JSONL("I did not inspect the Code Mode catalogue."),
+        { stderr: DIAGNOSTIC_LOG },
+    );
+    // Assert: a failed dispatch is a missing catalogue; silence is unknown.
+    assert.match(missing.text, /Catalogue: \*\*missing\*\*/);
+    assert.match(
+        missing.text,
+        /Advertisement \(Code Mode docs method\): \*\*unknown\*\*/,
+    );
+    assert.match(unknown.text, /Catalogue: \*\*unknown\*\*/);
+    assert.doesNotMatch(unknown.text, /Catalogue: \*\*missing\*\*/);
+    rmRoot(root);
+});
+
+test("A01: Code Mode help output stays wrapper-only, never a positive diagnostic", () => {
+    // Arrange: definitions advertise the Code Mode method and the execute
+    // wrapper completed with an inventory, but no nested event exists.
+    const root = newRoot("a01-wrapper-only");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [diagnosticCase("A01")]);
+    // Act: run and report.
+    const { text } = runDiagnostic(
+        root,
+        fake,
+        paths,
+        "A01",
+        "s1",
+        TOOL_JSONL(
+            "execute",
+            "call-1",
+            "completed",
+            CODE_MODE_HELP_INPUT,
+            "- docs (Repository [repo]): this repository's knowledge\n",
+        ) + ANSWER_JSONL("Code Mode help returned the inventory."),
+        { stderr: DIAGNOSTIC_LOG, capture: DIAGNOSTIC_CAPTURE },
+    );
+    // Assert: the wrapper result is preserved but never promoted.
+    assert.match(text, /Dispatch \(Code Mode docs\): \*\*succeeded\*\*/);
+    assert.match(text, /Help: \*\*inventory returned\*\*/);
+    assert.match(text, /Observability: \*\*wrapper-only\*\*/);
+    assert.match(text, /Positive: \*\*no\*\*/);
+    assert.match(text, /wrapper-only; it is not verified docs use/);
+    rmRoot(root);
+});
+
+test("A01: a model's inventory claim is supporting evidence, never advertisement", () => {
+    // Arrange: no definitions capture and no docs-family call.
+    const root = newRoot("a01-model-claim");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [diagnosticCase("A01")]);
+    // Act: the answer claims the native docs tool is available.
+    const { text } = runDiagnostic(
+        root,
+        fake,
+        paths,
+        "A01",
+        "s1",
+        ANSWER_JSONL("The native docs tool is advertised to me."),
+        { stderr: DIAGNOSTIC_LOG },
+    );
+    // Assert: the claim is recorded as supporting, not authoritative.
+    assert.match(text, /Advertisement \(native docs\): \*\*unknown\*\*/);
+    assert.match(text, /Supporting model report \(not authoritative\)/);
+    assert.match(text, /The native docs tool is advertised to me\./);
+    assert.match(text, /Positive: \*\*no\*\*/);
+    rmRoot(root);
+});
+
+test("A01: registration is absent only in a complete trace, otherwise unknown", () => {
+    // Arrange: one complete trace without a plugin-load record, one empty trace.
+    const root = newRoot("a01-registration");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [diagnosticCase("A01")]);
+    // Act: run each trace.
+    const absent = runDiagnostic(
+        root,
+        fake,
+        paths,
+        "A01",
+        "absent",
+        ANSWER_JSONL("No documentation tool is advertised."),
+        { stderr: DIAGNOSTIC_LOG_NO_PLUGIN },
+    );
+    const unknown = runDiagnostic(
+        root,
+        fake,
+        paths,
+        "A01",
+        "unknown",
+        ANSWER_JSONL("No documentation tool is advertised."),
+    );
+    // Assert: a missing log line is not absence without the complete trace.
+    assert.match(
+        absent.text,
+        /Plugin registration: \*\*absent\*\* — stderr\.log: complete startup\/shutdown trace/,
+    );
+    assert.match(
+        unknown.text,
+        /Plugin registration: \*\*unknown\*\* — stderr\.log: no complete plugin-load trace/,
+    );
+    rmRoot(root);
+});
+
+test("A01: a host location mismatch is reported against the invoked cwd", () => {
+    // Arrange: a complete trace with no plugin load, and the host reporting
+    // a location other than the cwd the harness invoked.
+    const root = newRoot("a01-cwd-mismatch");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [diagnosticCase("A01")]);
+    const log =
+        DIAGNOSTIC_LOG_NO_PLUGIN +
+        'timestamp=2026-11-08T10:00:00.100Z level=INFO run=r1 message="location services booted" directory=/workspace role=server\n';
+    // Act: run and report.
+    const { text } = runDiagnostic(
+        root,
+        fake,
+        paths,
+        "A01",
+        "s1",
+        ANSWER_JSONL("No documentation tool is advertised."),
+        { stderr: log },
+    );
+    // Assert: the mismatch is visible and names the launch-path consequence.
+    assert.match(text, /Host location: \/workspace; invoked cwd .*MISMATCH/);
+    assert.match(text, /differs from invoked cwd/);
+    assert.match(text, /fixture config was not loaded/);
+    rmRoot(root);
+});
+
+test("A01: the wrapper's redacted run list preserves the diagnostic prompt kind", () => {
+    // Arrange: a diagnostic-only wrapper corpus and a stubbed podman.
+    const root = newRoot("a01-redacted-kind");
+    const fake = writeFakeOpencode(root);
+    const stubDir = join(root, "stub");
+    mkdirSync(stubDir, { recursive: true });
+    chmodSync(writeStubPodman(stubDir), 0o755);
+    writeCorpus(root, [diagnosticCase("A01")]);
+    // Act: the wrapper stages its id-only run list before the container loop.
+    runWrapper(root, fake, ["run", "A01", "--stamp", "wx"], {
+        PATH: stubDir + ":" + process.env.PATH,
+    });
+    // Assert: the run container still knows the case is report-only.
+    const redactedPath = readdirSync(join(root, "run-fixtures")).find((name) =>
+        name.startsWith("cases-"),
+    );
+    assert.ok(redactedPath, "redacted list is corpus-hash keyed");
+    const redacted = readJson(join(root, "run-fixtures", redactedPath));
+    assert.equal(redacted[0].promptKind, "diagnostic");
+    rmRoot(root);
+});
+
+test("A01: the checked-in diagnostic corpus generates its prompt byte-for-byte", () => {
+    // Arrange: the checked-in corpus is the single prompt source.
+    const root = newRoot("a01-corpus");
+    const fake = writeFakeOpencode(root);
+    const cases = readJson(DIAGNOSTIC_CORPUS) as Array<{
+        id: string;
+        promptKind: string;
+        diagnosticPrompt: string;
+    }>;
+    const diagnostic = cases.find((entry) => entry.id === "A01");
+    assert.ok(diagnostic, "the diagnostic corpus must carry A01");
+    assert.equal(diagnostic.promptKind, "diagnostic");
+    const paths = layout(root);
+    // Act: generate from the checked-in file.
+    const run = runHarness(root, fake, [
+        "generate",
+        "A01",
+        "--fixture",
+        DIAGNOSTIC_CORPUS,
+        "--prompts",
+        paths.prompts,
+        "--fixtures",
+        paths.fixtures,
+        "--rubrics",
+        paths.rubrics,
+        "--results",
+        paths.results,
+    ]);
+    // Assert: the prompt is exactly the authored diagnostic bytes.
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(
+        readFileSync(join(paths.prompts, "A01.md"), "utf8"),
+        diagnostic.diagnosticPrompt,
+    );
+    assert.match(
+        diagnostic.diagnosticPrompt,
+        /^Before doing any repository work/,
+    );
+    assert.match(diagnostic.diagnosticPrompt, /JavaScript typeof/);
+    rmRoot(root);
+});
+
+test("A01: a diagnostic case is report-only, never semantically judged", () => {
+    // Arrange: a valid diagnostic run.
+    const root = newRoot("a01-no-judge");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [diagnosticCase("A01")]);
+    const out = file(
+        root,
+        "diag-trail.jsonl",
+        TOOL_JSONL(
+            "docs",
+            "call-1",
+            "completed",
+            { search: "help" },
+            "- docs (Repository [repo]): this repository's knowledge\n",
+        ) + ANSWER_JSONL("The docs tool returned the inventory."),
+    );
+    runHarness(
+        root,
+        fake,
+        ["run", "A01", "--stamp", "s1", ...commandArgs(paths)],
+        {
+            FAKE_TRIAL_OUT: out,
+            FAKE_TRIAL_ERR: file(root, "log", DIAGNOSTIC_LOG),
+        },
+    );
+    // Act: ask the harness to judge it.
+    const judge = runHarness(root, fake, [
+        "judge",
+        "A01",
+        "--stamp",
+        "s1",
+        ...commandArgs(paths),
+    ]);
+    // Assert: no judge call, no verdict, and a visible report-only notice.
+    assert.equal(judge.status, 0, judge.stderr);
+    assert.match(judge.stderr, /diagnostic case\(s\).*report-only/);
+    assert.equal(
+        existsSync(join(paths.results, "s1", "A01", "verdict.json")),
+        false,
+    );
+    assert.equal(existsSync(join(paths.results, "s1", "A01", "judge")), false);
+    rmRoot(root);
+});

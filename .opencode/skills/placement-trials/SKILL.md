@@ -60,6 +60,18 @@ Per-case wrappers live in `~/tmp/docs-placement/E01.sh`…`E18.sh`.
   regenerate fixtures (`generate --force`) only when the fixture JSON or
   sandbox policy genuinely changed.
 
+## Tool-availability diagnostic
+
+`tests/fixtures/diagnostic-cases.json` (A01) is a report-only probe through
+the same child path. Point `PLACEMENT_CASES` at it, generate, then run `A01`;
+it is never semantically judged. `summary.md` and the dossier render separate
+registration, advertisement, dispatch, help-result and observability facts,
+plus invocation/timestamps. A host that exposes the first request's tool
+definitions can save them as `tool-definitions.json` in the result directory;
+without that capture, advertisement is unknown and a model's inventory answer
+is supporting evidence only. Code Mode wrapper completion is never counted as
+verified docs use. This is not a behavioural gate for the other cases.
+
 ## Reading results
 
 - `summary.md` per stamp: verdict, destination, writes, docs-tool call count,

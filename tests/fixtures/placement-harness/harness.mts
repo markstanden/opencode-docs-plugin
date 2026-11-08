@@ -117,6 +117,8 @@ interface TrialCase {
     accepts?: string[];
     temptingWrong?: string[];
     promptKind?: string;
+    /** The exact prompt for a report-only `diagnostic` case. */
+    diagnosticPrompt?: string;
     seeds?: SeedSpec[];
     mutationPolicy?: MutationPolicy | null;
     docsCriterion?: DocsCriterion | null;
@@ -155,6 +157,15 @@ function isFullCase(value: TrialCase): value is FullTrialCase {
         typeof value.expected === "string" &&
         Array.isArray(value.accepts) &&
         Array.isArray(value.temptingWrong)
+    );
+}
+
+/** Whether one case is the report-only tool-availability diagnostic. */
+function isDiagnosticCase(value: TrialCase | undefined | null): boolean {
+    return (
+        value !== undefined &&
+        value !== null &&
+        value.promptKind === "diagnostic"
     );
 }
 
@@ -359,6 +370,7 @@ interface MetaRecord {
     telemetry?: unknown;
     generation?: string;
     startedAt?: string;
+    finishedAt?: string;
 }
 
 /** The generation record a fixture carries (schema v2). */
@@ -528,6 +540,8 @@ interface CallArgs {
     prompt: string;
     opencode: string;
     timeoutMs: number;
+    /** Print host server logs to stderr (the diagnostic's registration trace). */
+    printLogs?: boolean;
 }
 
 /** The bound arguments of a judge attempt record. */
@@ -1852,6 +1866,14 @@ function corpusFieldProblems(
     fieldProblems(
         problems,
         entry,
+        "diagnosticPrompt",
+        "must be a nonblank string",
+        (v) => typeof v === "string" && v.trim() !== "",
+        requireFull && entry.promptKind === "diagnostic",
+    );
+    fieldProblems(
+        problems,
+        entry,
         "generationInputsHash",
         "must be a string or null",
         (v) => typeof v === "string" || v === null,
@@ -2428,8 +2450,739 @@ function readTrail(resultDir: string): ToolTrail | null {
 }
 
 /* ------------------------------------------------------------------ *
- * Provenance and identity
+ * Tool-availability diagnostic (report-only)
  * ------------------------------------------------------------------ */
+
+type DiagnosticPresence = "present" | "absent" | "unknown";
+type DiagnosticCatalogueStatus = "present" | "missing" | "unknown";
+type DiagnosticDispatchStatus = "succeeded" | "failed" | "not attempted";
+type DiagnosticHelpStatus =
+    "inventory returned" | "refusal or blank" | "unknown";
+type DiagnosticObservability = "operation-level" | "wrapper-only" | "no event";
+
+interface DiagnosticSurface {
+    status: DiagnosticPresence;
+    source: string;
+    detail: string;
+}
+
+interface DiagnosticDispatch {
+    status: DiagnosticDispatchStatus;
+    source: string;
+    detail: string;
+    error: string | null;
+}
+
+interface DiagnosticRecord {
+    invocation: {
+        command: string;
+        args: string[];
+        cwd: string;
+        promptSha256: string;
+        startedAt: string;
+        config: unknown;
+    } | null;
+    timestamps: {
+        runStartedAt: string;
+        pluginLoadAt: string | null;
+        serverStartAt: string | null;
+        firstRequestAt: string | null;
+        finishedAt: string;
+        pluginLoadToFirstRequestMs: number | null;
+    };
+    registration: {
+        status: "observed" | "absent" | "unknown";
+        source: string;
+        detail: string;
+    };
+    environment: {
+        invokedCwd: string | null;
+        hostDirectory: string | null;
+        cwdMatches: boolean | null;
+    };
+    advertisement: {
+        nativeDocs: DiagnosticSurface;
+        codeModeDocs: DiagnosticSurface;
+    };
+    catalogue: {
+        status: DiagnosticCatalogueStatus;
+        source: string;
+        detail: string;
+    };
+    dispatch: {
+        nativeDocs: DiagnosticDispatch;
+        codeModeDocs: DiagnosticDispatch;
+    };
+    help: {
+        status: DiagnosticHelpStatus;
+        source: string;
+        detail: string;
+    };
+    observability: {
+        status: DiagnosticObservability;
+        source: string;
+        detail: string;
+    };
+    positive: {
+        status: "yes" | "no";
+        reason: string;
+    };
+    supporting: { modelReported: string };
+}
+
+const LOG_TIMESTAMP = /^timestamp=(\S+)/;
+
+/** The host location directory reported in the log, or null. */
+function hostDirectoryFromLog(text: string): string | null {
+    const line = text
+        .split("\n")
+        .find((entry) =>
+            /(?:msg|message)="location services booted"/.test(entry),
+        );
+    return line?.match(/directory=(\S+)/)?.[1] ?? null;
+}
+
+/** The plugin-registration verdict from the captured host log. */
+function registrationFromLog(
+    text: string,
+    invokedCwd: string | null,
+    hostDirectory: string | null,
+): DiagnosticRecord["registration"] {
+    const lines = text.split("\n").filter(Boolean);
+    const load = lines.find((line) =>
+        /(?:msg|message)="loading plugin"/.test(line),
+    );
+    if (load !== undefined) {
+        return {
+            status: "observed",
+            source: "stderr.log",
+            detail: load.trim(),
+        };
+    }
+    const started = lines.some((line) =>
+        /(?:msg|message)="cli starting"/.test(line),
+    );
+    const stopped = lines.some((line) =>
+        /(?:msg|message)="shutdown started"/.test(line),
+    );
+    if (started && stopped) {
+        const mismatch =
+            invokedCwd !== null &&
+            hostDirectory !== null &&
+            invokedCwd !== hostDirectory
+                ? `; host location ${hostDirectory} differs from invoked cwd ` +
+                  `${invokedCwd}, so the fixture config was not loaded`
+                : "";
+        return {
+            status: "absent",
+            source: "stderr.log",
+            detail:
+                "complete startup/shutdown trace with no plugin-load " +
+                `record${mismatch}`,
+        };
+    }
+    return {
+        status: "unknown",
+        source: "stderr.log",
+        detail: "no complete plugin-load trace was captured",
+    };
+}
+
+/** The invoked cwd against the host's own location report. */
+function diagnosticEnvironment(
+    invocation: DiagnosticRecord["invocation"],
+    hostDirectory: string | null,
+): DiagnosticRecord["environment"] {
+    const invokedCwd = invocation?.cwd ?? null;
+    return {
+        invokedCwd,
+        hostDirectory,
+        cwdMatches:
+            invokedCwd === null || hostDirectory === null
+                ? null
+                : invokedCwd === hostDirectory,
+    };
+}
+
+/** One tool name from a definitions capture, for presence classification. */
+interface CapturedToolName {
+    name: string;
+    namespace?: string | undefined;
+}
+
+/** Normalise one captured tool entry (string or object), or null. */
+function capturedToolName(entry: unknown): CapturedToolName | null {
+    if (typeof entry === "string") return { name: entry };
+    if (!isRecord(entry)) return null;
+    const name = entry.name ?? entry.tool;
+    if (typeof name !== "string" || name === "") return null;
+    const namespace =
+        typeof entry.namespace === "string" ? entry.namespace : undefined;
+    return { name, namespace };
+}
+
+/** The names a definitions capture proves, or null when malformed. */
+function capturedDefinitions(value: unknown): CapturedToolName[] | null {
+    if (Array.isArray(value)) {
+        return value.map(capturedToolName).filter((entry) => entry !== null);
+    }
+    if (!isRecord(value)) return null;
+    const generic = value.tools ?? value.definitions;
+    if (Array.isArray(generic)) {
+        return generic.map(capturedToolName).filter((entry) => entry !== null);
+    }
+    const names: CapturedToolName[] = [];
+    for (const field of [
+        "nativeTools",
+        "codeModeTools",
+        "native",
+        "codeMode",
+    ]) {
+        const list = value[field];
+        if (!Array.isArray(list)) continue;
+        for (const entry of list) {
+            const captured = capturedToolName(entry);
+            if (captured !== null) names.push(captured);
+        }
+    }
+    return names.length > 0 ? names : null;
+}
+
+/** Whether one captured name is the native docs surface. */
+function isCapturedNativeDocs(entry: CapturedToolName): boolean {
+    return (
+        entry.namespace === undefined &&
+        (entry.name === "docs" || entry.name === "docs_search")
+    );
+}
+
+/** Whether one captured name is the Code Mode docs method. */
+function isCapturedCodeModeDocs(entry: CapturedToolName): boolean {
+    return (
+        entry.name === "docs.docs_search" ||
+        (entry.namespace === "docs" && entry.name === "docs_search")
+    );
+}
+
+/** One definitions capture read from the result directory. */
+type DefinitionsCapture =
+    | { kind: "absent" }
+    | { kind: "malformed"; detail: string }
+    | { kind: "present"; native: boolean; codeMode: boolean };
+
+/** Read the optional first-request tool-definitions capture, when a host saved one. */
+function readDefinitionsCapture(resultDir: string): DefinitionsCapture {
+    const at = jsonAt(join(resultDir, "tool-definitions.json"));
+    if (at.kind === "absent") return { kind: "absent" };
+    if (at.kind === "corrupt") {
+        return {
+            kind: "malformed",
+            detail: `tool-definitions.json is malformed (${at.problem})`,
+        };
+    }
+    const names = capturedDefinitions(at.value);
+    if (names === null) {
+        return {
+            kind: "malformed",
+            detail: "tool-definitions.json carries no recognised tool list",
+        };
+    }
+    return {
+        kind: "present",
+        native: names.some(isCapturedNativeDocs),
+        codeMode: names.some(isCapturedCodeModeDocs),
+    };
+}
+
+/** The string form of a tool call's captured output, or its JSON rendering. */
+function diagnosticOutput(value: unknown): string {
+    return typeof value === "string" ? value : JSON.stringify(value ?? "");
+}
+
+/** The first nonblank error output among calls, or null. */
+function firstCallError(calls: ToolCall[]): string | null {
+    const failed = calls.find((entry) => entry.status === "error");
+    if (failed === undefined) return null;
+    const output = diagnosticOutput(failed.output).trim();
+    return output === "" ? null : output;
+}
+
+/** The dispatch verdict for one surface's calls. */
+function diagnosticDispatch(
+    calls: ToolCall[],
+    label: string,
+): DiagnosticDispatch {
+    if (calls.length === 0) {
+        return {
+            status: "not attempted",
+            source: "tools.jsonl",
+            detail: `no ${label} call observed`,
+            error: null,
+        };
+    }
+    const completed = calls.filter((entry) => entry.status === "completed");
+    if (completed.length > 0) {
+        return {
+            status: "succeeded",
+            source: "tools.jsonl",
+            detail: `${completed.length} completed call(s)`,
+            error: firstCallError(calls),
+        };
+    }
+    return {
+        status: "failed",
+        source: "tools.jsonl",
+        detail: `${calls.length} call(s) ended without completion`,
+        error: firstCallError(calls),
+    };
+}
+
+/** The advertisement verdict for one surface, from capture then dispatch. */
+function diagnosticAdvertisement(
+    surface: "native" | "codeMode",
+    capture: DefinitionsCapture,
+    calls: ToolCall[],
+): DiagnosticSurface {
+    const label =
+        surface === "native" ? "native docs" : "Code Mode docs method";
+    if (capture.kind === "present") {
+        const found = surface === "native" ? capture.native : capture.codeMode;
+        return {
+            status: found ? "present" : "absent",
+            source: "tool-definitions.json",
+            detail: found
+                ? `the capture lists the ${label}`
+                : `the complete capture does not list the ${label}`,
+        };
+    }
+    const inferred = calls.some((entry) => entry.status === "completed");
+    if (inferred) {
+        return {
+            status: "present",
+            source: "tools.jsonl",
+            detail:
+                `a completed ${label} call proves exposure; it is not a ` +
+                "registry dump",
+        };
+    }
+    return {
+        status: "unknown",
+        source: "artefacts",
+        detail:
+            capture.kind === "malformed"
+                ? capture.detail
+                : `no tool-definitions capture and no completed ${label} call`,
+    };
+}
+
+/** The catalogue verdict for the Code Mode docs method. */
+function diagnosticCatalogue(
+    capture: DefinitionsCapture,
+    codeCalls: ToolCall[],
+): DiagnosticRecord["catalogue"] {
+    if (capture.kind === "present") {
+        return {
+            status: capture.codeMode ? "present" : "missing",
+            source: "tool-definitions.json",
+            detail: capture.codeMode
+                ? "the capture lists the Code Mode docs method"
+                : "the complete capture omits the Code Mode docs method",
+        };
+    }
+    const completed = codeCalls.some((entry) => entry.status === "completed");
+    if (completed) {
+        return {
+            status: "present",
+            source: "tools.jsonl",
+            detail: "a Code Mode docs dispatch completed",
+        };
+    }
+    const error = firstCallError(codeCalls);
+    if (error !== null) {
+        return {
+            status: "missing",
+            source: "tools.jsonl",
+            detail: `exact dispatch error: \`${error}\``,
+        };
+    }
+    return {
+        status: "unknown",
+        source: "artefacts",
+        detail:
+            capture.kind === "malformed"
+                ? capture.detail
+                : "no tool-definitions capture and no Code Mode docs dispatch",
+    };
+}
+
+/** The first stdout event timestamp, the first model-request mark. */
+function firstRequestTimestamp(resultDir: string): string | null {
+    const path = join(resultDir, "stdout.jsonl");
+    if (!existsSync(path)) return null;
+    for (const line of readFileSync(path, "utf8").split("\n").filter(Boolean)) {
+        const event = parseLine(line);
+        if (!isRecord(event) || typeof event.timestamp !== "number") continue;
+        return new Date(event.timestamp).toISOString();
+    }
+    return null;
+}
+
+/** The help-result verdict, preferring observable native/twin operations. */
+function diagnosticHelp(entries: ToolCall[]): DiagnosticRecord["help"] {
+    const nativeHelp = entries.filter((entry) => {
+        const kind = docsEntryKind(entry);
+        return (
+            (kind === "native" || kind === "twin") &&
+            docsEntryVerb(kind, entry) === "help"
+        );
+    });
+    if (nativeHelp.length > 0) {
+        const successful = nativeHelp.find(docsOpSuccessful);
+        if (successful !== undefined) {
+            return {
+                status: "inventory returned",
+                source: `operation-level \`${successful.tool}\` help call`,
+                detail: diagnosticOutput(successful.output).trim(),
+            };
+        }
+        const completed = nativeHelp.find(
+            (entry) => entry.status === "completed",
+        );
+        if (completed !== undefined) {
+            return {
+                status: "refusal or blank",
+                source: "tools.jsonl",
+                detail:
+                    "the help call completed without a nonblank inventory; " +
+                    `output: \`${diagnosticOutput(completed.output).trim()}\``,
+            };
+        }
+        return {
+            status: "unknown",
+            source: "tools.jsonl",
+            detail: "the help dispatch failed before a result was returned",
+        };
+    }
+    const codeHelp = entries.filter(
+        (entry) =>
+            isCodeModeDocs(entry) &&
+            codeModeVerbOf(
+                isRecord(entry.input) && typeof entry.input.code === "string"
+                    ? entry.input.code
+                    : undefined,
+            ) === "help",
+    );
+    if (codeHelp.length > 0) {
+        const completed = codeHelp.find(
+            (entry) =>
+                entry.status === "completed" &&
+                diagnosticOutput(entry.output).trim() !== "",
+        );
+        if (completed !== undefined) {
+            return {
+                status: "inventory returned",
+                source:
+                    "Code Mode execute wrapper result; nested operation " +
+                    "unobservable",
+                detail: diagnosticOutput(completed.output).trim(),
+            };
+        }
+        const blank = codeHelp.find((entry) => entry.status === "completed");
+        if (blank !== undefined) {
+            return {
+                status: "refusal or blank",
+                source: "tools.jsonl",
+                detail: "the Code Mode help wrapper completed without output",
+            };
+        }
+        return {
+            status: "unknown",
+            source: "tools.jsonl",
+            detail: "the Code Mode help dispatch failed before a result",
+        };
+    }
+    return {
+        status: "unknown",
+        source: "artefacts",
+        detail: "no help request observed",
+    };
+}
+
+/** The observability verdict: an operation event, a wrapper, or nothing. */
+function diagnosticObservability(
+    entries: ToolCall[],
+): DiagnosticRecord["observability"] {
+    const observable = entries.filter((entry) => {
+        const kind = docsEntryKind(entry);
+        return kind === "native" || kind === "twin";
+    });
+    if (observable.length > 0) {
+        return {
+            status: "operation-level",
+            source: "tools.jsonl",
+            detail: `${observable.length} native/twin docs event(s)`,
+        };
+    }
+    const wrappers = entries.filter(isCodeModeDocs);
+    if (wrappers.length > 0) {
+        return {
+            status: "wrapper-only",
+            source: "tools.jsonl",
+            detail:
+                `${wrappers.length} Code Mode docs attempt(s); no ` +
+                "operation-level docs event",
+        };
+    }
+    return {
+        status: "no event",
+        source: "tools.jsonl",
+        detail: "no docs-family event observed",
+    };
+}
+
+/** The captured host log text, or empty when none was saved. */
+function diagnosticLogText(resultDir: string): string {
+    const path = join(resultDir, "stderr.log");
+    return existsSync(path) ? readFileSync(path, "utf8") : "";
+}
+
+/** The plugin-load and server-start marks from the captured host log. */
+function diagnosticLogTiming(log: string) {
+    const lines = log.split("\n");
+    const mark = (pattern: RegExp): string | null =>
+        lines.find((line) => pattern.test(line))?.match(LOG_TIMESTAMP)?.[1] ??
+        null;
+    return {
+        pluginLoadAt: mark(/(?:msg|message)="loading plugin"/),
+        serverStartAt: mark(/(?:msg|message)="cli starting"/),
+    };
+}
+
+/** The exact invocation record saved by a diagnostic run. */
+function diagnosticInvocation(
+    resultDir: string,
+): DiagnosticRecord["invocation"] {
+    const at = jsonAt(join(resultDir, "invocation.json"));
+    return at.kind === "value" && isRecord(at.value)
+        ? (at.value as DiagnosticRecord["invocation"])
+        : null;
+}
+
+/** Whether the help/inventory evidence is a positive, observable diagnostic. */
+function diagnosticPositive(
+    help: DiagnosticRecord["help"],
+    observability: DiagnosticRecord["observability"],
+): DiagnosticRecord["positive"] {
+    if (
+        help.status === "inventory returned" &&
+        observability.status === "operation-level"
+    ) {
+        return {
+            status: "yes",
+            reason: "operation-level help/inventory response",
+        };
+    }
+    if (
+        help.status === "inventory returned" &&
+        observability.status === "wrapper-only"
+    ) {
+        return {
+            status: "no",
+            reason:
+                "help/inventory was wrapper-only; it is not verified docs " +
+                "use",
+        };
+    }
+    return {
+        status: "no",
+        reason: "no operation-level help/inventory response",
+    };
+}
+
+/** The model's own report, recorded only as supporting evidence. */
+function diagnosticModelReport(resultDir: string): string {
+    const path = join(resultDir, "final.md");
+    return existsSync(path) ? readFileSync(path, "utf8").trim() : "";
+}
+
+/** The recorded run meta, or null when the case never ran. */
+function diagnosticMeta(resultDir: string): MetaRecord | null {
+    const at = metaRecordAt(join(resultDir, "meta.json"));
+    if (at.kind === "absent") return null;
+    return at.kind === "value" ? at.value : {};
+}
+
+/** One run's tool entries and the two docs-surface call sets. */
+function diagnosticToolCalls(resultDir: string) {
+    const trail = readTrail(resultDir);
+    if (trail === null && !existsSync(join(resultDir, "stdout.jsonl")))
+        return null;
+    const entries = trail?.entries ?? [];
+    return {
+        entries,
+        nativeCalls: entries.filter(
+            (entry) => entry.tool === "docs" || entry.tool === "docs_search",
+        ),
+        codeCalls: entries.filter(isCodeModeDocs),
+    };
+}
+
+/** The run's timing marks, including the registration-to-request delta. */
+function diagnosticTimestamps(
+    meta: MetaRecord,
+    invocation: DiagnosticRecord["invocation"],
+    logTiming: ReturnType<typeof diagnosticLogTiming>,
+    firstRequestAt: string | null,
+): DiagnosticRecord["timestamps"] {
+    const runStartedAt =
+        invocation?.startedAt ??
+        (typeof meta.startedAt === "string" ? meta.startedAt : "?");
+    const finishedAt =
+        typeof meta.finishedAt === "string" ? meta.finishedAt : "?";
+    const delta =
+        logTiming.pluginLoadAt !== null && firstRequestAt !== null
+            ? Date.parse(firstRequestAt) - Date.parse(logTiming.pluginLoadAt)
+            : null;
+    return {
+        runStartedAt,
+        pluginLoadAt: logTiming.pluginLoadAt,
+        serverStartAt: logTiming.serverStartAt,
+        firstRequestAt,
+        finishedAt,
+        pluginLoadToFirstRequestMs: delta,
+    };
+}
+
+/** Build the report-only diagnostic record from one result directory's artefacts. */
+function diagnosticFor(resultDir: string): DiagnosticRecord | null {
+    const meta = diagnosticMeta(resultDir);
+    if (meta === null) return null;
+    const calls = diagnosticToolCalls(resultDir);
+    if (calls === null) return null;
+    const { entries, nativeCalls, codeCalls } = calls;
+    const capture = readDefinitionsCapture(resultDir);
+    const log = diagnosticLogText(resultDir);
+    const hostDirectory = hostDirectoryFromLog(log);
+    const invocation = diagnosticInvocation(resultDir);
+    const registration = registrationFromLog(
+        log,
+        invocation?.cwd ?? null,
+        hostDirectory,
+    );
+    const logTiming = diagnosticLogTiming(log);
+    const firstRequestAt = firstRequestTimestamp(resultDir);
+    const help = diagnosticHelp(entries);
+    const observability = diagnosticObservability(entries);
+    return {
+        invocation,
+        timestamps: diagnosticTimestamps(
+            meta,
+            invocation,
+            logTiming,
+            firstRequestAt,
+        ),
+        registration,
+        environment: diagnosticEnvironment(invocation, hostDirectory),
+        advertisement: {
+            nativeDocs: diagnosticAdvertisement("native", capture, nativeCalls),
+            codeModeDocs: diagnosticAdvertisement(
+                "codeMode",
+                capture,
+                codeCalls,
+            ),
+        },
+        catalogue: diagnosticCatalogue(capture, codeCalls),
+        dispatch: {
+            nativeDocs: diagnosticDispatch(nativeCalls, "native docs"),
+            codeModeDocs: diagnosticDispatch(codeCalls, "Code Mode docs"),
+        },
+        help,
+        observability,
+        positive: diagnosticPositive(help, observability),
+        supporting: { modelReported: diagnosticModelReport(resultDir) },
+    };
+}
+
+/** The invoked-cwd vs host-location line, exposing a launch mismatch. */
+function diagnosticEnvironmentLine(record: DiagnosticRecord): string {
+    const environment = record.environment;
+    const match =
+        environment.cwdMatches === null
+            ? "unknown"
+            : environment.cwdMatches
+              ? "match"
+              : "MISMATCH — the fixture config was not loaded";
+    return `- Host location: ${environment.hostDirectory ?? "unknown"}; invoked cwd ${environment.invokedCwd ?? "unknown"}; ${match}`;
+}
+
+/** The invocation line, with the prompt argument abbreviated. */
+function diagnosticInvocationLabel(
+    invocation: DiagnosticRecord["invocation"],
+): string {
+    if (invocation === null) return "unknown";
+    return (
+        `${invocation.command} ` +
+        `${invocation.args.slice(0, -1).join(" ")} <prompt>`
+    );
+}
+
+/** One dispatch line, preserving an exact error when the call captured one. */
+function diagnosticDispatchLine(
+    label: string,
+    dispatch: DiagnosticDispatch,
+): string {
+    const error =
+        dispatch.error === null ? "" : `; exact error: \`${dispatch.error}\``;
+    return `- Dispatch (${label}): **${dispatch.status}** — ${dispatch.detail}${error}`;
+}
+
+/** The model-report line, flattened and bounded for the report. */
+function diagnosticModelReportLine(record: DiagnosticRecord): string {
+    const reported = record.supporting.modelReported;
+    const text =
+        reported === "" ? "none" : reported.split("\n").join(" ").slice(0, 600);
+    return `- Supporting model report (not authoritative): ${text}`;
+}
+
+/** The diagnostic sections rendered into summary and dossier reports. */
+function diagnosticLines(record: DiagnosticRecord): string[] {
+    const at = record.timestamps;
+    const delta =
+        at.pluginLoadToFirstRequestMs === null
+            ? "unknown"
+            : `${at.pluginLoadToFirstRequestMs} ms`;
+    const invocation = record.invocation;
+    return [
+        "### Tool-availability diagnostic",
+        "",
+        `- Invocation: \`${diagnosticInvocationLabel(invocation)}\``,
+        `- Cwd: \`${invocation?.cwd ?? "unknown"}\``,
+        diagnosticEnvironmentLine(record),
+        `- Prompt sha256: \`${invocation?.promptSha256 ?? "unknown"}\``,
+        `- Timestamps: run started ${at.runStartedAt}; plugin load ${at.pluginLoadAt ?? "unknown"}; server start ${at.serverStartAt ?? "unknown"}; first request ${at.firstRequestAt ?? "unknown"}; finished ${at.finishedAt}; plugin-load→first-request ${delta}`,
+        `- Plugin registration: **${record.registration.status}** — ${record.registration.source}: ${record.registration.detail}`,
+        `- Advertisement (native docs): **${record.advertisement.nativeDocs.status}** — ${record.advertisement.nativeDocs.source}: ${record.advertisement.nativeDocs.detail}`,
+        `- Advertisement (Code Mode docs method): **${record.advertisement.codeModeDocs.status}** — ${record.advertisement.codeModeDocs.source}: ${record.advertisement.codeModeDocs.detail}`,
+        `- Catalogue: **${record.catalogue.status}** — ${record.catalogue.source}: ${record.catalogue.detail}`,
+        diagnosticDispatchLine("native docs", record.dispatch.nativeDocs),
+        diagnosticDispatchLine("Code Mode docs", record.dispatch.codeModeDocs),
+        `- Help: **${record.help.status}** — ${record.help.source}: ${record.help.detail}`,
+        `- Observability: **${record.observability.status}** — ${record.observability.source}: ${record.observability.detail}`,
+        `- Positive: **${record.positive.status}** — ${record.positive.reason}`,
+        diagnosticModelReportLine(record),
+        "",
+    ];
+}
+
+/** Whether one result directory belongs to the report-only diagnostic. */
+function resultIsDiagnostic(resultDir: string): boolean {
+    const caseAt = jsonAt(join(resultDir, "case.json"));
+    return (
+        caseAt.kind === "value" &&
+        isRecord(caseAt.value) &&
+        caseAt.value.promptKind === "diagnostic"
+    );
+}
 
 function childEnv(configHome: string): NodeJS.ProcessEnv {
     const env = { ...process.env };
@@ -2443,6 +3196,22 @@ function childEnv(configHome: string): NodeJS.ProcessEnv {
     }
     env.XDG_CONFIG_HOME = configHome;
     return env;
+}
+
+/** Environment-key names whose values are never recorded as evidence. */
+const SECRET_KEY = /key|token|secret|password|credential/i;
+
+/** A redacted copy of one configuration value, recursively. */
+function redactedConfig(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(redactedConfig);
+    if (!isRecord(value)) return value;
+    return Object.fromEntries(
+        Object.entries(value).map(([key, entry]) =>
+            SECRET_KEY.test(key)
+                ? [key, "<redacted>"]
+                : [key, redactedConfig(entry)],
+        ),
+    );
 }
 
 function opencodeVersion(options: CliOptions): string {
@@ -2599,6 +3368,9 @@ const promptFor = (testCase: FullTrialCase, options: CliOptions) => {
     const kind =
         testCase.promptKind ??
         (testCase.mutationPolicy ? "recording" : "baseline");
+    // The tool-availability diagnostic is a report-only probe: its authored
+    // bytes are the whole prompt, with no destinations or state block added.
+    if (kind === "diagnostic") return testCase.diagnosticPrompt ?? "";
     const destinations =
         kind === "natural" || options.discovery
             ? ""
@@ -4370,6 +5142,24 @@ function termGraceFromEnv() {
     return Number.isFinite(value) && value > 0 ? value : 5_000;
 }
 
+/** The exact argv of one session call, shared by the spawn and its evidence. */
+function opencodeArgs(args: CallArgs): string[] {
+    return [
+        "run",
+        "--standalone",
+        "--auto",
+        "--archived",
+        "--title",
+        args.title,
+        "--model",
+        args.model,
+        "--format",
+        "json",
+        ...(args.printLogs === true ? ["--print-logs"] : []),
+        args.prompt,
+    ];
+}
+
 /**
  * Spawn one OpenCode session call and collect its output. Bounds: the
  * per-call timeout first sends SIGTERM, then SIGKILL after a short grace
@@ -4389,7 +5179,7 @@ function termGraceFromEnv() {
  * @param args.timeoutMs The per-call timeout.
  */
 function opencodeCall(args: CallArgs): Promise<SpawnResult> {
-    const { cwd, env, model, title, prompt, opencode, timeoutMs } = args;
+    const { cwd, env, opencode, timeoutMs } = args;
     return new Promise((resolve: (value: SpawnResult) => void) => {
         let child: import("child_process").ChildProcessByStdio<
             null,
@@ -4397,23 +5187,11 @@ function opencodeCall(args: CallArgs): Promise<SpawnResult> {
             import("stream").Readable
         >;
         try {
-            child = spawn(
-                opencode,
-                [
-                    "run",
-                    "--standalone",
-                    "--auto",
-                    "--archived",
-                    "--title",
-                    title,
-                    "--model",
-                    model,
-                    "--format",
-                    "json",
-                    prompt,
-                ],
-                { cwd, env, stdio: ["ignore", "pipe", "pipe"] },
-            );
+            child = spawn(opencode, opencodeArgs(args), {
+                cwd,
+                env,
+                stdio: ["ignore", "pipe", "pipe"],
+            });
         } catch (error: unknown) {
             resolve({
                 stdout: "",
@@ -4996,6 +5774,7 @@ function writeRunEvidence(
     generation: GenerationRecord | undefined,
     invalidReason: string | null,
     afterSnapshot: Snapshot,
+    invocation: unknown | null,
 ): void {
     write(join(resultDir, "stdout.jsonl"), result.stdout ?? "");
     write(join(resultDir, "stderr.log"), result.stderr ?? "");
@@ -5027,6 +5806,12 @@ function writeRunEvidence(
             afterSnapshot,
         ),
     );
+    if (invocation !== null) {
+        write(
+            join(resultDir, "invocation.json"),
+            JSON.stringify(invocation, null, 2) + "\n",
+        );
+    }
 }
 
 /** The one-line report printed after one trial completes. */
@@ -5091,7 +5876,8 @@ async function runOne(
 
     const before = snapshotLive(live);
     const modelStart = Date.now();
-    const result = await opencodeCall({
+    const diagnostic = isDiagnosticCase(testCase);
+    const callArgs: CallArgs = {
         cwd: join(live, "work"),
         env: childEnv(join(live, "config-home")),
         model: options.model,
@@ -5099,7 +5885,9 @@ async function runOne(
         prompt: readFileSync(promptPath, "utf8"),
         opencode: options.opencode,
         timeoutMs: options.timeoutMs,
-    });
+        printLogs: diagnostic,
+    };
+    const result = await opencodeCall(callArgs);
     timings.modelMs = Date.now() - modelStart;
 
     const snapshotStart = Date.now();
@@ -5134,6 +5922,20 @@ async function runOne(
     );
     const answerValid = invalidReason === null;
     timings.totalMs = Date.now() - totalStart;
+    const configAt = jsonAt(join(callArgs.cwd, "opencode.json"));
+    const invocation = diagnostic
+        ? {
+              command: options.opencode,
+              args: opencodeArgs(callArgs),
+              cwd: callArgs.cwd,
+              startedAt,
+              promptSha256: fileHash(promptPath),
+              config:
+                  configAt.kind === "value"
+                      ? redactedConfig(configAt.value)
+                      : "unreadable",
+          }
+        : null;
 
     writeRunEvidence(
         resultDir,
@@ -5154,6 +5956,7 @@ async function runOne(
         generation,
         invalidReason,
         afterSnapshot,
+        invocation,
     );
     // The rubric stays out of the sandbox until the answer exists. The same
     // applies to case.json, which carries the rubric's expectations.
@@ -5712,8 +6515,17 @@ function legacyJudgeSelection(options: CliOptions): FullTrialCase[] {
         "judging a legacy stamp: no frozen run description exists, so " +
             "criteria come from the current corpus (limitation, not a pass)",
     );
-    const legacyCases = select(options).filter(isFullCase);
+    const fullCases = select(options).filter(isFullCase);
+    const legacyCases = fullCases.filter(
+        (testCase) => !isDiagnosticCase(testCase),
+    );
     if (legacyCases.length === 0) {
+        if (fullCases.some(isDiagnosticCase)) {
+            console.error(
+                "diagnostic case(s) are report-only; no semantic judge",
+            );
+            return [];
+        }
         usage(
             "the current corpus carries no full definitions to judge a " +
                 "legacy stamp with",
@@ -5738,13 +6550,18 @@ function judgeSelection(options: CliOptions, stamp: string): FullTrialCase[] {
             .map((entry: RunCase) => entry.definition ?? entry)
             .filter((definition: unknown) => isRecord(definition))
             ?.filter(isFullCase) ?? [];
-    if (full.length === 0) {
-        usage(
-            `run.json at ${join(options.results, stamp)} records no usable full case definitions ` +
-                "(a minimal legacy record alone does not supply a judgeable case)",
-        );
+    const judgeable = full.filter((testCase) => !isDiagnosticCase(testCase));
+    if (judgeable.length === 0) {
+        if (full.length === 0) {
+            usage(
+                `run.json at ${join(options.results, stamp)} records no usable full case definitions ` +
+                    "(a minimal legacy record alone does not supply a judgeable case)",
+            );
+        }
+        console.error("diagnostic case(s) are report-only; no semantic judge");
+        return [];
     }
-    if (options.ids.length === 0) return full;
+    if (options.ids.length === 0) return judgeable;
     const unknown = options.ids.filter(
         (id: string) => !full.some((entry) => entry.id === id),
     );
@@ -5753,7 +6570,7 @@ function judgeSelection(options: CliOptions, stamp: string): FullTrialCase[] {
             `case(s) ${unknown.join(", ")} are not part of experiment ${stamp}`,
         );
     }
-    return full.filter((entry) => options.ids.includes(entry.id));
+    return judgeable.filter((entry) => options.ids.includes(entry.id));
 }
 
 /**
@@ -6089,6 +6906,12 @@ function renderSummary(options: CliOptions, stamp: string) {
         "",
         ...summaryTallies(rows),
         "",
+        ...rows.flatMap((row) => {
+            const resultDir = join(stampDir, row.id);
+            if (!resultIsDiagnostic(resultDir)) return [];
+            const record = diagnosticFor(resultDir);
+            return record === null ? [] : ["", ...diagnosticLines(record)];
+        }),
     ];
     const text = lines.join("\n");
     write(join(stampDir, "summary.md"), text);
@@ -6185,6 +7008,9 @@ function caseSection(caseInfo: RunCase | undefined, resultDir: string) {
     const meta = metaAt.kind === "value" ? metaAt.value : {};
     const id = caseInfo?.id ?? "?";
     const expected = caseInfo?.expected ?? "(unknown — legacy run)";
+    const diagnostic = resultIsDiagnostic(resultDir)
+        ? diagnosticFor(resultDir)
+        : null;
     return [
         "---",
         "",
@@ -6199,6 +7025,7 @@ function caseSection(caseInfo: RunCase | undefined, resultDir: string) {
         ...artifactSection(resultDir, "### Trial answer", "final.md"),
         ...caseTrailEntries(resultDir),
         ...caseObservations(resultDir),
+        ...(diagnostic === null ? [] : diagnosticLines(diagnostic)),
         ...artifactSection(resultDir, "### Files changed", "writes.txt"),
         "### Local judge",
         "",
