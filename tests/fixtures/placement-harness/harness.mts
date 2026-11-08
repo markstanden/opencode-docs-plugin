@@ -2495,6 +2495,11 @@ interface DiagnosticRecord {
         source: string;
         detail: string;
     };
+    environment: {
+        invokedCwd: string | null;
+        hostDirectory: string | null;
+        cwdMatches: boolean | null;
+    };
     advertisement: {
         nativeDocs: DiagnosticSurface;
         codeModeDocs: DiagnosticSurface;
@@ -2527,8 +2532,22 @@ interface DiagnosticRecord {
 
 const LOG_TIMESTAMP = /^timestamp=(\S+)/;
 
+/** The host location directory reported in the log, or null. */
+function hostDirectoryFromLog(text: string): string | null {
+    const line = text
+        .split("\n")
+        .find((entry) =>
+            /(?:msg|message)="location services booted"/.test(entry),
+        );
+    return line?.match(/directory=(\S+)/)?.[1] ?? null;
+}
+
 /** The plugin-registration verdict from the captured host log. */
-function registrationFromLog(text: string): DiagnosticRecord["registration"] {
+function registrationFromLog(
+    text: string,
+    invokedCwd: string | null,
+    hostDirectory: string | null,
+): DiagnosticRecord["registration"] {
     const lines = text.split("\n").filter(Boolean);
     const load = lines.find((line) =>
         /(?:msg|message)="loading plugin"/.test(line),
@@ -2547,16 +2566,41 @@ function registrationFromLog(text: string): DiagnosticRecord["registration"] {
         /(?:msg|message)="shutdown started"/.test(line),
     );
     if (started && stopped) {
+        const mismatch =
+            invokedCwd !== null &&
+            hostDirectory !== null &&
+            invokedCwd !== hostDirectory
+                ? `; host location ${hostDirectory} differs from invoked cwd ` +
+                  `${invokedCwd}, so the fixture config was not loaded`
+                : "";
         return {
             status: "absent",
             source: "stderr.log",
-            detail: "complete startup/shutdown trace with no plugin-load record",
+            detail:
+                "complete startup/shutdown trace with no plugin-load " +
+                `record${mismatch}`,
         };
     }
     return {
         status: "unknown",
         source: "stderr.log",
         detail: "no complete plugin-load trace was captured",
+    };
+}
+
+/** The invoked cwd against the host's own location report. */
+function diagnosticEnvironment(
+    invocation: DiagnosticRecord["invocation"],
+    hostDirectory: string | null,
+): DiagnosticRecord["environment"] {
+    const invokedCwd = invocation?.cwd ?? null;
+    return {
+        invokedCwd,
+        hostDirectory,
+        cwdMatches:
+            invokedCwd === null || hostDirectory === null
+                ? null
+                : invokedCwd === hostDirectory,
     };
 }
 
@@ -3018,10 +3062,15 @@ function diagnosticFor(resultDir: string): DiagnosticRecord | null {
     const { entries, nativeCalls, codeCalls } = calls;
     const capture = readDefinitionsCapture(resultDir);
     const log = diagnosticLogText(resultDir);
-    const registration = registrationFromLog(log);
+    const hostDirectory = hostDirectoryFromLog(log);
+    const invocation = diagnosticInvocation(resultDir);
+    const registration = registrationFromLog(
+        log,
+        invocation?.cwd ?? null,
+        hostDirectory,
+    );
     const logTiming = diagnosticLogTiming(log);
     const firstRequestAt = firstRequestTimestamp(resultDir);
-    const invocation = diagnosticInvocation(resultDir);
     const help = diagnosticHelp(entries);
     const observability = diagnosticObservability(entries);
     return {
@@ -3033,6 +3082,7 @@ function diagnosticFor(resultDir: string): DiagnosticRecord | null {
             firstRequestAt,
         ),
         registration,
+        environment: diagnosticEnvironment(invocation, hostDirectory),
         advertisement: {
             nativeDocs: diagnosticAdvertisement("native", capture, nativeCalls),
             codeModeDocs: diagnosticAdvertisement(
@@ -3051,6 +3101,18 @@ function diagnosticFor(resultDir: string): DiagnosticRecord | null {
         positive: diagnosticPositive(help, observability),
         supporting: { modelReported: diagnosticModelReport(resultDir) },
     };
+}
+
+/** The invoked-cwd vs host-location line, exposing a launch mismatch. */
+function diagnosticEnvironmentLine(record: DiagnosticRecord): string {
+    const environment = record.environment;
+    const match =
+        environment.cwdMatches === null
+            ? "unknown"
+            : environment.cwdMatches
+              ? "match"
+              : "MISMATCH — the fixture config was not loaded";
+    return `- Host location: ${environment.hostDirectory ?? "unknown"}; invoked cwd ${environment.invokedCwd ?? "unknown"}; ${match}`;
 }
 
 /** The invocation line, with the prompt argument abbreviated. */
@@ -3095,6 +3157,7 @@ function diagnosticLines(record: DiagnosticRecord): string[] {
         "",
         `- Invocation: \`${diagnosticInvocationLabel(invocation)}\``,
         `- Cwd: \`${invocation?.cwd ?? "unknown"}\``,
+        diagnosticEnvironmentLine(record),
         `- Prompt sha256: \`${invocation?.promptSha256 ?? "unknown"}\``,
         `- Timestamps: run started ${at.runStartedAt}; plugin load ${at.pluginLoadAt ?? "unknown"}; server start ${at.serverStartAt ?? "unknown"}; first request ${at.firstRequestAt ?? "unknown"}; finished ${at.finishedAt}; plugin-load→first-request ${delta}`,
         `- Plugin registration: **${record.registration.status}** — ${record.registration.source}: ${record.registration.detail}`,

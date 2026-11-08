@@ -6057,6 +6057,32 @@ test("A01: registration is absent only in a complete trace, otherwise unknown", 
     rmRoot(root);
 });
 
+test("A01: a host location mismatch is reported against the invoked cwd", () => {
+    // Arrange: a complete trace with no plugin load, and the host reporting
+    // a location other than the cwd the harness invoked.
+    const root = newRoot("a01-cwd-mismatch");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [diagnosticCase("A01")]);
+    const log =
+        DIAGNOSTIC_LOG_NO_PLUGIN +
+        'timestamp=2026-11-08T10:00:00.100Z level=INFO run=r1 message="location services booted" directory=/workspace role=server\n';
+    // Act: run and report.
+    const { text } = runDiagnostic(
+        root,
+        fake,
+        paths,
+        "A01",
+        "s1",
+        ANSWER_JSONL("No documentation tool is advertised."),
+        { stderr: log },
+    );
+    // Assert: the mismatch is visible and names the launch-path consequence.
+    assert.match(text, /Host location: \/workspace; invoked cwd .*MISMATCH/);
+    assert.match(text, /differs from invoked cwd/);
+    assert.match(text, /fixture config was not loaded/);
+    rmRoot(root);
+});
+
 test("A01: the wrapper's redacted run list preserves the diagnostic prompt kind", () => {
     // Arrange: a diagnostic-only wrapper corpus and a stubbed podman.
     const root = newRoot("a01-redacted-kind");
