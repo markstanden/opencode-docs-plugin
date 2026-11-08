@@ -49,12 +49,9 @@ function packedInstall(root: string): string {
     const pack = run("npm", ["pack", "--json", REPO], root);
     assert.equal(pack.status, 0, pack.stderr);
     const parsed = JSON.parse(pack.stdout) as
-        | Array<{ filename?: string }>
-        | Record<string, { filename?: string }>;
+        Array<{ filename?: string }> | Record<string, { filename?: string }>;
     const entry = (
-        Array.isArray(parsed)
-            ? parsed[0]
-            : Object.values(parsed)[0]
+        Array.isArray(parsed) ? parsed[0] : Object.values(parsed)[0]
     ) as { filename?: string } | undefined;
     const tarball = entry?.filename;
     assert.ok(tarball, "npm pack named a tarball");
@@ -115,21 +112,26 @@ async function loadPlugin(pkg: string, spec: LakeSpec) {
         options: { lakes: [spec] },
         location: { directory: tempDir("project") },
         tool: {
-            transform: async (fn: (editor: { add: (t: never) => void }) => void) =>
-                fn({ add: (t) => editors.tools.push(t as never) }),
+            transform: async (
+                fn: (editor: { add: (t: never) => void }) => void,
+            ) => fn({ add: (t) => editors.tools.push(t as never) }),
             hook: async () => undefined,
         },
         command: {
-            transform: async (fn: (editor: { add: (c: never) => void }) => void) =>
-                fn({ add: (c) => editors.commands.push(c as never) }),
+            transform: async (
+                fn: (editor: { add: (c: never) => void }) => void,
+            ) => fn({ add: (c) => editors.commands.push(c as never) }),
         },
         skill: {
-            transform: async (fn: (editor: { add: (s: never) => void }) => void) =>
-                fn({ add: (s) => editors.skills.push(s as never) }),
+            transform: async (
+                fn: (editor: { add: (s: never) => void }) => void,
+            ) => fn({ add: (s) => editors.skills.push(s as never) }),
         },
         session: { hook: async () => undefined, prompt: async () => undefined },
     };
-    const loaded = (await import(pathToFileURL(join(pkg, "src", "index.ts")).href)) as {
+    const loaded = (await import(
+        pathToFileURL(join(pkg, "src", "index.ts")).href
+    )) as {
         default: { setup: (ctx: unknown) => Promise<void> };
     };
     await loaded.default.setup(ctx);
@@ -137,8 +139,13 @@ async function loadPlugin(pkg: string, spec: LakeSpec) {
 }
 
 const surface = (editors: Editors, name: string) =>
-    editors.tools.find((tool) => (tool as { name?: string }).name === name) as unknown as {
-        execute: (input: unknown, extra: unknown) => Promise<{ content: unknown }>;
+    editors.tools.find(
+        (tool) => (tool as { name?: string }).name === name,
+    ) as unknown as {
+        execute: (
+            input: unknown,
+            extra: unknown,
+        ) => Promise<{ content: unknown }>;
     };
 
 const text = (result: { content: unknown }) => String(result.content);
@@ -165,7 +172,9 @@ describe("packed installation, away from the checkout", () => {
 
     it("the real setup registers both tool surfaces, the command and the skill", async () => {
         const { editors } = await loadPlugin(pkg, tempLake(root));
-        const names = editors.tools.map((tool) => (tool as { name?: string }).name);
+        const names = editors.tools.map(
+            (tool) => (tool as { name?: string }).name,
+        );
         assert.deepEqual(names.sort(), ["docs", "docs_search"]);
         assert.equal(editors.commands.length, 1);
         const skill = editors.skills[0];
@@ -200,9 +209,14 @@ describe("packed installation, away from the checkout", () => {
         );
         assert.match(text(add), /docs: revision/);
         assert.ok(existsSync(join(spec.root, "kk/alias-roundtrip-one.md")));
-        const read = await docs.execute({ read: "kk/alias-roundtrip-one.md" }, null);
-        const token = [...text(read).matchAll(/docs: revision ([0-9a-f]{64}) —/g)]
-            .at(-1)?.[1] ?? "";
+        const read = await docs.execute(
+            { read: "kk/alias-roundtrip-one.md" },
+            null,
+        );
+        const token =
+            [...text(read).matchAll(/docs: revision ([0-9a-f]{64}) —/g)].at(
+                -1,
+            )?.[1] ?? "";
         assert.ok(token.length === 64, "read surfaces a usable revision token");
         const replace = await docs.execute(
             {
@@ -295,7 +309,9 @@ describe("deterministic size ladder through both surfaces", () => {
         for (const [blocks, word] of rungs) {
             const lastLine = "- Byte ladder " + word + " observation.\n";
             const body =
-                "# Byte ladder " + word + "\n\n### Facts\n\n" +
+                "# Byte ladder " +
+                word +
+                "\n\n### Facts\n\n" +
                 lastLine.repeat(blocks);
             const add = await docs.execute(
                 {
@@ -315,14 +331,17 @@ describe("deterministic size ladder through both surfaces", () => {
             assert.match(
                 addText,
                 /docs: revision ([0-9a-f]{64}) —/,
-                word + " add returns a revision via the native surface — got: " + addText.slice(0, 140),
+                word +
+                    " add returns a revision via the native surface — got: " +
+                    addText.slice(0, 140),
             );
             const onDisk = readFileSync(
                 join(spec.root, "big/byte-ladder-" + word + ".md"),
                 "utf8",
             );
             assert.ok(
-                onDisk.includes(lastLine.trim()) && onDisk.length > body.length * 0.9,
+                onDisk.includes(lastLine.trim()) &&
+                    onDisk.length > body.length * 0.9,
                 word + " stores the complete body (" + body.length + " bytes)",
             );
         }
@@ -335,7 +354,7 @@ describe("deterministic size ladder through both surfaces", () => {
             );
             assert.ok(
                 text(read).includes("# Byte ladder " + word) &&
-                text(read).includes("observation."),
+                    text(read).includes("observation."),
                 word + " round trip through the twin serves the exact content",
             );
         }
@@ -343,9 +362,16 @@ describe("deterministic size ladder through both surfaces", () => {
             { read: "big/byte-ladder-fermion.md" },
             null,
         );
-        const token = text(fresh).match(/docs: revision ([0-9a-f]{64}) —/)?.at(1) ?? "";
-        assert.ok(token.length === 64, "the twin surface returns the stored revision");
-        const appended = "# Byte ladder fermion\n\n### Facts\n\n" +
+        const token =
+            text(fresh)
+                .match(/docs: revision ([0-9a-f]{64}) —/)
+                ?.at(1) ?? "";
+        assert.ok(
+            token.length === 64,
+            "the twin surface returns the stored revision",
+        );
+        const appended =
+            "# Byte ladder fermion\n\n### Facts\n\n" +
             "- Byte ladder fermion observation.\n".repeat(32768) +
             "- An extra observation from the twin.\n";
         const replace = await twin.execute(
@@ -366,8 +392,10 @@ describe("deterministic size ladder through both surfaces", () => {
         );
         assert.match(text(replace).slice(0, 160), /docs: revision/);
         assert.ok(
-            readFileSync(join(spec.root, "big/byte-ladder-fermion.md"), "utf8")
-                .includes("An extra observation from the twin."),
+            readFileSync(
+                join(spec.root, "big/byte-ladder-fermion.md"),
+                "utf8",
+            ).includes("An extra observation from the twin."),
             "the replace through the twin surface stored the new bytes",
         );
     });

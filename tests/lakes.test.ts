@@ -2049,7 +2049,10 @@ describe("readmePaths symlink filtering", () => {
     it("excludes a broken symlinked README", () => {
         const project = tempDir();
         git(project, ["init", "-q"]);
-        symlinkSync(join(project, "never-written.md"), join(project, "README.md"));
+        symlinkSync(
+            join(project, "never-written.md"),
+            join(project, "README.md"),
+        );
 
         assert.deepEqual(readmePaths(project), []);
     });
@@ -2067,7 +2070,9 @@ describe("readmePaths symlink filtering", () => {
 
         assert.deepEqual(readmePaths(project), ["README.md"]);
         assert.deepEqual(
-            collectReadmes(project, () => new Map(), []).map((entry) => entry.path),
+            collectReadmes(project, () => new Map(), []).map(
+                (entry) => entry.path,
+            ),
             ["README.md"],
         );
     });

@@ -94,7 +94,8 @@ const DEFAULTS = {
     results: join(HOME, "tmp", "docs-placement", "results"),
     model: process.env.TRIAL_MODEL || "opencode-go/deepseek-v4.1-flash",
     judgeModel: process.env.TRIAL_JUDGE_MODEL || "",
-    opencode: process.env.TRIAL_OPENCODE || process.env.OPENCODE_BIN || "opencode",
+    opencode:
+        process.env.TRIAL_OPENCODE || process.env.OPENCODE_BIN || "opencode",
     fixture: DEFAULT_FIXTURE,
     plugin: DEFAULT_PLUGIN,
     timeoutMs: timeoutFromEnv(),
@@ -426,7 +427,8 @@ function docsTelemetry(entries, parseFailures = 0) {
         verbs: tallies.verbs,
         statuses: tallies.statuses,
         unparsedLines: parseFailures,
-        docsCalls: tallies.nativeDocs + tallies.twinDocs + tallies.codeModeAttempted,
+        docsCalls:
+            tallies.nativeDocs + tallies.twinDocs + tallies.codeModeAttempted,
     };
 }
 
@@ -507,7 +509,10 @@ const EXPOSURE_RULES = [
     ["repo cases", /\/repo\/tests\/|placement-cases\.json|trial-cases\.json/i],
     ["case list", /\/fixtures\/cases\.json|cases-run/i],
     ["session config", /opencode\.json/i],
-    ["harness surfaces", /\/fixtures\/manifest\.json|generation\.json|\/prompts\//i],
+    [
+        "harness surfaces",
+        /\/fixtures\/manifest\.json|generation\.json|\/prompts\//i,
+    ],
     ["guidance", /CONVENTION\.md|AGENTS\.md|SKILL\.md|\/\.opencode\//i],
 ];
 
@@ -659,8 +664,7 @@ function pluginCommitOf(options) {
 
 function pluginDirtyOf(options) {
     const status = gitFact(options.plugin, ["status", "--porcelain"]);
-    if (status === "unknown")
-        return process.env.PLACEMENT_PLUGIN_DIRTY === "1";
+    if (status === "unknown") return process.env.PLACEMENT_PLUGIN_DIRTY === "1";
     return status !== "";
 }
 
@@ -706,7 +710,9 @@ const promptFor = (testCase, options) => {
     // Discovery variant: the prompt names no destination and no tool — the
     // lakes are reachable only through the session's normal tool inventory
     // (the docs tool's own description points at `help`).
-    const kind = testCase.promptKind ?? (testCase.mutationPolicy ? "recording" : "baseline");
+    const kind =
+        testCase.promptKind ??
+        (testCase.mutationPolicy ? "recording" : "baseline");
     const destinations =
         kind === "natural" || options.discovery
             ? ""
@@ -724,8 +730,8 @@ ${testCase.destinations
         kind === "natural"
             ? "What do you recommend we do, if anything?"
             : kind === "recording"
-            ? "Use your normal documentation guidance for this finding. For this trial, you are authorised to record documentation; changes are permitted only inside the trial's own documentation surfaces."
-            : "Use your normal documentation guidance to decide how to preserve this finding. For this trial, do not change files.";
+              ? "Use your normal documentation guidance for this finding. For this trial, you are authorised to record documentation; changes are permitted only inside the trial's own documentation surfaces."
+              : "Use your normal documentation guidance to decide how to preserve this finding. For this trial, do not change files.";
     return `We have established the following finding.
 
 Finding:
@@ -884,7 +890,6 @@ function seedFixture(testCase, caseDir) {
         write(path, seed.contents ?? "");
     }
 }
-
 
 /**
  * Fingerprint every input that affects a case's generated content or
@@ -1114,8 +1119,17 @@ function generateAll(options) {
 function validateGeneration(testCase, options) {
     const problems = [];
     const promptPath = join(options.prompts, `${testCase.id}.md`);
-    const generationPath = join(options.fixtures, testCase.id, "generation.json");
-    const configPath = join(options.fixtures, testCase.id, "work", "opencode.json");
+    const generationPath = join(
+        options.fixtures,
+        testCase.id,
+        "generation.json",
+    );
+    const configPath = join(
+        options.fixtures,
+        testCase.id,
+        "work",
+        "opencode.json",
+    );
     const stored = readJson(generationPath);
     if (stored === undefined) {
         problems.push("no generation fingerprint; run generate first");
@@ -1154,7 +1168,8 @@ function gitStateEntries(workRoot) {
     const walk = (directory, prefix) => {
         for (const item of readDirectory(directory)) {
             const path = join(directory, item.name);
-            if (item.isFile()) entries.set(`${prefix}${item.name}`, hashFile(path));
+            if (item.isFile())
+                entries.set(`${prefix}${item.name}`, hashFile(path));
             else if (item.isDirectory()) walk(path, `${prefix}${item.name}/`);
         }
     };
@@ -1177,8 +1192,11 @@ function snapshotLive(live) {
         const walk = (directory) => {
             for (const item of readDirectory(directory)) {
                 const path = join(directory, item.name);
-                const name = relative(join(live, surface), path).split(sep).join("/");
-                if (surface === "work" && name.split("/")[0] === ".git") continue;
+                const name = relative(join(live, surface), path)
+                    .split(sep)
+                    .join("/");
+                if (surface === "work" && name.split("/")[0] === ".git")
+                    continue;
                 if (item.isSymbolicLink()) {
                     let target = "(unreadable)";
                     try {
@@ -1218,7 +1236,8 @@ function snapshotLive(live) {
 /** Kind change (file→symlink replacement, etc.) or content/target change. */
 function entryChanged(before, after) {
     if (before.kind !== after.kind) return "kind";
-    if (before.kind === "file") return before.hash !== after.hash ? "content" : "";
+    if (before.kind === "file")
+        return before.hash !== after.hash ? "content" : "";
     if (before.kind === "symlink")
         return before.target !== after.target ? "target" : "";
     return "";
@@ -1311,14 +1330,20 @@ function policyViolation(diff, testCase) {
 
 function writesReport(diff, violations) {
     const lines = [
-        ...diff.added.map((path) => `added: ${path} (${diff.kinds.get(path) ?? "file"})`),
+        ...diff.added.map(
+            (path) => `added: ${path} (${diff.kinds.get(path) ?? "file"})`,
+        ),
         ...diff.modified.map(
-            (path) => `modified: ${path} (${diff.kinds.get(path) ?? "content"})`,
+            (path) =>
+                `modified: ${path} (${diff.kinds.get(path) ?? "content"})`,
         ),
         ...diff.removed.map((path) => `removed: ${path}`),
     ];
     if (diff.git.length > 0) {
-        lines.push("", "# git-state changes (reported separately, not trial writes):");
+        lines.push(
+            "",
+            "# git-state changes (reported separately, not trial writes):",
+        );
         lines.push(...diff.git.map((path) => `git: work/.git/${path}`));
     }
     if (violations.length > 0) {
@@ -1546,7 +1571,8 @@ function reserveResultDir(resultDir) {
     try {
         writeFileSync(
             join(resultDir, ".reservation"),
-            JSON.stringify({ pid: process.pid, at: new Date().toISOString() }) + "\n",
+            JSON.stringify({ pid: process.pid, at: new Date().toISOString() }) +
+                "\n",
             { flag: "wx" },
         );
     } catch (error) {
@@ -1653,8 +1679,10 @@ function docsCriterionProblem(testCase, resultDir) {
     if (trail === null) return "no tool trail recorded";
     const telemetry = docsTelemetry(trail.entries, trail.parseFailures);
     if (telemetry.docsCalls < (criterion.minDocsCalls ?? 1)) {
-        return `docs criterion unmet: ${telemetry.docsCalls} docs call(s), ` +
-            `required ${criterion.minDocsCalls ?? 1}`;
+        return (
+            `docs criterion unmet: ${telemetry.docsCalls} docs call(s), ` +
+            `required ${criterion.minDocsCalls ?? 1}`
+        );
     }
     if (criterion.verbs !== undefined) {
         const used = Object.entries(telemetry.verbs)
@@ -1751,7 +1779,15 @@ function writeRunEvidence(
 }
 
 /** The one-line report printed after one trial completes. */
-function runReportLine(testCase, resultDir, result, diff, violations, answerValid, invalidReason) {
+function runReportLine(
+    testCase,
+    resultDir,
+    result,
+    diff,
+    violations,
+    answerValid,
+    invalidReason,
+) {
     const writes = writeCount(diff);
     return (
         `${testCase.id}: exit ${result.status ?? "signal"}, writes ${writes}` +
@@ -1964,10 +2000,7 @@ function verdictEnumProblems(value) {
 function verdictNonBlankProblems(value) {
     const problems = [];
     for (const field of ["destination", "reason"]) {
-        if (
-            typeof value[field] !== "string" ||
-            value[field].trim() === ""
-        ) {
+        if (typeof value[field] !== "string" || value[field].trim() === "") {
             problems.push(`${field} must be a nonblank string`);
         }
     }
@@ -2142,7 +2175,14 @@ function judgeFailureReason(result, problems) {
 }
 
 /** Record the result-level judge-error pointer and report it; always a failure. */
-function writeJudgeErrorVerdict(caseId, resultDir, judgeModel, identities, attempt, why) {
+function writeJudgeErrorVerdict(
+    caseId,
+    resultDir,
+    judgeModel,
+    identities,
+    attempt,
+    why,
+) {
     write(
         join(resultDir, "verdict.json"),
         JSON.stringify(
@@ -2162,11 +2202,20 @@ function writeJudgeErrorVerdict(caseId, resultDir, judgeModel, identities, attem
 }
 
 /** Record the result-level verdict pointer for a genuinely judged attempt. */
-function writeJudgedVerdict(resultDir, parsed, judgeModel, identities, attempt) {
+function writeJudgedVerdict(
+    resultDir,
+    parsed,
+    judgeModel,
+    identities,
+    attempt,
+) {
     write(
         join(resultDir, "verdict.json"),
-        JSON.stringify({ ...parsed, judgeModel, ...identities, attempt }, null, 2) +
-            "\n",
+        JSON.stringify(
+            { ...parsed, judgeModel, ...identities, attempt },
+            null,
+            2,
+        ) + "\n",
     );
 }
 
@@ -2195,7 +2244,9 @@ async function judgeAttempt(
 
     const parsed = parseVerdict(text);
     const problems =
-        parsed === undefined ? ["no JSON object in output"] : validateVerdict(parsed);
+        parsed === undefined
+            ? ["no JSON object in output"]
+            : validateVerdict(parsed);
     const judgeStatus = judgeStatusOf(result, problems);
     const attemptMeta = judgeAttemptMeta({
         resultDir,
@@ -2225,7 +2276,10 @@ async function judgeAttempt(
             2,
         ) + "\n",
     );
-    write(join(judgeDir, "meta.json"), JSON.stringify(attemptMeta, null, 2) + "\n");
+    write(
+        join(judgeDir, "meta.json"),
+        JSON.stringify(attemptMeta, null, 2) + "\n",
+    );
 
     if (judgeStatus !== "judged") {
         return writeJudgeErrorVerdict(
@@ -2240,7 +2294,13 @@ async function judgeAttempt(
 
     // Convenience pointer for summary/export; the attempt directory is the
     // durable evidence.
-    writeJudgedVerdict(resultDir, parsed, judgeModel, identities, attemptMeta.attempt);
+    writeJudgedVerdict(
+        resultDir,
+        parsed,
+        judgeModel,
+        identities,
+        attemptMeta.attempt,
+    );
     console.log(`${caseId}: ${verdictLabel(parsed)}`);
     return parsed.verdict === "pass" ? 0 : 1;
 }
@@ -2257,8 +2317,7 @@ function judgeKey(identities) {
  */
 function resumePriorAttempt(caseId, resultDir, judgeRoot, key, identities) {
     for (const entry of readdirSync(judgeRoot, { withFileTypes: true })) {
-        if (!entry.isDirectory() || !/^attempt-\d+$/.test(entry.name))
-            continue;
+        if (!entry.isDirectory() || !/^attempt-\d+$/.test(entry.name)) continue;
         const prior = readJson(join(judgeRoot, entry.name, "meta.json"));
         if (prior?.judgeKey === key && prior?.judgeStatus === "judged") {
             const verdict = readJson(
@@ -2405,7 +2464,9 @@ function summaryRow(runDescription, caseInfo, resultDir) {
         : "";
     const trail = readTrail(resultDir);
     const telemetry =
-        trail === null ? null : docsTelemetry(trail.entries, trail.parseFailures);
+        trail === null
+            ? null
+            : docsTelemetry(trail.entries, trail.parseFailures);
     const meta = readJson(join(resultDir, "meta.json"));
     return {
         id: caseInfo?.id ?? "?",
@@ -2618,7 +2679,11 @@ function caseSection(caseInfo, resultDir) {
         `## ${id} — Expected: ${expected}`,
         "",
         ...artifactSection(resultDir, "### Rubric", "rubric.md"),
-        ...artifactSection(resultDir, "### Prompt given to the trial model", "prompt.md"),
+        ...artifactSection(
+            resultDir,
+            "### Prompt given to the trial model",
+            "prompt.md",
+        ),
         ...artifactSection(resultDir, "### Trial answer", "final.md"),
         ...caseTrailEntries(resultDir),
         ...caseObservations(resultDir),
@@ -2766,7 +2831,10 @@ async function runPool(items, limit, worker) {
             index += 1;
             if (current >= items.length) break;
             try {
-                results[current] = { ok: true, value: await worker(items[current], current) };
+                results[current] = {
+                    ok: true,
+                    value: await worker(items[current], current),
+                };
             } catch (error) {
                 results[current] = { ok: false, error };
                 console.error(`worker failed: ${error?.stack ?? error}`);
@@ -2785,8 +2853,7 @@ async function runSelected(options, stamp, selected) {
         runOne(testCase, options, stamp),
     );
     return results.reduce(
-        (worst, outcome) =>
-            Math.max(worst, outcome.ok ? outcome.value : 1),
+        (worst, outcome) => Math.max(worst, outcome.ok ? outcome.value : 1),
         0,
     );
 }
@@ -2796,8 +2863,7 @@ async function judgeSelected(options, stamp, selected) {
         judgeOne(testCase, options, stamp),
     );
     return results.reduce(
-        (worst, outcome) =>
-            Math.max(worst, outcome.ok ? outcome.value : 1),
+        (worst, outcome) => Math.max(worst, outcome.ok ? outcome.value : 1),
         0,
     );
 }
@@ -2810,8 +2876,7 @@ async function judgeSelected(options, stamp, selected) {
 function resolveExistingStamp(options) {
     if (options.stamp) {
         const stampDir = join(options.results, options.stamp);
-        if (!existsSync(stampDir))
-            usage(`no results at ${stampDir}`);
+        if (!existsSync(stampDir)) usage(`no results at ${stampDir}`);
         return options.stamp;
     }
     if (!existsSync(options.results))
@@ -2854,18 +2919,14 @@ async function executeAndReport(options, plan, stamp, selected) {
     let infra = 0;
     if (plan.generates) infra = await generateAll(options);
     if (infra === 0 && plan.runs) {
-        if (!ensureRunDescription(options, stamp, selected, "run"))
-            return 1;
+        if (!ensureRunDescription(options, stamp, selected, "run")) return 1;
         worst = await runSelected(options, stamp, selected);
     }
     // Infrastructure failures abort the sweep; a semantic judge failure
     // (verdict fail) does not — the reports still render the evidence.
     if (infra !== 0) return infra;
     if (plan.judges)
-        worst = Math.max(
-            worst,
-            await judgeSelected(options, stamp, selected),
-        );
+        worst = Math.max(worst, await judgeSelected(options, stamp, selected));
     if (plan.reports) {
         renderSummary(options, stamp);
         exportDossier(options, stamp);
@@ -2885,7 +2946,12 @@ async function main() {
     if (command === "describe") {
         if (!options.stamp) usage("describe requires --stamp NAME");
         const selected = select(options);
-        return ensureRunDescription(options, options.stamp, selected, "describe")
+        return ensureRunDescription(
+            options,
+            options.stamp,
+            selected,
+            "describe",
+        )
             ? 0
             : 1;
     }

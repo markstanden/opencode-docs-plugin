@@ -406,7 +406,11 @@ describe("F09: writes invisible to collection refuse at the boundary", () => {
     it("a derived create whose Area is a scratch area refuses (F09)", async () => {
         const { spec, tool } = lakeTool();
         const result = await tool.execute(
-            { add: addRequest({ metadata: { ...addRequest().metadata, Area: "plans" } }) } as never,
+            {
+                add: addRequest({
+                    metadata: { ...addRequest().metadata, Area: "plans" },
+                }),
+            } as never,
             {} as never,
         );
         const content = String(result.content);
@@ -434,7 +438,10 @@ describe("F09: writes invisible to collection refuse at the boundary", () => {
             assert.match(String(result.content), /never collected/, path);
             assert.match(String(result.content), new RegExp(segment), path);
         }
-        assert.deepEqual(collectDocPaths(spec.root, { profile: "knowledge" }), []);
+        assert.deepEqual(
+            collectDocPaths(spec.root, { profile: "knowledge" }),
+            [],
+        );
     });
 
     it("an accepted write is then genuinely findable and readable (F09)", async () => {
@@ -518,9 +525,9 @@ describe("F09: writes invisible to collection refuse at the boundary", () => {
             mkdirSync(dirname(target), { recursive: true });
             writeFileSync(target, "# x\n\n### Facts\n\n- x\n");
         }
-        assert.deepEqual(
-            collectDocPaths(tree.root, { profile: "knowledge" }),
-            ["aa/x.md", "zz.md"],
-        );
+        assert.deepEqual(collectDocPaths(tree.root, { profile: "knowledge" }), [
+            "aa/x.md",
+            "zz.md",
+        ]);
     });
 });

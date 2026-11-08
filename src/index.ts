@@ -1212,8 +1212,10 @@ function skipDirectory(
         return true;
     }
     return (
-        uncollectedSegment(relative(root, path).split(sep).join("/"), profile) !==
-        null
+        uncollectedSegment(
+            relative(root, path).split(sep).join("/"),
+            profile,
+        ) !== null
     );
 }
 

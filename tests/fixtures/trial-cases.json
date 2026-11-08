@@ -27,9 +27,7 @@
         "promptKind": "baseline",
         "docsCriterion": {
             "minDocsCalls": 1,
-            "verbs": [
-                "read"
-            ]
+            "verbs": ["read"]
         }
     },
     {
@@ -117,9 +115,7 @@
         "promptKind": "baseline",
         "docsCriterion": {
             "minDocsCalls": 1,
-            "verbs": [
-                "read"
-            ]
+            "verbs": ["read"]
         }
     },
     {
@@ -152,17 +148,13 @@
             }
         ],
         "mutationPolicy": {
-            "allowed": [
-                "lakes/docs/**"
-            ],
+            "allowed": ["lakes/docs/**"],
             "minWrites": 1
         },
         "promptKind": "recording",
         "docsCriterion": {
             "minDocsCalls": 1,
-            "verbs": [
-                "read"
-            ]
+            "verbs": ["read"]
         }
     },
     {
@@ -226,17 +218,13 @@
             }
         ],
         "mutationPolicy": {
-            "allowed": [
-                "lakes/docs/**"
-            ],
+            "allowed": ["lakes/docs/**"],
             "minWrites": 1
         },
         "promptKind": "recording",
         "docsCriterion": {
             "minDocsCalls": 1,
-            "verbs": [
-                "read"
-            ]
+            "verbs": ["read"]
         }
     },
     {
@@ -274,9 +262,7 @@
         "promptKind": "baseline",
         "docsCriterion": {
             "minDocsCalls": 1,
-            "verbs": [
-                "read"
-            ]
+            "verbs": ["read"]
         }
     },
     {
@@ -301,9 +287,7 @@
             "Writing an omnibus doc that swallows several topics."
         ],
         "mutationPolicy": {
-            "allowed": [
-                "lakes/docs/**"
-            ],
+            "allowed": ["lakes/docs/**"],
             "minWrites": 1
         },
         "promptKind": "recording"
@@ -336,17 +320,13 @@
             }
         ],
         "mutationPolicy": {
-            "allowed": [
-                "lakes/docs/**"
-            ],
+            "allowed": ["lakes/docs/**"],
             "minWrites": 1
         },
         "promptKind": "recording",
         "docsCriterion": {
             "minDocsCalls": 1,
-            "verbs": [
-                "read"
-            ]
+            "verbs": ["read"]
         }
     }
 ]

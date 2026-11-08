@@ -344,15 +344,15 @@ that showed it.
 `tests/fixtures/trial-cases.json` extends the baseline with three
 supplied-evidence-only families beyond the E01 legislative no.18 placements:
 
-| Family | Cases | What it measures |
-| ------ | ----- | ---------------- |
-| Discovery | D01 | same-class lakes picked by description |
-| Discovery | D02, D03 | natural triggers — no destination list, no "record this" |
-| Retrieval | R01, R05, R06 | existing knowledge reused; policy linked, not restated |
-| Retrieval | R02 | stale doc read, token refreshed, replaced in place |
-| Retrieval | R04 | justify ambiguity, ask rather than guess |
-| Recording | W01 | permitted write within a declared mutation policy |
-| Recording | W02 | sizeable replace with exactly stored bytes |
+| Family    | Cases         | What it measures                                         |
+| --------- | ------------- | -------------------------------------------------------- |
+| Discovery | D01           | same-class lakes picked by description                   |
+| Discovery | D02, D03      | natural triggers — no destination list, no "record this" |
+| Retrieval | R01, R05, R06 | existing knowledge reused; policy linked, not restated   |
+| Retrieval | R02           | stale doc read, token refreshed, replaced in place       |
+| Retrieval | R04           | justify ambiguity, ask rather than guess                 |
+| Recording | W01           | permitted write within a declared mutation policy        |
+| Recording | W02           | sizeable replace with exactly stored bytes               |
 
 The corpus schema adds optional fields the baseline never uses: `family`,
 `promptKind` (`baseline` | `recording` | `natural`), `seeds` (documents or

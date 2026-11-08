@@ -219,7 +219,7 @@ parse_run_args() {
         # id namespaces are not restricted to E*.
         while IFS= read -r id; do
             [ -n "$id" ] && IDS+=("$id")
-        done <<< "$(node -e '
+        done <<<"$(node -e '
                     const cases = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
                     for (const doc of cases) console.log(doc.id);
                 ' "$CASES")"
