@@ -3236,7 +3236,7 @@ test("M05: writing beside the target does not satisfy a replace case, but a vali
         ).status,
         0,
     );
-    const deletedJudged = runHarness(
+    runHarness(
         root,
         fake,
         ["judge", "T01", "--stamp", "deleted", ...commandArgs(paths)],

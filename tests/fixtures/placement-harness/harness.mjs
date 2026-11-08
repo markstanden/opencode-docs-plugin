@@ -44,7 +44,7 @@ import {
 } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -392,20 +392,24 @@ function docsEntryVerb(kind, entry) {
         : docsVerbOf(entry.input);
 }
 
+/** Family and completion tallies for one docs-kind entry (code-mode is its own). */
+function tallyDocsFamily(tallies, kind, entry) {
+    const completed = entry.status === "completed";
+    if (kind === "code-mode") {
+        tallies.codeModeAttempted += 1;
+        if (completed) tallies.codeModeCompleted += 1;
+        return;
+    }
+    const field = kind === "native" ? "nativeDocs" : "twinDocs";
+    tallies[field] += 1;
+    if (completed) tallies[`${field}Completed`] += 1;
+}
+
 /** Advance the running docs tallies for one trail entry. */
 function tallyDocsEntry(entry, tallies) {
     const kind = docsEntryKind(entry);
     if (kind === null) return;
-    if (kind === "code-mode") {
-        tallies.codeModeAttempted += 1;
-        if (entry.status === "completed") tallies.codeModeCompleted += 1;
-    } else if (kind === "native") {
-        tallies.nativeDocs += 1;
-        if (entry.status === "completed") tallies.nativeDocsCompleted += 1;
-    } else {
-        tallies.twinDocs += 1;
-        if (entry.status === "completed") tallies.twinDocsCompleted += 1;
-    }
+    tallyDocsFamily(tallies, kind, entry);
     const verb = docsEntryVerb(kind, entry);
     tallies.verbs[verb] = (tallies.verbs[verb] ?? 0) + 1;
     tallies.statuses[docsStatusBucket(entry.status)] =
@@ -1264,28 +1268,16 @@ function selectedAreFullDefinitions(selected) {
     );
 }
 
-/**
- * Validate that a run's prepared generation is current and unmutated.
- * Every run refuses missing/tampered prompt, config and (host-visible)
- * rubric outputs, and certifies the prepared tree — seeds, work files and
- * sandbox dirs hashed against the generation record, so a post-generation
- * edit to a seed (or any added or deleted file) cannot ride into a run.
- * Where the corpus carries full case definitions (host flow), the recorded
- * inputs hash is recomputed against the current case, model, plugin and
- * variant identities; the stripped container flow instead checks the
- * redacted list's embedded generation hash. A run never regenerates at all.
- */
-function validateGeneration(testCase, options, corpusComplete) {
+/** Output-hash problems for one prepared generation (prompt/config/rubric). */
+function generationOutputProblems(stored, testCase, options) {
     const problems = [];
-    const caseFixture = join(options.fixtures, testCase.id);
     const promptPath = join(options.prompts, `${testCase.id}.md`);
-    const generationPath = join(caseFixture, "generation.json");
-    const configPath = join(caseFixture, "work", "opencode.json");
-    const stored = readJson(generationPath);
-    if (stored === undefined) {
-        problems.push("no generation fingerprint; run generate first");
-        return { problems, generation: undefined };
-    }
+    const configPath = join(
+        options.fixtures,
+        testCase.id,
+        "work",
+        "opencode.json",
+    );
     if (!existsSync(promptPath)) problems.push("no prompt generated");
     else if (stored.files?.promptHash !== fileHash(promptPath))
         problems.push("prompt does not match the recorded generation");
@@ -1298,28 +1290,66 @@ function validateGeneration(testCase, options, corpusComplete) {
         else if (stored.files?.rubricHash !== fileHash(rubricPath))
             problems.push("rubric does not match the recorded generation");
     }
+    return problems;
+}
+
+/** Input-fingerprint problems: recomputed on full flows; receipts in flows without one. */
+function generationInputProblems(testCase, options, corpusComplete, stored) {
     if (corpusComplete) {
         const current = generationInputsHash(testCase, options);
         if (stored.inputsHash !== current) {
-            problems.push(
+            return [
                 "generation inputs changed since this fixture was generated " +
                     "(case, model, plugin or variant); rerun generate --force",
-            );
+            ];
         }
-    } else if (
+        return [];
+    }
+    if (
         typeof testCase.generationInputsHash === "string" &&
         testCase.generationInputsHash !== stored.inputsHash
     ) {
-        problems.push(
+        return [
             "the staged generation record does not match the frozen run corpus",
-        );
+        ];
     }
-    problems.push(
-        ...certificationProblems(
-            certifiedTreeSnapshot(caseFixture),
-            stored.tree,
-        ),
+    return [];
+}
+
+/** The prepared-tree identities to certify, rewalked against the record. */
+function preparedTreeProblems(stored, testCase, options) {
+    const caseFixture = join(options.fixtures, testCase.id);
+    return certificationProblems(
+        certifiedTreeSnapshot(caseFixture),
+        stored.tree,
     );
+}
+
+/**
+ * Validate that a run's prepared generation is current and unmutated.
+ * Every run refuses missing/tampered prompt, config and (host-visible)
+ * rubric outputs, and certifies the prepared tree — seeds, work files and
+ * sandbox dirs hashed against the generation record, so a post-generation
+ * edit to a seed (or any added or deleted file) cannot ride into a run.
+ * Where the corpus carries full case definitions (host flow), the recorded
+ * inputs hash is recomputed against the current case, model, plugin and
+ * variant identities; the stripped container flow instead checks the
+ * redacted list's embedded generation hash. A run never regenerates at all.
+ */
+function validateGeneration(testCase, options, corpusComplete) {
+    const caseFixture = join(options.fixtures, testCase.id);
+    const stored = readJson(join(caseFixture, "generation.json"));
+    if (stored === undefined) {
+        return {
+            problems: ["no generation fingerprint; run generate first"],
+            generation: undefined,
+        };
+    }
+    const problems = [
+        ...generationOutputProblems(stored, testCase, options),
+        ...generationInputProblems(testCase, options, corpusComplete, stored),
+        ...preparedTreeProblems(stored, testCase, options),
+    ];
     return { problems, generation: stored };
 }
 
@@ -1340,45 +1370,71 @@ function listDirents(directory) {
 /**
  * One entry identity in a tree walk: kind plus whatever makes it finer —
  * file content hash, symlink target, and (when `withModes`) the permission
- * bits. Directories carry mode only; everything is lstat-based, so links
- * are never followed out of the tree.
+ * bits. Every kind's payload comes from its own equality-extracting helper;
+ * everything is lstat-based, so links are never followed out of the tree.
  */
 function walkEntry(path, item, withModes) {
-    if (item.isSymbolicLink()) {
-        let target = "(unreadable)";
-        try {
-            target = readlinkSync(path);
-        } catch {
-            /* recorded as unreadable */
-        }
-        return { kind: "symlink", target };
+    if (item.isSymbolicLink()) return walkSymlinkEntry(path);
+    if (item.isDirectory()) return walkDirectoryEntry(path, withModes);
+    if (item.isFile()) return walkFileEntry(path, withModes);
+    return walkOtherEntry(path, withModes);
+}
+
+/** A symlink entry records its target, never the content behind the link. */
+function walkSymlinkEntry(path) {
+    let target = "(unreadable)";
+    try {
+        target = readlinkSync(path);
+    } catch {
+        /* recorded as unreadable */
     }
-    if (item.isDirectory()) {
-        const mode = withModes ? `0${(lstatSync(path).mode & 0o7777).toString(8)}` : undefined;
-        return { kind: "dir", ...(mode !== undefined ? { mode } : {}) };
+    return { kind: "symlink", target };
+}
+
+/** A directory entry records its presence plus (optionally) its mode. */
+function walkDirectoryEntry(path, withModes) {
+    if (!withModes) return { kind: "dir" };
+    try {
+        return {
+            kind: "dir",
+            mode: `0${(lstatSync(path).mode & 0o7777).toString(8)}`,
+        };
+    } catch {
+        return { kind: "dir", mode: "unreadable" };
     }
-    if (item.isFile()) {
-        let hash = "unreadable";
-        let mode = "unreadable";
-        const lstat = lstatSync(path);
-        mode = `0${(lstat.mode & 0o7777).toString(8)}`;
-        try {
-            hash = fileHash(path);
-        } catch {
-            /* recorded as unreadable */
-        }
-        return { kind: "file", hash, ...(withModes ? { mode } : {}) };
+}
+
+/** A file entry hashes its bytes, marked unreadable when it cannot be read. */
+function walkFileEntry(path, withModes) {
+    let hash = "unreadable";
+    try {
+        hash = fileHash(path);
+    } catch {
+        /* recorded as unreadable */
     }
-    if (withModes) {
-        let mode = "unreadable";
-        try {
-            mode = `0${(lstatSync(path).mode & 0o7777).toString(8)}`;
-        } catch {
-            /* recorded as unreadable */
-        }
-        return { kind: "other", mode };
+    if (!withModes) return { kind: "file", hash };
+    try {
+        return {
+            kind: "file",
+            hash,
+            mode: `0${(lstatSync(path).mode & 0o7777).toString(8)}`,
+        };
+    } catch {
+        return { kind: "file", hash, mode: "unreadable" };
     }
-    return { kind: "other" };
+}
+
+/** Anything but a directory, file or symlink; kind plus mode when known. */
+function walkOtherEntry(path, withModes) {
+    if (!withModes) return { kind: "other" };
+    try {
+        return {
+            kind: "other",
+            mode: `0${(lstatSync(path).mode & 0o7777).toString(8)}`,
+        };
+    } catch {
+        return { kind: "other", mode: "unreadable" };
+    }
 }
 
 /**
@@ -1472,6 +1528,25 @@ function snapshotLive(live) {
     return { entries, git: gitStateEntries(join(live, "work")) };
 }
 
+/** The change label between two entries of the same kind. */
+function sameKindChangeLabel(kind, before, after) {
+    if (kind === "file") {
+        if (before.hash !== after.hash) return "content";
+        if (before.mode !== undefined && before.mode !== after.mode)
+            return "mode";
+        return "";
+    }
+    if (kind === "symlink") {
+        return before.target !== after.target ? "target" : "";
+    }
+    if (kind === "dir") {
+        if (before.mode !== undefined && before.mode !== after.mode)
+            return "mode";
+        return "";
+    }
+    return "";
+}
+
 /**
  * One entry's change label for {@link snapshotDiff}: a kind change
  * (file→symlink replacement etc.) wins, then content/target, then — the
@@ -1480,20 +1555,7 @@ function snapshotLive(live) {
  */
 function entryChanged(before, after) {
     if (before.kind !== after.kind) return "kind";
-    if (before.kind === "file") {
-        if (before.hash !== after.hash) return "content";
-        if (before.mode !== undefined && before.mode !== after.mode)
-            return "mode";
-        return "";
-    }
-    if (before.kind === "symlink")
-        return before.target !== after.target ? "target" : "";
-    if (before.kind === "dir") {
-        if (before.mode !== undefined && before.mode !== after.mode)
-            return "mode";
-        return "";
-    }
-    return "";
+    return sameKindChangeLabel(before.kind, before, after);
 }
 
 function snapshotDiff(before, after) {
@@ -1632,6 +1694,33 @@ function writesColumn(meta, report) {
     return `${meta.writes} file(s)${violations > 0 ? ` + ${violations} violation(s)` : ""}`;
 }
 
+/** Front-matter problems (Area / Keywords / Summary present and nonblank). */
+function invalidFrontMatterReason(frontMatter) {
+    for (const field of ["Area:", "Keywords:", "Summary:"]) {
+        if (
+            !frontMatter.some(
+                (line) =>
+                    line.startsWith(field) && line.slice(field.length).trim() !== "",
+            )
+        ) {
+            return `front-matter ${field.slice(0, -1)} missing or blank`;
+        }
+    }
+    return null;
+}
+
+/** Body problems: an H1, a claim section, and a nonempty claim body. */
+function invalidClaimBodyReason(body) {
+    if (!body.some((line) => line.startsWith("# "))) return "no H1 heading";
+    const claimHeading = /^(#{2,3})\s*(Facts|Inferred|Tested|Failed approaches|Open questions)\s*$/;
+    const headingIndex = body.findIndex((line) => claimHeading.test(line));
+    if (headingIndex === -1) return "no claim section";
+    if (!body.slice(headingIndex + 1).some((line) => line.trim() !== "")) {
+        return "empty claim section";
+    }
+    return null;
+}
+
 /**
  * Deterministic structural validity of a recorded knowledge document,
  * mirroring the writing convention the plugin serves: front-matter with
@@ -1646,26 +1735,11 @@ function invalidKnowledgeDocReason(text) {
     let end = 1;
     while (end < lines.length && lines[end] !== "---") end += 1;
     if (end >= lines.length) return "unterminated front-matter";
-    const frontMatter = lines.slice(1, end);
-    for (const field of ["Area:", "Keywords:", "Summary:"]) {
-        if (
-            !frontMatter.some(
-                (line) =>
-                    line.startsWith(field) && line.slice(field.length).trim() !== "",
-            )
-        ) {
-            return `front-matter ${field.slice(0, -1)} missing or blank`;
-        }
-    }
-    const body = lines.slice(end + 1);
-    if (!body.some((line) => line.startsWith("# "))) return "no H1 heading";
-    const claimHeading = /^(#{2,3})\s*(Facts|Inferred|Tested|Failed approaches|Open questions)\s*$/;
-    const headingIndex = body.findIndex((line) => claimHeading.test(line));
-    if (headingIndex === -1) return "no claim section";
-    if (!body.slice(headingIndex + 1).some((line) => line.trim() !== "")) {
-        return "empty claim section";
-    }
-    return null;
+    const problems = [
+        invalidFrontMatterReason(lines.slice(1, end)),
+        invalidClaimBodyReason(lines.slice(end + 1)),
+    ];
+    return problems.find((problem) => problem !== null) ?? null;
 }
 
 /** A bounded, visibly-truncated excerpt of a recorded artefact. */
@@ -1673,6 +1747,193 @@ function artefactExcerpt(path, text, limit = 1200) {
     return text.length > limit
         ? `${text.slice(0, limit)}\n<excerpt truncated at ${limit} bytes — the full recorded document lives at ${path}>`
         : text;
+}
+
+/**
+ * The recorded mutation evidence a recording gate works from: the live
+ * tree re-snapshotted and digest-verified against meta, the recorded
+ * write diff, and the in-policy surface slice of it.
+ * @param resultDir The case's result directory (its `live` tree is read).
+ * @param meta The run's meta.json.
+ * @param definition The case definition.
+ * @returns The evidence fields, or the refusal problem.
+ */
+function recordedMutationEvidence(resultDir, meta, definition) {
+    const liveDir = join(resultDir, "live");
+    const snapshot = snapshotLive(liveDir);
+    const metaDigest = meta?.finalStateDigest;
+    if (
+        typeof metaDigest === "string" &&
+        snapshotDigest(snapshot) !== metaDigest
+    ) {
+        return {
+            problem:
+                "recorded mutation evidence altered after the run " +
+                "(final-state digest mismatch)",
+        };
+    }
+    const diff = meta?.writeKinds;
+    if (!diff || !Array.isArray(diff.added)) {
+        return {
+            problem:
+                "recording case predates structured write evidence; " +
+                "re-run with the current harness",
+        };
+    }
+    const allowed = definition.mutationPolicy?.allowed ?? [];
+    const touched = [
+        ...diff.added.map((path) => [path, "added"]),
+        ...diff.modified.map((path) => [path, "modified"]),
+        ...diff.removed.map((path) => [path, "removed"]),
+    ];
+    const onSurface = (path) =>
+        allowed.some((pattern) => globMatch(pattern, path));
+    const surfaceTouched = touched.filter(([path]) => onSurface(path));
+    return {
+        problem: null,
+        liveDir,
+        snapshot,
+        diff,
+        onSurface,
+        surfaceTouched,
+    };
+}
+
+/**
+ * The gate's content checks for one expectation-fulfilling document:
+ * structural validity, required and absent content, link references.
+ * @param path The document's surface-relative path.
+ * @param text The recorded document bytes.
+ * @param expectation The case's `expectedDocs` object.
+ * @param what What the document did (created / replaced), for messages.
+ */
+function docContentProblem(path, text, expectation, what) {
+    const structural = invalidKnowledgeDocReason(text);
+    if (structural !== null) {
+        return `${what} ${path} is not a structurally valid knowledge doc (${structural})`;
+    }
+    for (const keep of expectation.retains ?? []) {
+        if (!text.includes(keep)) {
+            return `${what} ${path} lost required content: ${JSON.stringify(keep)}`;
+        }
+    }
+    for (const stale of expectation.omits ?? []) {
+        if (text.includes(stale)) {
+            return `${what} ${path} still carries superseded content: ${JSON.stringify(stale)}`;
+        }
+    }
+    if (expectation.link !== undefined && !text.includes(expectation.link)) {
+        return `${what} ${path} does not reference ${JSON.stringify(expectation.link)}`;
+    }
+    return null;
+}
+
+/** The recorded bytes of one expected artefact, or null when unreadable. */
+function recordedDocBytes(liveDir, snapshot, path) {
+    const entry = snapshot.entries.get(path);
+    if (entry === undefined || entry.kind !== "file") return null;
+    try {
+        return readFileSync(join(liveDir, path), "utf8");
+    } catch {
+        return null;
+    }
+}
+
+/** Whether anything besides the expected paths changed inside the surface. */
+function unrelatedSurfaceChangeProblem(evidence, expectedPaths) {
+    const others = evidence.surfaceTouched.filter(
+        ([path]) => !expectedPaths.includes(path),
+    );
+    if (others.length === 0) return null;
+    return (
+        "unrelated change(s) inside the documentation surface: " +
+        others.map(([path, action]) => `${action} ${path}`).join(", ")
+    );
+}
+
+/** Replace-verb expectations: target modified in place, content valid. */
+function replaceDocVerdict(evidence, expectation) {
+    const target = expectation.target;
+    if (target === undefined) {
+        return { problem: "replace expectation without a target path" };
+    }
+    if (evidence.diff.removed.includes(target)) {
+        return { problem: `expected replacement target ${target} was deleted` };
+    }
+    if (!evidence.diff.modified.includes(target)) {
+        return {
+            problem:
+                `expected replacement of ${target} did not happen ` +
+                "(unchanged; a second doc or an unrelated change cannot satisfy this case)",
+        };
+    }
+    const text = recordedDocBytes(
+        evidence.liveDir,
+        evidence.snapshot,
+        target,
+    );
+    if (text === null) {
+        return {
+            problem: `expected replacement target ${target} is not a readable regular file`,
+        };
+    }
+    const content = docContentProblem(target, text, expectation, "replaced");
+    if (content !== null) return { problem: content };
+    const others = unrelatedSurfaceChangeProblem(evidence, [target]);
+    if (others !== null) return { problem: others };
+    return {
+        problem: null,
+        artifacts: [{ path: target, excerpt: artefactExcerpt(target, text) }],
+    };
+}
+
+/** Create-verb expectations: exactly one valid knowledge doc on the surface. */
+function createDocVerdict(evidence, expectation) {
+    const candidates = evidence.diff.added
+        .filter((path) => evidence.onSurface(path) && path.endsWith(".md"))
+        .filter((path) => evidence.snapshot.entries.get(path)?.kind === "file");
+    if (candidates.length === 0) {
+        return {
+            problem:
+                "no created knowledge doc inside the documentation surface " +
+                "(directory-only changes, junk files and non-Markdown files cannot satisfy a required knowledge write)",
+        };
+    }
+    if (candidates.length > 1) {
+        return {
+            problem:
+                `several docs created inside the documentation surface ` +
+                `(${candidates.join(", ")})`,
+        };
+    }
+    const path = candidates[0];
+    const text = recordedDocBytes(evidence.liveDir, evidence.snapshot, path);
+    if (text === null) {
+        return { problem: `created doc ${path} is not a readable regular file` };
+    }
+    const content = docContentProblem(path, text, expectation, "created");
+    if (content !== null) return { problem: content };
+    const others = unrelatedSurfaceChangeProblem(evidence, [path]);
+    if (others !== null) return { problem: others };
+    return {
+        problem: null,
+        artifacts: [{ path, excerpt: artefactExcerpt(path, text) }],
+    };
+}
+
+/** Preserved paths may show up nowhere in the recorded diff. */
+function preservedPathProblem(evidence, expectation) {
+    for (const path of expectation.preserve ?? []) {
+        const touchedPath = [
+            ...evidence.diff.added.map((p) => [p, "added"]),
+            ...evidence.diff.modified.map((p) => [p, "modified"]),
+            ...evidence.diff.removed.map((p) => [p, "removed"]),
+        ].find(([p]) => p === path);
+        if (touchedPath) {
+            return `preserved ${path} was ${touchedPath[1]} by the run; the expectation requires it untouched`;
+        }
+    }
+    return null;
 }
 
 /**
@@ -1689,183 +1950,23 @@ function artefactExcerpt(path, text, limit = 1200) {
  * @param resultDir The case's result directory (its `live` tree is read).
  * @param meta The run's meta.json.
  * @param definition The case definition.
- * @returns { problem: string|null, artifacts: Array<{path, excerpt}> }
+ * @returns The gate verdict: `problem` null when met, else the refusal and
+ *   always-empty artefacts; on success the verified artefact list.
  */
 function expectedDocsGate(resultDir, meta, definition) {
     const expectation = definition?.expectedDocs;
     if (!expectation) return { problem: null, artifacts: [] };
-    const liveDir = join(resultDir, "live");
-    const snapshot = snapshotLive(liveDir);
-    const metaDigest = meta?.finalStateDigest;
-    if (
-        typeof metaDigest === "string" &&
-        snapshotDigest(snapshot) !== metaDigest
-    ) {
-        return {
-            problem:
-                "recorded mutation evidence altered after the run " +
-                "(final-state digest mismatch)",
-            artifacts: [],
-        };
+    const evidence = recordedMutationEvidence(resultDir, meta, definition);
+    if (evidence.problem !== null) {
+        return { problem: evidence.problem, artifacts: [] };
     }
-    const diff = meta?.writeKinds;
-    if (!diff || !Array.isArray(diff.added)) {
-        return {
-            problem:
-                "recording case predates structured write evidence; " +
-                "re-run with the current harness",
-            artifacts: [],
-        };
-    }
-    const allowed = definition.mutationPolicy?.allowed ?? [];
-    const touched = [
-        ...diff.added.map((path) => [path, "added"]),
-        ...diff.modified.map((path) => [path, "modified"]),
-        ...diff.removed.map((path) => [path, "removed"]),
-    ];
-    const onSurface = (path) =>
-        allowed.some((pattern) => globMatch(pattern, path));
-    const surfaceTouched = touched.filter(([path]) => onSurface(path));
-
-    // Preserved invariants: these paths must show up nowhere in the diff.
-    for (const path of expectation.preserve ?? []) {
-        const touchedPath = touched.find(([p]) => p === path);
-        if (touchedPath) {
-            return {
-                problem:
-                    `preserved ${path} was ${touchedPath[1]} by the run; ` +
-                    "the expectation requires it untouched",
-                artifacts: [],
-            };
-        }
-    }
-    const finalEntries = snapshot.entries;
-    const artifactFor = (path) => {
-        const entry = finalEntries.get(path);
-        if (entry === undefined || entry.kind !== "file") return null;
-        let text = null;
-        try {
-            text = readFileSync(join(liveDir, path), "utf8");
-        } catch {
-            return null;
-        }
-        return text;
-    };
-    const checkContent = (path, text, what) => {
-        const structural = invalidKnowledgeDocReason(text);
-        if (structural !== null) {
-            return `${what} ${path} is not a structurally valid knowledge doc (${structural})`;
-        }
-        for (const keep of expectation.retains ?? []) {
-            if (!text.includes(keep)) {
-                return `${what} ${path} lost required content: ${JSON.stringify(keep)}`;
-            }
-        }
-        for (const stale of expectation.omits ?? []) {
-            if (text.includes(stale)) {
-                return `${what} ${path} still carries superseded content: ${JSON.stringify(stale)}`;
-            }
-        }
-        if (
-            expectation.link !== undefined &&
-            !text.includes(expectation.link)
-        ) {
-            return `${what} ${path} does not reference ${JSON.stringify(expectation.link)}`;
-        }
-        return null;
-    };
-    const otherSurfaceChanges = (expectationPaths) => {
-        const others = surfaceTouched.filter(
-            ([path]) => !expectationPaths.includes(path),
-        );
-        if (others.length > 0) {
-            return (
-                `unrelated change(s) inside the documentation surface: ` +
-                others.map(([path, action]) => `${action} ${path}`).join(", ")
-            );
-        }
-        return null;
-    };
-
-    if (expectation.kind === "replace") {
-        const target = expectation.target;
-        if (target === undefined) {
-            return {
-                problem: "replace expectation without a target path",
-                artifacts: [],
-            };
-        }
-        if (diff.removed.includes(target)) {
-            return {
-                problem: `expected replacement target ${target} was deleted`,
-                artifacts: [],
-            };
-        }
-        if (!diff.modified.includes(target)) {
-            return {
-                problem:
-                    `expected replacement of ${target} did not happen ` +
-                    "(unchanged; a second doc or an unrelated change cannot satisfy this case)",
-                artifacts: [],
-            };
-        }
-        const text = artifactFor(target);
-        if (text === null) {
-            return {
-                problem: `expected replacement target ${target} is not a readable regular file`,
-                artifacts: [],
-            };
-        }
-        const content = checkContent(target, text, "replaced");
-        if (content !== null) return { problem: content, artifacts: [] };
-        const others = otherSurfaceChanges([target]);
-        if (others !== null) return { problem: others, artifacts: [] };
-        return {
-            problem: null,
-            artifacts: [
-                {
-                    path: target,
-                    excerpt: artefactExcerpt(target, text),
-                },
-            ],
-        };
-    }
-    // create
-    const candidates = diff.added
-        .filter((path) => onSurface(path) && path.endsWith(".md"))
-        .filter((path) => finalEntries.get(path)?.kind === "file");
-    if (candidates.length === 0) {
-        return {
-            problem:
-                "no created knowledge doc inside the documentation surface " +
-                "(directory-only changes, junk files and non-Markdown files cannot satisfy a required knowledge write)",
-            artifacts: [],
-        };
-    }
-    if (candidates.length > 1) {
-        return {
-            problem:
-                `several docs created inside the documentation surface ` +
-                `(${candidates.join(", ")})`,
-            artifacts: [],
-        };
-    }
-    const path = candidates[0];
-    const text = artifactFor(path);
-    if (text === null) {
-        return {
-            problem: `created doc ${path} is not a readable regular file`,
-            artifacts: [],
-        };
-    }
-    const content = checkContent(path, text, "created");
-    if (content !== null) return { problem: content, artifacts: [] };
-    const others = otherSurfaceChanges([path]);
-    if (others !== null) return { problem: others, artifacts: [] };
-    return {
-        problem: null,
-        artifacts: [{ path, excerpt: artefactExcerpt(path, text) }],
-    };
+    const preserved = preservedPathProblem(evidence, expectation);
+    if (preserved !== null) return { problem: preserved, artifacts: [] };
+    const verdict =
+        expectation.kind === "replace"
+            ? replaceDocVerdict(evidence, expectation)
+            : createDocVerdict(evidence, expectation);
+    return { ...verdict, artifacts: verdict.artifacts ?? [] };
 }
 
 /* ------------------------------------------------------------------ *
@@ -1952,6 +2053,45 @@ function writeJsonAtomic(path, contents) {
  *   corpus (staged container), which carries no definitional authority.
  * @returns Conflict strings of the form "field: stored vs current".
  */
+/** Field-value conflicts between a stored and a computed description. */
+function comparedFieldConflicts(existing, description, compared) {
+    const conflicts = [];
+    for (const field of compared) {
+        if (
+            JSON.stringify(existing[field]) !==
+            JSON.stringify(description[field])
+        ) {
+            conflicts.push(
+                `${field}: ${JSON.stringify(existing[field])} vs ` +
+                    `${JSON.stringify(description[field])}`,
+            );
+        }
+    }
+    return conflicts;
+}
+
+/** Definition-level conflicts: counts and each case's frozen definition. */
+function definitionConflicts(existingCases, currentCases) {
+    if (existingCases.length !== currentCases.length) {
+        return [
+            "cases: " +
+                `${existingCases.length} frozen vs ${currentCases.length} selected`,
+        ];
+    }
+    for (const current of currentCases) {
+        const prior = existingCases.find((entry) => entry.id === current.id);
+        if (
+            JSON.stringify(prior?.definition) !==
+            JSON.stringify(current.definition)
+        ) {
+            return [
+                `definition of ${current.id} differs from the frozen experiment`,
+            ];
+        }
+    }
+    return [];
+}
+
 function runDescriptionConflicts(existing, description, containerFlow) {
     const legacy = (existing.schemaVersion ?? 1) < RUN_SCHEMA_VERSION;
     const compared =
@@ -1966,42 +2106,13 @@ function runDescriptionConflicts(existing, description, containerFlow) {
               "caseIds",
               "orchestration",
           ];
-    const conflicts = [];
-    for (const field of compared) {
-        if (
-            JSON.stringify(existing[field]) !==
-            JSON.stringify(description[field])
-        ) {
-            conflicts.push(
-                `${field}: ${JSON.stringify(existing[field])} vs ` +
-                    `${JSON.stringify(description[field])}`,
-            );
-        }
-    }
+    const conflicts = comparedFieldConflicts(existing, description, compared);
+    // Full-corpus flows compare the authoritative definitions too, so a
+    // corpus edit cannot relabel a frozen experiment.
     if (!containerFlow && !legacy) {
-        const existingCases = existing.cases ?? [];
-        const currentCases = description.cases;
-        if (existingCases.length !== currentCases.length) {
-            conflicts.push(
-                "cases: " +
-                    `${existingCases.length} frozen vs ${currentCases.length} selected`,
-            );
-        } else {
-            for (const current of currentCases) {
-                const prior = existingCases.find(
-                    (entry) => entry.id === current.id,
-                );
-                if (
-                    JSON.stringify(prior?.definition) !==
-                    JSON.stringify(current.definition)
-                ) {
-                    conflicts.push(
-                        `definition of ${current.id} differs from the frozen experiment`,
-                    );
-                    break;
-                }
-            }
-        }
+        conflicts.push(
+            ...definitionConflicts(existing.cases ?? [], description.cases),
+        );
     }
     return conflicts;
 }
@@ -2151,8 +2262,11 @@ function opencodeCall({
             return;
         }
         /** Chunked retention: chunks are kept until the cap, counted always. */
-        const stream = (name) => ({ chunks: [], bytes: 0, overflow: false });
-        const streams = { stdout: stream("stdout"), stderr: stream("stderr") };
+        const freshStream = () => ({ chunks: [], bytes: 0, overflow: false });
+        const streams = {
+            stdout: freshStream(),
+            stderr: freshStream(),
+        };
         const appendChunk = (name, chunk) => {
             const state = streams[name];
             state.bytes += chunk.length;
@@ -2406,44 +2520,53 @@ function answerInvalidReason(resultDir) {
 function docsCriterionProblem(testCase, resultDir) {
     const criterion = testCase?.docsCriterion;
     if (!criterion) return null;
-    if (criterion.minVerifiedCalls !== undefined) {
-        const trail = readTrail(resultDir);
-        if (trail === null)
-            return "docs criterion unmet: no tool trail recorded";
-        const telemetry = docsTelemetry(trail.entries, trail.parseFailures);
-        const required = criterion.minVerifiedCalls ?? 1;
-        if (telemetry.verifiedDocs < required) {
-            return telemetry.codeModeAttempted > 0 && telemetry.verifiedDocs === 0
-                ? `docs criterion unmet: ${telemetry.codeModeAttempted} code-mode attempt(s) are unobservable nested operations — inconclusive without a completed native or twin call ` +
-                      `(0 verified docs op(s), required ${required})`
-                : `docs criterion unmet: ${telemetry.verifiedDocs} verified docs op(s), required ${required}`;
-        }
-        if (criterion.verbs !== undefined) {
-            if (
-                !criterion.verbs.some(
-                    (verb) => (telemetry.verbsCompleted[verb] ?? 0) > 0,
-                )
-            ) {
-                return `docs criterion unmet: no completed ${criterion.verbs.join("/")} operation (attempts are counted, never verified)`;
-            }
-        }
-        if (criterion.paths !== undefined) {
-            const missing = criterion.paths.filter(
-                (path) =>
-                    !trail.entries.some(
-                        (entry) =>
-                            docsEntryKind(entry) !== null &&
-                            entry.status === "completed" &&
-                            JSON.stringify(entry.input ?? "").includes(path),
-                    ),
-            );
-            if (missing.length > 0) {
-                return `docs criterion unmet: no completed docs operation references ${missing.join(", ")}`;
-            }
-        }
-        return null;
+    return criterion.minVerifiedCalls !== undefined
+        ? verifiedDocsCriterionProblem(criterion, resultDir)
+        : legacyDocsCriterionProblem(criterion, resultDir);
+}
+
+/** Required document references a completed docs operation must include. */
+function missingRequiredPaths(trail, paths) {
+    return paths.filter(
+        (path) =>
+            !trail.entries.some(
+                (entry) =>
+                    docsEntryKind(entry) !== null &&
+                    entry.status === "completed" &&
+                    JSON.stringify(entry.input ?? "").includes(path),
+            ),
+    );
+}
+
+/** The `minVerifiedCalls` criterion: verified completions only. */
+function verifiedDocsCriterionProblem(criterion, resultDir) {
+    const trail = readTrail(resultDir);
+    if (trail === null) return "docs criterion unmet: no tool trail recorded";
+    const telemetry = docsTelemetry(trail.entries, trail.parseFailures);
+    const required = criterion.minVerifiedCalls ?? 1;
+    if (telemetry.verifiedDocs < required) {
+        return telemetry.codeModeAttempted > 0 && telemetry.verifiedDocs === 0
+            ? `docs criterion unmet: ${telemetry.codeModeAttempted} code-mode attempt(s) are unobservable nested operations — inconclusive without a completed native or twin call ` +
+                  `(0 verified docs op(s), required ${required})`
+            : `docs criterion unmet: ${telemetry.verifiedDocs} verified docs op(s), required ${required}`;
     }
-    // Legacy semantics, applied to the frozen definition as recorded.
+    if (
+        criterion.verbs !== undefined &&
+        !criterion.verbs.some((verb) => (telemetry.verbsCompleted[verb] ?? 0) > 0)
+    ) {
+        return `docs criterion unmet: no completed ${criterion.verbs.join("/")} operation (attempts are counted, never verified)`;
+    }
+    if (criterion.paths !== undefined) {
+        const missing = missingRequiredPaths(trail, criterion.paths);
+        if (missing.length > 0) {
+            return `docs criterion unmet: no completed docs operation references ${missing.join(", ")}`;
+        }
+    }
+    return null;
+}
+
+/** The legacy `minDocsCalls` criterion: historical attempted-operations semantics. */
+function legacyDocsCriterionProblem(criterion, resultDir) {
     const trail = readTrail(resultDir);
     if (trail === null) return "docs criterion unmet: no tool trail recorded";
     const telemetry = docsTelemetry(trail.entries, trail.parseFailures);
@@ -2472,22 +2595,11 @@ function trialBlankAnswerReason(parseFailures, events) {
 }
 
 /**
- * Why a completed run is not a valid trial answer, or null when it is:
- * spawn failure, a triggered timeout (regardless of exit code or signal),
- * any kill signal, nonzero exit, capture-limit overflow (the retained
- * evidence is incomplete by construction), unparsable output lines (trail
- * completeness cannot be verified), a blank answer, or a stream that never
- * ended on a final answer text part.
+ * Why the run's process outcome cannot be a completed trial: spawn
+ * failure, a triggered timeout (regardless of the final exit code or
+ * signal), any kill signal, or a nonzero exit.
  */
-function trialInvalidReason(
-    result,
-    text,
-    parseFailures,
-    events,
-    options,
-    textParts,
-    lastPartKind,
-) {
+function runProcessFailure(result, options) {
     if (result.error !== null && result.error !== undefined) {
         return `trial failed to start (${result.error.code ?? result.error})`;
     }
@@ -2503,13 +2615,18 @@ function trialInvalidReason(
     if (result.status !== 0) {
         return `trial did not complete (exit ${result.status})`;
     }
+    return null;
+}
+
+/** Capture, parsability, blankness and completion-shape evidence problems. */
+function runTrailEvidenceProblem(result, text, parseFailures, textParts, lastPartKind, events) {
     if (
         result.outputOverflow === true ||
         result.stdoutOverflow === true ||
         result.stderrOverflow === true
     ) {
         return (
-            `trial output exceeded the capture limit ` +
+            "trial output exceeded the capture limit " +
             "(the recorded evidence is incomplete by construction)"
         );
     }
@@ -2525,6 +2642,34 @@ function trialInvalidReason(
         return "trial produced no final completion event";
     }
     return null;
+}
+
+/**
+ * Why a completed run is not a valid trial answer, or null when it is:
+ * process failure, capture-limit overflow (the retained evidence is
+ * incomplete by construction), unparsable output lines (trail completeness
+ * cannot be verified), a blank answer, or a stream that never ended on a
+ * final answer text part.
+ */
+function trialInvalidReason(
+    result,
+    text,
+    parseFailures,
+    events,
+    options,
+    textParts,
+    lastPartKind,
+) {
+    const processProblem = runProcessFailure(result, options);
+    if (processProblem !== null) return processProblem;
+    return runTrailEvidenceProblem(
+        result,
+        text,
+        parseFailures,
+        textParts,
+        lastPartKind,
+        events,
+    );
 }
 
 /**
@@ -3051,6 +3196,21 @@ function writeJudgedVerdict(
     );
 }
 
+/** A judge attempt's output problems: verdict completeness + trail honesty. */
+function judgeOutputProblems(parsed, judgeParseFailures, judgeTextParts) {
+    return [
+        ...(parsed === undefined
+            ? ["no JSON object in output"]
+            : validateVerdict(parsed)),
+        ...(judgeTextParts === 0 ? ["no text part in judge output"] : []),
+        ...(judgeParseFailures > 0
+            ? [
+                  `${judgeParseFailures} unparsable judge output line(s); output completeness cannot be verified`,
+              ]
+            : []),
+    ];
+}
+
 /**
  * Record one judge attempt. The attempt directory preserves everything:
  * stdout, stderr, raw text, timings, completion metadata, the identities of
@@ -3077,20 +3237,11 @@ async function judgeAttempt(
     write(join(judgeDir, "raw.md"), text);
 
     const parsed = parseVerdict(text);
-    const completenessProblems = [
-        ...(textParts === 0 ? ["no text part in judge output"] : []),
-        ...(judgeParseFailures > 0
-            ? [
-                  `${judgeParseFailures} unparsable judge output line(s); output completeness cannot be verified`,
-              ]
-            : []),
-    ];
-    const problems = [
-        ...(parsed === undefined
-            ? ["no JSON object in output"]
-            : validateVerdict(parsed)),
-        ...completenessProblems,
-    ];
+    const problems = judgeOutputProblems(
+        parsed,
+        judgeParseFailures,
+        textParts,
+    );
     const judgeStatus = judgeStatusOf(result, problems);
     const attemptMeta = judgeAttemptMeta({
         resultDir,
@@ -3231,6 +3382,39 @@ function judgeSelection(options, stamp) {
     return cases.filter((entry) => options.ids.includes(entry.id));
 }
 
+/**
+ * The pre-judge gate sequence for one case: recorded-run validity, the
+ * saved definition's docs criterion, the artefact expectations.
+ * @returns The refusal reason, or null with the verified artefact list.
+ */
+function judgeGateReason(resultDir, options, testCase) {
+    const invalid = runInvalidReason(resultDir, options, testCase);
+    if (invalid !== null) return { reason: invalid, artifacts: [] };
+    const criterionProblem = docsCriterionProblem(testCase, resultDir);
+    if (criterionProblem !== null) {
+        return { reason: criterionProblem, artifacts: [] };
+    }
+    const meta = readJson(join(resultDir, "meta.json")) ?? {};
+    const expectation = expectedDocsGate(resultDir, meta, testCase);
+    if (expectation.problem !== null) {
+        return { reason: expectation.problem, artifacts: [] };
+    }
+    return { reason: null, artifacts: expectation.artifacts };
+}
+
+/**
+ * The recorded rubric must be the experiment's own: a saved full
+ * definition renders the expected rubric deterministically, so a
+ * replaced-upstream or edited copy is refused rather than adopted.
+ * @returns The refusal reason, or null when matching or not checkable.
+ */
+function recordedRubricProblem(testCase, recordedRubric) {
+    if (!selectedAreFullDefinitions([testCase])) return null;
+    return recordedRubric === rubricFor(testCase)
+        ? null
+        : "recorded rubric does not match the experiment's saved definition";
+}
+
 async function judgeOne(testCase, options, stamp) {
     const resultDir = join(options.results, stamp, testCase.id);
     if (!existsSync(resultDir)) {
@@ -3240,26 +3424,12 @@ async function judgeOne(testCase, options, stamp) {
     const answerHash = existsSync(join(resultDir, "final.md"))
         ? fileHash(join(resultDir, "final.md"))
         : "unknown";
-    const invalid = runInvalidReason(resultDir, options, testCase);
-    if (invalid !== null) {
-        return writeInvalidVerdict(testCase.id, resultDir, invalid, answerHash);
-    }
-    const criterionProblem = docsCriterionProblem(testCase, resultDir);
-    if (criterionProblem !== null) {
+    const gate = judgeGateReason(resultDir, options, testCase);
+    if (gate.reason !== null) {
         return writeInvalidVerdict(
             testCase.id,
             resultDir,
-            criterionProblem,
-            answerHash,
-        );
-    }
-    const meta = readJson(join(resultDir, "meta.json")) ?? {};
-    const expectation = expectedDocsGate(resultDir, meta, testCase);
-    if (expectation.problem !== null) {
-        return writeInvalidVerdict(
-            testCase.id,
-            resultDir,
-            expectation.problem,
+            gate.reason,
             answerHash,
         );
     }
@@ -3272,26 +3442,21 @@ async function judgeOne(testCase, options, stamp) {
             answerHash,
         );
     }
-    // The recorded rubric must be the experiment's own: the saved
-    // definition renders the expected rubric deterministically, and a
-    // replaced-upstream or edited copy is refused rather than adopted.
     const recordedRubric = readFileSync(join(resultDir, "rubric.md"), "utf8");
-    if (selectedAreFullDefinitions([testCase])) {
-        const expectedRubric = rubricFor(testCase);
-        if (recordedRubric !== expectedRubric) {
-            return writeInvalidVerdict(
-                testCase.id,
-                resultDir,
-                "recorded rubric does not match the experiment's saved definition",
-                answerHash,
-            );
-        }
+    const rubricProblem = recordedRubricProblem(testCase, recordedRubric);
+    if (rubricProblem !== null) {
+        return writeInvalidVerdict(
+            testCase.id,
+            resultDir,
+            rubricProblem,
+            answerHash,
+        );
     }
     const rubricHash = fileHash(join(resultDir, "rubric.md"));
     const judgeModel = options.judgeModel || options.model;
     const prompt = judgePrompt(
         resultDir,
-        expectation.artifacts.map(
+        gate.artifacts.map(
             (artifact) =>
                 `- **${artifact.path}**\n\n\`\`\`\n${artifact.excerpt}\n\`\`\``,
         ),
@@ -3424,19 +3589,23 @@ function legacyStampNotice(run) {
 
 /** The boundary sentence of the summary header, or its legacy counterpart. */
 function summaryBoundary(run) {
-    const boundary =
-        run?.trialBoundary ??
-        (run?.boundary === undefined
-            ? null
-            : {
-                  containerised: run.boundary?.containerised === true,
-                  kind: run.boundary?.containerised ? "container" : "host",
-                  image: run.boundary?.image ?? "",
-                  imageId: run.boundary?.imageId ?? "",
-              });
-    return boundary
-        ? `${boundary.kind}${boundary.image ? ` (${boundary.image})` : ""}`
-        : "unknown (legacy)";
+    if (run === undefined || run === null) return "unknown (legacy)";
+    const boundary = run.trialBoundary ?? legacySummaryBoundary(run);
+    if (boundary === undefined) return "unknown (legacy)";
+    return `${boundary.kind}${boundary.image ? ` (${boundary.image})` : ""}`;
+}
+
+/** A v1 stamp's boundary facts, lifted into the v2 field names. */
+function legacySummaryBoundary(run) {
+    const legacy = run.boundary;
+    if (legacy === undefined || legacy === null) return undefined;
+    const containerised = legacy.containerised === true;
+    return {
+        containerised,
+        kind: containerised ? "container" : "host",
+        image: legacy.image ?? "",
+        imageId: legacy.imageId ?? "",
+    };
 }
 
 /** The provenance identity lines, when the stamp recorded them. */
@@ -3644,16 +3813,30 @@ function dossierBoundaryText(run) {
 }
 
 /** The provenance bullets, or the legacy warning when the stamp recorded none. */
+/** The provenance bullets, or the legacy warning when the stamp recorded none. */
 function dossierProvenanceLines(run) {
     const provenanceInfo = run?.orchestration ?? run?.provenance;
     if (!provenanceInfo) return [dossierLegacyLine(run)];
     const boundary = run?.trialBoundary ?? run?.boundary;
     return [
-        `- Fixture: ${provenanceInfo.fixtureVersion ?? "unknown"} (${provenanceInfo.fixtureHash ?? "unknown"})`,
-        `- Plugin: ${provenanceInfo.pluginCommit ?? "unknown"} (${provenanceInfo.pluginHash ?? "unknown"}${provenanceInfo.pluginDirty ? ", dirty tree" : ""})`,
+        dossierFixtureBullet(provenanceInfo),
+        dossierPluginBullet(provenanceInfo),
         `- CLI: ${provenanceInfo.opencode ?? "unknown"}`,
         `- Image: ${boundary?.image || "none (host run)"}`,
     ];
+}
+
+/** The fixture-identity bullet of the dossier provenance block. */
+function dossierFixtureBullet(info) {
+    return `- Fixture: ${info.fixtureVersion ?? "unknown"} (${info.fixtureHash ?? "unknown"})`;
+}
+
+/** The plugin-identity bullet, including the dirty-tree flag. */
+function dossierPluginBullet(info) {
+    return (
+        `- Plugin: ${info.pluginCommit ?? "unknown"} ` +
+        `(${info.pluginHash ?? "unknown"}${info.pluginDirty ? ", dirty tree" : ""})`
+    );
 }
 
 /** The run facts as bullets; "unknown (legacy)" when the stamp recorded none. */

@@ -193,7 +193,7 @@ prepare_cases_run() {
             try {
                 const generation = JSON.parse(
                     fs.readFileSync(
-                        `${fixturesRoot}/${doc.id}/generation.json`,
+                        fixturesRoot + "/" + doc.id + "/generation.json",
                         "utf8",
                     ),
                 );
