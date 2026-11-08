@@ -75,7 +75,6 @@ interface ExpectedDocs {
     retains?: string[];
     omits?: string[];
     preserve?: string[];
-    singleDoc?: boolean;
 }
 
 /**
@@ -208,6 +207,22 @@ interface ToolCall {
     status?: string | undefined;
     output?: unknown;
     code?: unknown;
+    /** The tool result's metadata envelope, latest-wins, when the CLI emitted one. */
+    metadata?: unknown;
+    /**
+     * Success facts extracted from the COMPLETE output at fold time, before
+     * the display projection truncates it: a long read's trailing revision
+     * envelope survives as durable success evidence.
+     */
+    outcome?: OutcomeFacts;
+}
+
+/** Success facts proven from one call's complete output at capture time. */
+interface OutcomeFacts {
+    refusal: boolean;
+    notFound: boolean;
+    blank: boolean;
+    verifiedRead: boolean;
 }
 
 /** One trail read from disk: deduplicated calls plus unparsable count. */
@@ -228,6 +243,8 @@ interface DocsTallies {
     codeModeAttempted: number;
     codeModeCompleted: number;
     executeCalls: number;
+    /** Successful observable operations, deduplicated by call id. */
+    docsSuccessful: number;
 }
 
 /** The reported docs telemetry for one trail. */
@@ -545,9 +562,11 @@ const COMMANDS = [
 /**
  * Harness behaviour version — bump when prompts, mutation policy, telemetry
  * or provenance change shape, so fingerprints and provenance never silently
- * mix generations.
+ * mix generations. v4: per-operation success evidence (the result envelope
+ * and outcome facts from complete output) drives verified docs counts, and
+ * the deduplicated trail carries the outcome facts with the call.
  */
-const HARNESS_VERSION = 3;
+const HARNESS_VERSION = 4;
 /** Generation fingerprint version — bump when generation inputs/outputs change. */
 const GENERATION_VERSION = 3;
 /** Run-description schema version (`run.json`). */
@@ -753,8 +772,13 @@ function parseArgs(argv: string[]) {
  * string id. Anything else is a malformed corpus, not an empty one.
  * @param fixturePath The corpus file to read.
  * @param requireFull Whether the corpus must carry full definitions
- *   (generation and default judging flows): each entry then needs the
- *   claim/evidence/destinations a prompt is rendered from.
+ *   (the full-corpus command boundaries — generation and the host freeze
+ *   `describe`): each entry then needs the claim/evidence/destinations/
+ *   accepts/temptingWrong a prompt and rubric render from, and a missing
+ *   field is refused by name instead of silently filtered into the
+ *   selected set. The redacted container staging list keeps the shared
+ *   shape: any instrumentation fields it carries are validated, none is
+ *   required.
  * @returns The validated case entries.
  */
 function loadCases(fixturePath: string, requireFull: boolean): TrialCase[] {
@@ -778,8 +802,16 @@ function loadCases(fixturePath: string, requireFull: boolean): TrialCase[] {
     return cases;
 }
 
-function select(options: CliOptions) {
-    const cases = loadCases(options.fixture, false);
+/**
+ * Select cases from the corpus. `requireFull` names the validation mode:
+ * the full-corpus command boundaries (generate, describe) refuse entries
+ * that lack the fields their prompts render from; run/judge keep the
+ * shared shape because run consumes the instrumentation subset and judge
+ * consumes the frozen definitions, each full-validated at its own
+ * boundary.
+ */
+function select(options: CliOptions, requireFull: boolean = false) {
+    const cases = loadCases(options.fixture, requireFull);
     if (options.ids.length === 0) return cases;
     const unknown = options.ids.filter(
         (id: string) => !cases.some((entry: TrialCase) => entry.id === id),
@@ -897,10 +929,41 @@ function fieldProblems(
  * ------------------------------------------------------------------ */
 
 /**
+ * The problems with one recorded write diff: the three changed-path arrays,
+ * the git-state list and the path→change-kind map the gates consume —
+ * not just the containing object — with element types proven.
+ * @returns The problems; empty means a completely shaped write diff.
+ */
+function writeDiffShape(value: Record<string, unknown>): FieldProblems {
+    const out: FieldProblems = [];
+    for (const field of ["added", "modified", "removed", "git"]) {
+        fieldProblems(
+            out,
+            value,
+            field,
+            "must be a string array",
+            isStringArray,
+            true,
+        );
+    }
+    if (isRecord(value.kinds)) {
+        for (const [path, label] of Object.entries(value.kinds)) {
+            if (typeof label !== "string") {
+                out.push(`kinds["${path}"] must be a string`);
+            }
+        }
+    } else {
+        out.push("kinds must be a JSON object");
+    }
+    return out;
+}
+
+/**
  * A meta record requires the terminal-state and answer-identity fields the
  * gates consume (`exit`, `writes`, `policyViolations`, `answerHash`,
  * `answerValid`); the remaining consumed fields are proven by type when
- * present.
+ * present, including each nested write-diff array and label map the gates
+ * reduce over.
  * @returns The problems with one parsed meta.json.
  */
 function metaShape(value: unknown): string[] {
@@ -1018,6 +1081,13 @@ function metaShape(value: unknown): string[] {
         (v) => v === null || isRecord(v),
         false,
     );
+    if (isRecord(value.writeKinds)) {
+        out.push(
+            ...writeDiffShape(value.writeKinds).map(
+                (problem) => `writeKinds: ${problem}`,
+            ),
+        );
+    }
     return out;
 }
 
@@ -1112,8 +1182,61 @@ function runDescriptionShape(value: unknown): string[] {
         out.push("schemaVersion must be a nonnegative integer");
         return out;
     }
-    // Legacy v1 stamps carried fewer fields: validate only its consumed set.
-    if (version < RUN_SCHEMA_VERSION) return out;
+    // Legacy v1 stamps carried fewer fields: validate what is present —
+    // never demanding v2-only fields — but any consumed field that IS there
+    // still must be well-formed.
+    if (version < RUN_SCHEMA_VERSION) {
+        for (const field of ["createdAt", "stamp", "model"]) {
+            fieldProblems(
+                out,
+                value,
+                field,
+                "must be a string",
+                (v) => typeof v === "string",
+                false,
+            );
+        }
+        fieldProblems(
+            out,
+            value,
+            "variant",
+            'must be "destinations" or "discovery"',
+            (v) => isLiteral(v, ["destinations", "discovery"]),
+            false,
+        );
+        fieldProblems(
+            out,
+            value,
+            "timeoutMs",
+            "must be a nonnegative integer",
+            nonnegativeInt,
+            false,
+        );
+        fieldProblems(
+            out,
+            value,
+            "allowWrites",
+            "must be a boolean",
+            (v) => typeof v === "boolean",
+            false,
+        );
+        fieldProblems(
+            out,
+            value,
+            "caseIds",
+            "must be a string array",
+            isStringArray,
+            false,
+        );
+        if (value.cases !== undefined) {
+            if (!Array.isArray(value.cases)) {
+                out.push("cases must be an array");
+                return out;
+            }
+            out.push(...runCasesShape(value.cases, "present"));
+        }
+        return out;
+    }
     fieldProblems(
         out,
         value,
@@ -1178,22 +1301,62 @@ function runDescriptionShape(value: unknown): string[] {
         out.push("cases must be an array");
         return out;
     }
-    return [...out, ...runCasesShape(value.cases)];
+    return [...out, ...runCasesShape(value.cases, "full")];
 }
 
-/** The problems with one frozen description's per-case slices. */
-function runCasesShape(cases: unknown[]): string[] {
+/** The problems with one frozen description's per-case slices.
+
+ * `definitionMode` picks how each case's `definition` is proven: v2
+ * frozen experiments carry FULL definitions (validated with the same
+ * authoritative validator as corpus input), legacy v1 records are
+ * validated field-by-field only for what is present.
+ */
+function runCasesShape(
+    cases: unknown[],
+    definitionMode: "full" | "present",
+): string[] {
     const out: string[] = [];
     for (const [index, entry] of cases.entries()) {
+        const prefix = `cases[${index}]`;
         if (!isRecord(entry)) {
-            out.push(`cases[${index}] must be a JSON object`);
+            out.push(`${prefix} must be a JSON object`);
             continue;
         }
         if (typeof entry.id !== "string" || entry.id === "") {
-            out.push(`cases[${index}].id must be a nonempty string`);
+            out.push(`${prefix}.id must be a nonempty string`);
         }
-        if (entry.definition !== undefined && !isRecord(entry.definition)) {
-            out.push(`cases[${index}].definition must be a JSON object`);
+        for (const [field, shape] of [
+            ["mutationPolicy", mutationPolicyShape],
+            ["docsCriterion", docsCriterionShape],
+            ["expectedDocs", expectedDocsShape],
+        ] as const) {
+            if (entry[field] === undefined) continue;
+            out.push(
+                ...shape(entry[field]).map(
+                    (problem) => `${prefix}.${field}: ${problem}`,
+                ),
+            );
+        }
+        if (entry.definition === undefined) {
+            if (definitionMode === "full") {
+                out.push(`${prefix}.definition is required for a v2 case`);
+            }
+            continue;
+        }
+        if (!isRecord(entry.definition)) {
+            out.push(`${prefix}.definition must be a JSON object`);
+            continue;
+        }
+        const validated = validateCorpusEntry(
+            entry.definition,
+            definitionMode === "full",
+        );
+        if ("problems" in validated) {
+            out.push(
+                ...validated.problems.map(
+                    (problem) => `${prefix}.definition: ${problem}`,
+                ),
+            );
         }
     }
     return out;
@@ -1428,6 +1591,16 @@ function docsCriterionShape(value: unknown): string[] {
             isStringArray,
             false,
         );
+        // Relevant paths are read targets: only the read verb (or no verb
+        // list at all) is compatible with them.
+        if (
+            isStringArray(value.verbs) &&
+            !value.verbs.every((verb) => verb === "read")
+        ) {
+            out.push(
+                'paths gate read targets; verbs must be undefined or ["read"]',
+            );
+        }
     } else if ("paths" in value) {
         out.push("paths belongs to the minVerifiedCalls criterion");
     }
@@ -1439,6 +1612,12 @@ function expectedDocsShape(value: unknown): string[] {
     if (value === null || value === undefined) return [];
     if (!isRecord(value)) return ["expectedDocs must be an object or null"];
     const out: FieldProblems = [];
+    if ("singleDoc" in value) {
+        out.push(
+            "singleDoc is unused: the create expectation already requires " +
+                "exactly one document and cannot be configured otherwise",
+        );
+    }
     fieldProblems(
         out,
         value,
@@ -1565,8 +1744,17 @@ function validateCorpusEntry(
 ): { case: TrialCase } | { problems: string[] } {
     if (!isRecord(entry))
         return { problems: ["an entry must be a JSON object"] };
-    if (typeof entry.id !== "string" || entry.id === "")
-        return { problems: ["id must be a nonempty string"] };
+    if (
+        typeof entry.id !== "string" ||
+        entry.id === "" ||
+        entry.id.trim() !== entry.id
+    ) {
+        return {
+            problems: [
+                "id must be a nonempty string without surrounding whitespace",
+            ],
+        };
+    }
     const problems: string[] = [];
     for (const field of [
         "family",
@@ -1593,6 +1781,9 @@ function validateCorpusEntry(
             isStringArray,
             false,
         );
+        if (requireFull && !(field in entry)) {
+            problems.push(`${field} is required`);
+        }
     }
     problems.push(...destinationsShape(entry.destinations, requireFull));
     problems.push(...seedsShape(entry.seeds));
@@ -1648,6 +1839,25 @@ function toolOutput(value: unknown) {
 }
 
 /**
+ * The success facts provable from one call's COMPLETE result output, before
+ * the 2,000-character display projection shortens it: a real successful
+ * knowledge read's trailing revision envelope can sit beyond the cap, so
+ * grading facts are extracted at fold time and the truncated `output` stays
+ * display-only. The facts are folded into the entry's `outcome`.
+ * @param output The complete output string under consideration.
+ * @returns The outcome facts for folding; an empty output folds to no facts
+ *   proven.
+ */
+function outcomeFactsOf(output: string): OutcomeFacts {
+    return {
+        refusal: output.startsWith("Rejected:"),
+        notFound: output.startsWith("No doc at "),
+        blank: output.trim() === "",
+        verifiedRead: READ_REVISION_MARK.test(output),
+    };
+}
+
+/**
  * Turn `opencode run --format json` JSONL into the final text and a
  * deduplicated tool trail. The CLI can emit several events for one tool
  * operation (pending → completed); calls are keyed by their stable call id
@@ -1665,6 +1875,10 @@ function mergedToolCall(
     id: string,
 ): ToolCall {
     const state = isRecord(part.state) ? part.state : undefined;
+    // Success facts come from the winning output BEFORE it is shortened to
+    // the display projection: the complete stream is the grading evidence.
+    const output = state?.output ?? previous.output;
+    const facts = outcomeFactsOf(typeof output === "string" ? output : "");
     return {
         ...previous,
         id,
@@ -1674,7 +1888,9 @@ function mergedToolCall(
             state !== undefined && typeof state.status === "string"
                 ? state.status
                 : previous.status,
-        output: toolOutput(state?.output ?? previous.output),
+        output: toolOutput(output),
+        metadata: state?.metadata ?? previous.metadata,
+        outcome: facts,
     };
 }
 
@@ -1838,6 +2054,9 @@ function tallyDocsEntry(entry: ToolCall, tallies: DocsTallies) {
     ) {
         tallies.verbsCompleted[verb] = (tallies.verbsCompleted[verb] ?? 0) + 1;
     }
+    // Success is per-operation evidence, deduplicated by call id: a
+    // completed-but-failed call never inflates the successful count.
+    if (docsOpSuccessful(entry)) tallies.docsSuccessful += 1;
 }
 
 /** The revision token a successful knowledge-doc read leaves in its output. */
@@ -1847,58 +2066,76 @@ const READ_REVISION_MARK = /docs: revision [0-9a-f]{64} —/;
  * Whether one completed docs operation's own result establishes success.
  * A completed status proves execution, not a successful read — the plugin
  * serves refusals and lake not-founds as normal tool content without
- * failing the tool call. Reads carry the plugin's retrieval token (the
- * revision note served with the retrieved bytes); every other verb's own
- * recorded output content is its result evidence, so refusals, not-founds
- * and blanks oppose success and non-blank content establishes it.
+ * failing the tool call. The plugin's own result envelope is the
+ * authoritative success contract: a read whose `metadata.read` holds the
+ * retrieved document's address retrieved a document — knowledge profiles
+ * add a revision token, wiki profiles (read-only reference, deliberately
+ * revision-free) do not; `metadata.read: null` is a refusal or not-found,
+ * and a blank opposes success.
+ * Where the CLI emitted no envelope (an older shape), the complete
+ * pre-truncation output facts stand in — or, for trails recorded before
+ * outcome folding, the captured (truncated) output: reads prove success by
+ * the plugin's trailing revision note, every other verb by its delivered
+ * nonblank content.
  * (ponytail: Code Mode attempts stay unverifiable here — their nested
  * operation never emits a trail event.)
+ * @param entry One deduplicated trail entry.
+ * @returns Whether the operation's own result proves a successful retrieval.
  */
 function docsOpSuccessful(entry: ToolCall): boolean {
     const kind = docsEntryKind(entry);
     if (kind === null || kind === "code-mode" || entry.status !== "completed")
         return false;
-    const output = typeof entry.output === "string" ? entry.output : "";
-    if (output.startsWith("Rejected:") || output.startsWith("No doc at "))
-        return false;
-    const verb = docsEntryVerb(kind, entry);
-    return verb === "read"
-        ? READ_REVISION_MARK.test(output)
-        : output.trim() !== "";
+    const envelope = isRecord(entry.metadata) ? entry.metadata : undefined;
+    if (envelope !== undefined && "read" in envelope) {
+        return typeof envelope.read === "string" && envelope.read !== "";
+    }
+    const facts =
+        entry.outcome ??
+        outcomeFactsOf(
+            typeof entry.output === "string" ? entry.output : "",
+        );
+    if (facts.refusal || facts.notFound) return false;
+    return docsEntryVerb(kind, entry) === "read"
+        ? facts.verifiedRead
+        : !facts.blank;
 }
 
-/** The evidence labels a gate message can cite for one docs entry. */
+/**
+ * The evidence label a gate message cites for one completed docs entry.
+ * Callers pass completed entries only — a per-call classification of
+ * completed calls; a failed attempt stays an attempt label upstream (the
+ * exposure/telemetry layers) and never enters this function.
+ * @param entry One completed, deduplicated trail entry.
+ * @returns A short label: successful retrieval, refusal, not found, or why
+ *   the completion carried no retrieval evidence.
+ */
 function docsOutcomeLabel(entry: ToolCall): string {
-    if (entry.status === "error") return "failed call";
     const output = typeof entry.output === "string" ? entry.output : "";
     if (output.startsWith("Rejected:")) return "refusal";
     if (output.startsWith("No doc at ")) return "not found";
-    return output.trim() !== "" && docsOpSuccessful(entry)
+    return docsOpSuccessful(entry)
         ? "successful"
         : "no retrieval evidence recorded";
 }
 
 /**
  * Whether a completed docs operation's TYPED verb field — not a mention
- * elsewhere in the input — targets a path fragment: verb, relevant path
- * and the result must refer to the same operation.
+ * elsewhere in the input — targets a path fragment. Relevant `paths` are
+ * read targets: only a read operation's typed `read` field can satisfy
+ * them, and an add body or a search mention is never the retrieval the
+ * fragment names.
+ * @param entry One trail entry.
+ * @param fragment The required read target fragment.
+ * @returns Whether this entry's typed read field targets the fragment.
  */
-function typedPathHit(
-    kind: "native" | "twin",
-    entry: ToolCall,
-    fragment: string,
-): boolean {
-    const raw = entry.input ?? null;
-    const input = isRecord(raw) ? raw : undefined;
-    if (input === undefined) return false;
-    const verb = docsEntryVerb(kind, entry);
-    if (verb === "read")
-        return typeof input.read === "string" && input.read.includes(fragment);
-    if (verb === "add")
-        return (
-            isRecord(input.add) && JSON.stringify(input.add).includes(fragment)
-        );
-    return false;
+function typedPathHit(entry: ToolCall, fragment: string): boolean {
+    const input = isRecord(entry.input) ? entry.input : undefined;
+    return (
+        input !== undefined &&
+        typeof input.read === "string" &&
+        input.read.includes(fragment)
+    );
 }
 
 /**
@@ -1933,6 +2170,7 @@ function docsTelemetry(
         codeModeAttempted: 0,
         codeModeCompleted: 0,
         executeCalls: 0,
+        docsSuccessful: 0,
     };
     for (const entry of entries) {
         if (entry.tool === "execute") tallies.executeCalls += 1;
@@ -1952,7 +2190,7 @@ function docsTelemetry(
         unparsedLines: parseFailures,
         docsCalls:
             tallies.nativeDocs + tallies.twinDocs + tallies.codeModeAttempted,
-        verifiedDocs: tallies.nativeDocsCompleted + tallies.twinDocsCompleted,
+        verifiedDocs: tallies.docsSuccessful,
     };
 }
 
@@ -2732,7 +2970,7 @@ type GenerateOutcome =
     | { status: "stale" | "incomplete"; detail: string };
 
 function generateAll(options: CliOptions): number {
-    const selected = select(options);
+    const selected = select(options, true);
     const rows: Array<[string, GenerateOutcome]> = [];
     let failures = 0;
     for (const testCase of selected) {
@@ -3415,6 +3653,17 @@ function recordedMutationEvidence(
                 "re-run with the current harness",
         };
     }
+    // A recorded diff's `kinds` map serialises to a plain object and comes
+    // back from meta.json as one; restore the Map contract the live diff
+    // carries so every downstream consumer sees the same shape. Unknown
+    // kinds entries (a non-object kinds with metaShape refusing earlier
+    // leaves this unreachable) degrade to no labels.
+    const kinds =
+        diff.kinds instanceof Map
+            ? diff.kinds
+            : isRecord(diff.kinds)
+              ? new Map(Object.entries(diff.kinds))
+              : new Map();
     const allowed = definition.mutationPolicy?.allowed ?? [];
     const touched = [
         ...diff.added.map(
@@ -3434,7 +3683,7 @@ function recordedMutationEvidence(
         problem: null,
         liveDir,
         snapshot,
-        diff,
+        diff: { ...diff, kinds },
         onSurface,
         surfaceTouched,
     };
@@ -3563,7 +3812,12 @@ function unrelatedSurfaceChangeProblem(
     if (others.length === 0) return null;
     return (
         "unrelated change(s) inside the documentation surface: " +
-        others.map(([path, action]) => `${action} ${path}`).join(", ")
+        others
+            .map(
+                ([path, action]) =>
+                    `${action} ${path} (${evidence.diff.kinds.get(path) ?? "file"})`,
+            )
+            .join(", ")
     );
 }
 
@@ -4263,7 +4517,9 @@ function metaFor(
                 stderrBytes: result.stderrBytes ?? 0,
                 writes: writeCount(diff),
                 gitStateChanges: diff.git.length,
-                writeKinds: diff,
+                // `kinds` rides its serialisable object form: a Map would
+                // JSON.stringify to {}, losing every change label.
+                writeKinds: { ...diff, kinds: Object.fromEntries(diff.kinds) },
                 finalStateDigest: snapshotDigest(afterSnapshot),
                 policyViolations: violations,
                 answerHash,
@@ -4360,16 +4616,13 @@ function docsCriterionProblem(testCase: FullTrialCase, resultDir: string) {
 
 /**
  * The documents `pathsCriterion` gates on: each required fragment must be
- * the target of one completed docs operation's typed verb field, and that
- * same operation's own output must establish a successful retrieval.
- * Returns one problem line per unmet fragment, or null.
+ * the typed `read` field's target of one completed docs operation, and that
+ * same operation's own output must establish a successful retrieval. One
+ * problem line per unmet fragment, so a successful read of one document
+ * never conceals a missing or failed read of another.
  * @returns The per-fragment refusal lines, or null when all paths are met.
  */
-function requiredPathProblems(
-    trail: ToolTrail,
-    verbs: string[] | undefined,
-    fragments: string[],
-): string[] | null {
+function requiredPathProblems(trail: ToolTrail, fragments: string[]): string[] | null {
     const unmet: string[] = [];
     for (const fragment of fragments) {
         const relevant = trail.entries.filter((entry) => {
@@ -4377,13 +4630,12 @@ function requiredPathProblems(
             return (
                 (kind === "native" || kind === "twin") &&
                 entry.status === "completed" &&
-                (verbs === undefined ||
-                    verbs.includes(docsEntryVerb(kind, entry))) &&
-                typedPathHit(kind, entry, fragment)
+                docsEntryVerb(kind, entry) === "read" &&
+                typedPathHit(entry, fragment)
             );
         });
         if (relevant.length === 0) {
-            unmet.push(`no completed docs operation references ${fragment}`);
+            unmet.push(`no completed docs read references ${fragment}`);
             continue;
         }
         if (relevant.some(docsOpSuccessful)) continue;
@@ -4399,7 +4651,7 @@ function requiredPathProblems(
     return unmet.length > 0 ? unmet : null;
 }
 
-/** The `minVerifiedCalls` criterion: verified completions plus evidence. */
+/** The `minVerifiedCalls` criterion: a floor on successful operations. */
 function verifiedDocsCriterionProblem(
     criterion: VerifiedDocsCriterion,
     resultDir: string,
@@ -4408,25 +4660,28 @@ function verifiedDocsCriterionProblem(
     if (trail === null) return "docs criterion unmet: no tool trail recorded";
     const telemetry = docsTelemetry(trail.entries, trail.parseFailures);
     const required = criterion.minVerifiedCalls ?? 1;
+    // Relevance and success come from the same operation: a required verb
+    // counts only when one of its operations' own outputs proves success,
+    // and each required path is the typed read field of the SAME operation
+    // that successfully retrieved the document.
+    const pathProblems =
+        criterion.paths !== undefined
+            ? requiredPathProblems(trail, criterion.paths)
+            : null;
+    // The floor counts successful operations only: completed refusals,
+    // not-founds and failed reads are observations, never successes, so one
+    // success plus one refusal cannot meet a floor of two. An unmet floor
+    // does not swallow the per-path diagnostics — they aggregate alongside.
     if (telemetry.verifiedDocs < required) {
-        return telemetry.codeModeAttempted > 0 && telemetry.verifiedDocs === 0
-            ? `docs criterion unmet: ${telemetry.codeModeAttempted} code-mode attempt(s) are unobservable nested operations — inconclusive without a completed native or twin call ` +
-                  `(0 verified docs op(s), required ${required})`
-            : `docs criterion unmet: ${telemetry.verifiedDocs} verified docs op(s), required ${required}`;
+        const floorUnmet = telemetry.codeModeAttempted > 0 && telemetry.verifiedDocs === 0
+            ? `${telemetry.codeModeAttempted} code-mode attempt(s) are unobservable nested operations — inconclusive without a completed native or twin call (0 successful docs op(s), required ${required})`
+            : `${telemetry.verifiedDocs} successful docs op(s), required ${required}`;
+        return pathProblems === null
+            ? `docs criterion unmet: ${floorUnmet}`
+            : `docs criterion unmet: ${floorUnmet}; ${pathProblems.join("; ")}`;
     }
-    // Relevance and success come from the same operation: a completed
-    // relevant read must have actually retrieved the document, and a
-    // required verb counts only when its deliverable output proves it.
-    if (criterion.paths !== undefined) {
-        const problems = requiredPathProblems(
-            trail,
-            criterion.verbs,
-            criterion.paths,
-        );
-        if (problems !== null) {
-            return `docs criterion unmet: ${problems.join("; ")}`;
-        }
-        return null;
+    if (pathProblems !== null) {
+        return `docs criterion unmet: ${pathProblems.join("; ")}`;
     }
     if (
         criterion.verbs !== undefined &&
@@ -5335,12 +5590,8 @@ function judgeSelection(options: CliOptions, stamp: string): FullTrialCase[] {
             ?.filter(isFullCase) ?? [];
     if (full.length === 0) {
         usage(
-            `run.json at ${join(options.results, stamp)} records no usable full case definitions`,
-        );
-    }
-    if (full.length === 0) {
-        usage(
-            `run.json at ${join(options.results, stamp)} records no usable case definitions`,
+            `run.json at ${join(options.results, stamp)} records no usable full case definitions ` +
+                "(a minimal legacy record alone does not supply a judgeable case)",
         );
     }
     if (options.ids.length === 0) return full;
@@ -6115,7 +6366,7 @@ async function main() {
         return exportDossier(options, resolveExistingStamp(options));
     if (command === "describe") {
         if (!options.stamp) usage("describe requires --stamp NAME");
-        const selected = select(options);
+        const selected = select(options, true);
         return ensureRunDescription(
             options,
             options.stamp,
