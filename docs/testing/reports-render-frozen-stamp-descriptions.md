@@ -24,13 +24,23 @@ Summary: Stamp provenance and selection come from a frozen run.json; legacy stam
   most recently created stamp from run.json createdAt (_mtime only for
   legacy); name-friendly orderings like "zebra" before "alpha" cannot win
   on name order.
+- Run.json schema v2 records the trials' actual execution boundary in
+  `trialBoundary` (container/image facts the wrapper passes to the host-side
+  `describe` via placement image variables), apart from `orchestration`
+  (the freezing host process's own identity). Per-case container facts stay
+  in each case's meta.json. Legacy v1 stamps keep rendering from
+  `boundary`/`provenance` with unknown-in-the-gap labels.
 
 ### Tested
 
-- `tests/harness.test.ts` F02/F06 groups: paired experiments across model,
-  corpus and plugin changes render original labels; legacy stamps label
-  unknown; creation-order latest beats lexicographic order; absent roots and
-  unknown stamp names fail with the path.
+- `tests/harness.test.ts` F02/F06/M01/M02/M07 groups: paired experiments
+  across model, corpus and plugin changes render original labels; legacy
+  stamps label unknown; creation-order latest beats lexicographic order;
+  absent roots and unknown stamp names fail with the path; judging uses
+  the saved definitions (loosened current corpora, foreign ids, edited
+  answers and rubrics all refuse); wrapper-produced run.json carries the
+  trial container boundary while the per-case staged receipt proves the
+  freeze; conflicting same-stamp invocations refuse.
 - Live smoke: re-exporting three real stamps after mutating (editing
   expectations and appending a case to) the smoke corpus left every stamped
   label intact, each dossier carrying one case only.

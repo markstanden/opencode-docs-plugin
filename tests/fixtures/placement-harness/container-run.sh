@@ -154,13 +154,31 @@ prepare_case_fixture() {
     for part in work lakes config-home generation.json; do
         [ -e "$source/$part" ] && cp -a "$source/$part" "$target/$part"
     done
+    # Nonsecret per-case freeze receipt (M07): proves the stamp's run
+    # description was actually frozen host-side — the container cannot read
+    # that description (rubric-bearing definitions stay out) and a
+    # permission error is never evidence a freeze exists. Ids, image and the
+    # run.json digest only: no claims, no expected answers, no other cases.
+    local run_digest
+    run_digest="$(sha256sum "$RESULTS/$STAMP/run.json" | awk '{print $1}')"
+    printf '%s\n' "{
+  \"kind\": \"placement-freeze-receipt\",
+  \"schemaVersion\": 1,
+  \"stamp\": \"$STAMP\",
+  \"caseId\": \"$id\",
+  \"runJsonSha256\": \"$run_digest\",
+  \"image\": \"$IMAGE\",
+  \"imageId\": \"$IMAGE_ID\"
+}" >"$target/frozen.json"
 }
 
 # An id-only case list gives the run harness the selection without exposing
 # claims, evidence, rubric text or the expected answers. The case's mutation
 # policy and docs criterion are instrumentation, not rubric content, so they
 # survive redaction: the run container must enforce the same policy as the
-# host.
+# host. The frozen generation's inputs hash rides along, so a staged
+# generation record can be tied to the frozen experiment (M02) even though
+# the full corpus cannot cross the container boundary.
 prepare_cases_run() {
     local corpus_hash
     corpus_hash="$(sha256sum "$CASES" | awk '{print substr($1, 1, 16)}')"
@@ -168,14 +186,30 @@ prepare_cases_run() {
     [ -f "$CASES_RUN" ] && [ "$CASES_RUN" -nt "$CASES" ] && return 0
     node -e '
         const fs = require("node:fs");
-        const cases = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-        const redacted = cases.map((doc) => ({
-            id: doc.id,
-            mutationPolicy: doc.mutationPolicy ?? null,
-            docsCriterion: doc.docsCriterion ?? null,
-        }));
-        fs.writeFileSync(process.argv[2], JSON.stringify(redacted, null, 2) + "\n");
-    ' "$CASES" "$CASES_RUN"
+        const [corpusPath, fixturesRoot, outPath] = process.argv.slice(1);
+        const cases = JSON.parse(fs.readFileSync(corpusPath, "utf8"));
+        const redacted = cases.map((doc) => {
+            let generationInputsHash = null;
+            try {
+                const generation = JSON.parse(
+                    fs.readFileSync(
+                        fixturesRoot + "/" + doc.id + "/generation.json",
+                        "utf8",
+                    ),
+                );
+                generationInputsHash = generation.inputsHash ?? null;
+            } catch {
+                /* surfaced by the run validation, not here */
+            }
+            return {
+                id: doc.id,
+                mutationPolicy: doc.mutationPolicy ?? null,
+                docsCriterion: doc.docsCriterion ?? null,
+                generationInputsHash,
+            };
+        });
+        fs.writeFileSync(outPath, JSON.stringify(redacted, null, 2) + "\n");
+    ' "$CASES" "$FIXTURES" "$CASES_RUN"
 }
 
 parse_run_args() {
@@ -196,7 +230,19 @@ parse_run_args() {
             RUN_ARGS+=("$1" "$2")
             shift 2
             ;;
-        --jobs | --judge-jobs)
+        --jobs)
+            # The wrapper loops synchronously — one container per case — so
+            # --jobs past 1 would advertise container parallelism that does
+            # not exist. Refuse rather than silently serialise (the host
+            # harness pool, invoked directly, is where worker counts count).
+            if ! [ "$2" -ge 1 ] 2>/dev/null || [ "$2" -gt 1 ]; then
+                echo "run: --jobs >1 is not supported by the wrapper (containers start serially); run the harness directly for a worker pool" >&2
+                return 2
+            fi
+            RUN_ARGS+=("$1" "$2")
+            shift 2
+            ;;
+        --judge-jobs)
             RUN_ARGS+=("$1" "$2")
             shift 2
             ;;
@@ -240,7 +286,12 @@ run_cases() {
     prepare_image
     parse_run_args "$@"
     prepare_cases_run
-    node "$HERE/harness.mjs" \
+    # The describe freeze runs host-side but must record the TRIAL boundary
+    # (the per-case containers), not the host orchestrator — so the image
+    # facts travel with it (M07).
+    PLACEMENT_TRIAL_IMAGE="$IMAGE" \
+        PLACEMENT_TRIAL_IMAGE_ID="$IMAGE_ID" \
+        node "$HERE/harness.mjs" \
         describe \
         --stamp "$STAMP" \
         --results "$RESULTS" \

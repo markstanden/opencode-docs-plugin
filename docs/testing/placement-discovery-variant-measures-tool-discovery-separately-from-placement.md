@@ -75,3 +75,16 @@ Summary: The settled discovery variant: trial prompts carry no destinations and 
   overlay), or keep discovery-1 as the realistic baseline and add an
   overlay variant alongside. Standing decision holds: no guidance prose
   changes from discovery evidence alone; execution trials still pending.
+
+## The trial families' natural prompts (M06 correction)
+
+- The natural-family templates in `tests/fixtures/trial-cases.json`
+  (D02/D03/R04) now carry no documentation framing at all: no
+  destinations, no lake, and no required answer shape — only the finding,
+  the evidence and "What do you recommend we do, if anything?". Earlier
+  natural variants appended a State block naming "the exact destination
+  lake, or other documentation workflow" and a document count, so a pass
+  on those was a valid _prompted_ proposal, not an unprompted trigger.
+  Any interpretation of older D02/D03 evidence as an unprompted trigger
+  stands unsupported; the old evidence is kept as old evidence, not
+  rewritten.

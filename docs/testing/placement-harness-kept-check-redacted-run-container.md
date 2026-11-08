@@ -13,9 +13,11 @@ Summary: Placement harness kept check: content-compares prompts for full cases, 
   full (`testCase.claim !== undefined`). A template or variant change thus
   regenerates prompts without `--force`, and a repeat generate is a no-op.
 - The run container (`container-run.sh run`) mounts an id-only case list
-  (`prepare_cases_run` strips everything but `id`) at `/fixtures/cases.json`,
-  plus that case's prompt, config and sandbox; the harness call selects
-  exactly that one id.
+  (`prepare_cases_run` keeps only `id`, the `mutationPolicy`, the
+  `docsCriterion` and each case's frozen generation inputs hash) at
+  `/fixtures/cases.json`, plus that case's staged sandbox (the wrapper also
+  stages a nonsecret `frozen.json` freeze receipt), prompt, config and
+  result directory; the harness call selects exactly that one id.
 - For a redacted case `promptFor` cannot run at all: `testCase.destinations`
   is undefined, so the destinations `.map` throws. The template must never be
   computed on that path (the `promptComparable` guard).

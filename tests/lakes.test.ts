@@ -2084,6 +2084,25 @@ describe("readmePaths symlink filtering", () => {
         assert.deepEqual(readmePaths(project), []);
     });
 
+    it("excludes a README behind a symlinked intermediate directory", () => {
+        const outside = tempDir();
+        writeFileSync(join(outside, "README.md"), "# Outside content\n");
+        const project = tempDir();
+        mkdirSync(join(project, "nested"));
+        git(project, ["init", "-q"]);
+        writeFileSync(join(project, "nested", "README.md"), "# Nested\n");
+        git(project, ["add", "nested/README.md"]);
+        git(project, ["commit", "-qm", "fixture"]);
+        rmSync(join(project, "nested"), { recursive: true });
+        symlinkSync(outside, join(project, "nested"), "dir");
+
+        assert.deepEqual(
+            readmePaths(project),
+            [],
+            "an intermediate directory symlink must not index outside content",
+        );
+    });
+
     it("still includes a tracked nested README committed under a directory", async () => {
         const project = tempDir();
         git(project, ["init", "-q"]);

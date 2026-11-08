@@ -1412,11 +1412,15 @@ function resolvedTargetOf(
  * tree git supplies the list — tracked plus untracked, honouring `.gitignore` —
  * so dependency, build and scratch directories follow the project's own rules.
  * Outside one, a walk skips {@link README_EXCLUDED_DIRS} and dot-directories.
- * Both sources filter with lstat and keep regular files only: a symlinked
- * README (untracked, or a link planted mid-path) is not the project's own
- * content, and following it could index a file outside the tree. Paths under
- * `skip` (the lake root) are dropped: they are already lake docs. A tracked
- * file deleted from disk is dropped too — git still lists it.
+ * Both sources keep regular files only, and never follow a link: a leaf
+ * symlink, a broken link, or a symlinked directory anywhere along the path
+ * below `location` is not the project's own content, and following it could
+ * index a file outside the tree — git can still list tracked paths whose
+ * directory was replaced by a link. The project directory itself is the
+ * trusted root: when it resolves through a symlink, containment is validated
+ * from it downward, not above. Paths under `skip` (the lake root) are
+ * dropped: they are already lake docs. A tracked file deleted from disk is
+ * dropped too — git still lists it.
  * @param location The project directory the plugin loaded in.
  * @param skip Absolute roots whose READMEs are collected elsewhere.
  * @returns Project-relative README paths, ordered by path.
@@ -1427,7 +1431,7 @@ export function readmePaths(
 ): string[] {
     const candidates = gitReadmePaths(location) ?? walkedReadmePaths(location);
     return candidates
-        .filter((path) => isRegularFile(join(location, path)))
+        .filter((path) => isContainedRegularFile(location, path))
         .filter(
             (path) => !skip.some((root) => isUnder(join(location, path), root)),
         )
@@ -1441,6 +1445,38 @@ function isRegularFile(path: string): boolean {
     } catch {
         return false;
     }
+}
+
+/** Whether a path exists and is a real directory, never following a symlink. */
+function isRealDirectory(path: string): boolean {
+    try {
+        return lstatSync(path).isDirectory();
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Whether `relativePath` names a regular file whose every intermediate
+ * component below `location` is a real directory, never a symlink — the
+ * leaf check alone would follow a link planted mid-path into outside
+ * content.
+ * @param location The trusted project root; containment is validated below it.
+ * @param relativePath A project-relative README candidate path.
+ * @returns True only for a fully contained regular file.
+ */
+function isContainedRegularFile(
+    location: string,
+    relativePath: string,
+): boolean {
+    const parts = relativePath.split("/");
+    const leaf = parts.pop() ?? "";
+    let current = location;
+    for (const part of parts) {
+        current = join(current, part);
+        if (!isRealDirectory(current)) return false;
+    }
+    return isRegularFile(join(current, leaf));
 }
 
 /**
