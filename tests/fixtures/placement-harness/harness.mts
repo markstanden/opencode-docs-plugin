@@ -45,7 +45,7 @@ import {
 import type { Dirent } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
@@ -235,6 +235,12 @@ interface ToolCall {
      * envelope survives as durable success evidence.
      */
     outcome?: OutcomeFacts;
+    /**
+     * True for an operation the plugin journal recorded but the CLI trail did
+     * not emit — a Code Mode nested call. It is authenticated plugin evidence,
+     * not a wrapper claim, and never a second copy of a direct call.
+     */
+    nested?: boolean;
 }
 
 /** Success facts proven from one call's complete output at capture time. */
@@ -258,8 +264,10 @@ interface DocsTallies {
     statuses: Record<string, number>;
     nativeDocs: number;
     twinDocs: number;
+    nestedDocs: number;
     nativeDocsCompleted: number;
     twinDocsCompleted: number;
+    nestedDocsCompleted: number;
     codeModeAttempted: number;
     codeModeCompleted: number;
     executeCalls: number;
@@ -271,8 +279,10 @@ interface DocsTallies {
 interface Telemetry {
     nativeDocs: number;
     twinDocs: number;
+    nestedDocs: number;
     nativeDocsCompleted: number;
     twinDocsCompleted: number;
+    nestedDocsCompleted: number;
     codeModeAttempted: number;
     codeModeCompleted: number;
     executeCalls: number;
@@ -2179,12 +2189,13 @@ const isCodeModeDocs = (entry: ToolCall): boolean =>
     typeof entry.input.code === "string" &&
     CODE_MODE_DOCS.test(entry.input.code);
 
-/** The docs family an entry belongs to: "code-mode", "native", "twin", or null. */
+/** The docs family an entry belongs to: code-mode, nested, native, twin, or none. */
 function docsEntryKind(
     entry: ToolCall,
-): "code-mode" | "native" | "twin" | null {
-    const native = entry.tool === "docs" || entry.tool === "docs_search";
+): "code-mode" | "nested" | "native" | "twin" | null {
     if (isCodeModeDocs(entry)) return "code-mode";
+    const native = entry.tool === "docs" || entry.tool === "docs_search";
+    if (native && entry.nested === true) return "nested";
     return native ? (entry.tool === "docs" ? "native" : "twin") : null;
 }
 
@@ -2212,7 +2223,12 @@ function tallyDocsFamily(tallies: DocsTallies, kind: string, entry: ToolCall) {
         if (completed) tallies.codeModeCompleted += 1;
         return;
     }
-    const field = kind === "native" ? "nativeDocs" : "twinDocs";
+    const field =
+        kind === "native"
+            ? "nativeDocs"
+            : kind === "twin"
+              ? "twinDocs"
+              : "nestedDocs";
     tallies[field] += 1;
     if (completed) tallies[`${field}Completed`] += 1;
 }
@@ -2227,10 +2243,11 @@ function tallyDocsEntry(entry: ToolCall, tallies: DocsTallies) {
     tallies.statuses[docsStatusBucket(entry.status)] =
         (tallies.statuses[docsStatusBucket(entry.status)] ?? 0) + 1;
     // Verified completions exist only for observable docs operations (a
-    // native or twin call that completed). Code Mode attempts never prove
-    // the nested operation ran, so they never raise a verified verb.
+    // native, twin or journal-recorded nested call that completed). Code Mode
+    // wrapper attempts never prove the nested operation ran, so they never
+    // raise a verified verb.
     if (
-        (kind === "native" || kind === "twin") &&
+        (kind === "native" || kind === "twin" || kind === "nested") &&
         entry.status === "completed"
     ) {
         tallies.verbsCompleted[verb] = (tallies.verbsCompleted[verb] ?? 0) + 1;
@@ -2286,8 +2303,9 @@ function outputFactsVerdict(facts: OutcomeFacts, read: boolean): boolean {
  * outcome folding, the captured (truncated) output: reads prove success by
  * the plugin's trailing revision note, every other verb by its delivered
  * nonblank content.
- * (ponytail: Code Mode attempts stay unverifiable here — their nested
- * operation never emits a trail event.)
+ * (ponytail: an UNWITNESSED Code Mode attempt stays unverifiable here — its
+ * nested operation emits no trail event. Only a journal record the plugin
+ * itself wrote proves the call and its result.)
  * @param entry One deduplicated trail entry.
  * @returns Whether the operation's own result proves a successful retrieval.
  */
@@ -2348,13 +2366,13 @@ function typedPathHit(entry: ToolCall, fragment: string): boolean {
 
 /**
  * Docs-usage telemetry for one trail. Native `docs` calls, the native-facing
- * twin registration name `docs_search`, and Code Mode `execute` calls whose
- * code attempts `tools.docs.docs_search(…)` are counted separately. Counts
- * report attempted operations (any status) and observable completions; a
- * Code Mode attempt is NOT proof the nested operation ran (no separate
- * event), so it stays attempted-only. Gates consume per-entry
- * {@link docsOpSuccessful} verdicts instead of treating a completed status
- * as a successful read.
+ * twin registration name `docs_search`, Code Mode `execute` calls whose code
+ * attempts `tools.docs.docs_search(…)`, and plugin-journaled nested
+ * operations are counted separately. Counts report attempted operations (any
+ * status) and observable completions; an unwitnessed Code Mode attempt is NOT
+ * proof the nested operation ran (no separate event), so it stays
+ * attempted-only. Gates consume per-entry {@link docsOpSuccessful} verdicts
+ * instead of treating a completed status as a successful read.
  */
 function docsTelemetry(
     entries: ToolCall[],
@@ -2373,8 +2391,10 @@ function docsTelemetry(
         statuses: { completed: 0, error: 0, other: 0 },
         nativeDocs: 0,
         twinDocs: 0,
+        nestedDocs: 0,
         nativeDocsCompleted: 0,
         twinDocsCompleted: 0,
+        nestedDocsCompleted: 0,
         codeModeAttempted: 0,
         codeModeCompleted: 0,
         executeCalls: 0,
@@ -2387,8 +2407,10 @@ function docsTelemetry(
     return {
         nativeDocs: tallies.nativeDocs,
         twinDocs: tallies.twinDocs,
+        nestedDocs: tallies.nestedDocs,
         nativeDocsCompleted: tallies.nativeDocsCompleted,
         twinDocsCompleted: tallies.twinDocsCompleted,
+        nestedDocsCompleted: tallies.nestedDocsCompleted,
         codeModeAttempted: tallies.codeModeAttempted,
         codeModeCompleted: tallies.codeModeCompleted,
         executeCalls: tallies.executeCalls,
@@ -2435,11 +2457,14 @@ function codeModeVerbOf(code: string | undefined): string {
 /** The Docs column: composition, not one opaque number. */
 function docsLabel(telemetry: Telemetry | null): string {
     if (telemetry === null) return "-";
-    const { nativeDocs, twinDocs, codeModeAttempted } = telemetry;
-    if (nativeDocs + twinDocs + codeModeAttempted === 0) return "none";
+    const { nativeDocs, twinDocs, nestedDocs, codeModeAttempted } = telemetry;
+    if (nativeDocs + twinDocs + nestedDocs + codeModeAttempted === 0) {
+        return "none";
+    }
     const parts = [];
     if (nativeDocs > 0) parts.push(`${nativeDocs} native`);
     if (twinDocs > 0) parts.push(`${twinDocs} twin`);
+    if (nestedDocs > 0) parts.push(`${nestedDocs} nested`);
     if (codeModeAttempted > 0) parts.push(`${codeModeAttempted} code-mode`);
     return parts.join("+");
 }
@@ -2526,6 +2551,139 @@ function exposureFor(resultDir: string): string[] {
     );
 }
 
+/**
+ * The opt-in operation journal the plugin appends to, one JSON object per
+ * served docs call. It lives beside the case's `tools.jsonl` (the trial
+ * surfaces are snapshot separately, so this evidence cannot contaminate the
+ * mutation gate).
+ */
+const OPERATION_JOURNAL_FILE = "docs-operations.jsonl";
+
+/** The text of a plugin result's content, flattened for the shared verifier. */
+function journalContentText(content: unknown): string {
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+        return content
+            .map((part) =>
+                isRecord(part) && typeof part.text === "string"
+                    ? part.text
+                    : "",
+            )
+            .join("");
+    }
+    return "";
+}
+
+/** Whether a journal record names a served Code Mode twin call. */
+function isServedTwinRecord(record: Record<string, unknown>): boolean {
+    if (record.schemaVersion !== 1) return false;
+    if (record.tool !== "docs" && record.tool !== "docs_search") return false;
+    if (record.surface !== "codemode-twin") return false;
+    return isRecord(record.input);
+}
+
+/** A journal record's verdict and output, or null when it is unusable. */
+function nestedResultOf(record: Record<string, unknown>): {
+    status: "completed" | "error";
+    output: string;
+    metadata: unknown;
+} | null {
+    const status = record.status;
+    if (status !== "completed" && status !== "error") return null;
+    if (status === "error") {
+        return typeof record.error === "string"
+            ? { status, output: record.error, metadata: undefined }
+            : null;
+    }
+    if (!isRecord(record.result)) return null;
+    return {
+        status,
+        output: journalContentText(record.result.content),
+        metadata: record.result.metadata,
+    };
+}
+
+/** One validated journal record as a trail-shaped nested operation. */
+function nestedOperationOf(record: unknown, index: number): ToolCall | null {
+    if (!isRecord(record)) return null;
+    if (!isServedTwinRecord(record)) return null;
+    const result = nestedResultOf(record);
+    if (result === null) return null;
+    return {
+        id: `nested-${index}`,
+        tool: record.tool as string,
+        input: record.input,
+        status: result.status,
+        output: result.output,
+        metadata: result.metadata,
+        outcome: outcomeFactsOf(result.output),
+        nested: true,
+    };
+}
+
+/**
+ * Read the case's plugin operation journal, if the run wrote one. Unreadable
+ * or malformed records are dropped (never guessed): an absent journal is the
+ * pre-instrumentation status quo, not zero use. Entries are keyed by their
+ * position in this case's own file, so evidence cannot arrive from another
+ * case or session.
+ * @param resultDir The case's result directory.
+ * @returns The validated nested operations, oldest first.
+ */
+function readOperationJournal(resultDir: string): ToolCall[] {
+    const path = join(resultDir, OPERATION_JOURNAL_FILE);
+    if (!existsSync(path)) return [];
+    let lines: string[];
+    try {
+        lines = readFileSync(path, "utf8").split("\n").filter(Boolean);
+    } catch {
+        return [];
+    }
+    const entries: ToolCall[] = [];
+    for (const [index, line] of lines.entries()) {
+        const parsed = parseLine(line);
+        const entry = nestedOperationOf(parsed, index);
+        if (entry !== null) entries.push(entry);
+    }
+    return entries;
+}
+
+/** A stable identity for deduplicating an observable direct call. */
+function directCallKey(entry: ToolCall): string {
+    return `${entry.tool ?? ""}|${entry.status ?? ""}|${JSON.stringify(
+        entry.input ?? null,
+    )}`;
+}
+
+/**
+ * Fold journaled nested operations into the CLI trail. A direct `docs_search`
+ * call (if a host ever exposes one natively) is already in the trail, so its
+ * journal twin is dropped rather than counted twice; the execute wrapper
+ * itself stays an attempt and is never a docs operation. Each nested call is
+ * therefore counted once, and only when the plugin actually served it.
+ * @param entries The deduplicated CLI trail.
+ * @param nested The validated journal operations.
+ * @returns The trail plus every unmatched nested operation.
+ */
+function mergeNestedOperations(
+    entries: ToolCall[],
+    nested: ToolCall[],
+): ToolCall[] {
+    const seen = new Map<string, number>();
+    for (const entry of entries) {
+        const key = directCallKey(entry);
+        seen.set(key, (seen.get(key) ?? 0) + 1);
+    }
+    const extra = nested.filter((entry) => {
+        const key = directCallKey(entry);
+        const count = seen.get(key) ?? 0;
+        if (count === 0) return true;
+        seen.set(key, count - 1);
+        return false;
+    });
+    return [...entries, ...extra];
+}
+
 /** Read one result's deduplicated trail, or null when absent/unreadable. */
 function readTrail(resultDir: string): ToolTrail | null {
     const path = join(resultDir, "tools.jsonl");
@@ -2537,7 +2695,13 @@ function readTrail(resultDir: string): ToolTrail | null {
         if (!entry) parseFailures += 1;
         else entries.push(entry);
     }
-    return { entries, parseFailures };
+    return {
+        entries: mergeNestedOperations(
+            entries,
+            readOperationJournal(resultDir),
+        ),
+        parseFailures,
+    };
 }
 
 /* ------------------------------------------------------------------ *
@@ -2933,25 +3097,30 @@ function firstRequestTimestamp(resultDir: string): string | null {
     return null;
 }
 
-/** The help-result verdict, preferring observable native/twin operations. */
+/** The help-result verdict, preferring observable native/twin/nested operations. */
 function diagnosticHelp(entries: ToolCall[]): DiagnosticRecord["help"] {
-    const nativeHelp = entries.filter((entry) => {
+    const operationHelp = entries.filter((entry) => {
         const kind = docsEntryKind(entry);
         return (
-            (kind === "native" || kind === "twin") &&
+            (kind === "native" || kind === "twin" || kind === "nested") &&
             docsEntryVerb(kind, entry) === "help"
         );
     });
-    if (nativeHelp.length > 0) {
-        const successful = nativeHelp.find(docsOpSuccessful);
+    if (operationHelp.length > 0) {
+        const successful = operationHelp.find(docsOpSuccessful);
         if (successful !== undefined) {
+            const kind = docsEntryKind(successful);
             return {
                 status: "inventory returned",
-                source: `operation-level \`${successful.tool}\` help call`,
+                source:
+                    kind === "nested"
+                        ? "operation-level nested `docs_search` help call " +
+                          "(plugin journal)"
+                        : `operation-level \`${successful.tool}\` help call`,
                 detail: diagnosticOutput(successful.output).trim(),
             };
         }
-        const completed = nativeHelp.find(
+        const completed = operationHelp.find(
             (entry) => entry.status === "completed",
         );
         if (completed !== undefined) {
@@ -3018,15 +3187,26 @@ function diagnosticHelp(entries: ToolCall[]): DiagnosticRecord["help"] {
 function diagnosticObservability(
     entries: ToolCall[],
 ): DiagnosticRecord["observability"] {
+    const nested = entries.filter((entry) => docsEntryKind(entry) === "nested");
     const observable = entries.filter((entry) => {
         const kind = docsEntryKind(entry);
         return kind === "native" || kind === "twin";
     });
-    if (observable.length > 0) {
+    if (observable.length + nested.length > 0) {
+        const parts: string[] = [];
+        if (observable.length > 0) {
+            parts.push(`${observable.length} native/twin docs event(s)`);
+        }
+        if (nested.length > 0) {
+            parts.push(`${nested.length} plugin-journaled nested operation(s)`);
+        }
         return {
             status: "operation-level",
-            source: "tools.jsonl",
-            detail: `${observable.length} native/twin docs event(s)`,
+            source:
+                nested.length > 0
+                    ? "tools.jsonl + docs-operations.jsonl"
+                    : "tools.jsonl",
+            detail: parts.join(", "),
         };
     }
     const wrappers = entries.filter(isCodeModeDocs);
@@ -3186,7 +3366,10 @@ function diagnosticToolCalls(resultDir: string) {
         nativeCalls: entries.filter(
             (entry) => entry.tool === "docs" || entry.tool === "docs_search",
         ),
-        codeCalls: entries.filter(isCodeModeDocs),
+        codeCalls: entries.filter(
+            (entry) =>
+                isCodeModeDocs(entry) || docsEntryKind(entry) === "nested",
+        ),
     };
 }
 
@@ -3367,8 +3550,13 @@ function resultIsDiagnostic(resultDir: string): boolean {
  * cwd this spawn uses.
  * @param configHome The isolated XDG config directory.
  * @param cwd The absolute working directory passed to `spawn`.
+ * @param journalPath The case's opt-in docs operation journal, if any.
  */
-function childEnv(configHome: string, cwd: string): NodeJS.ProcessEnv {
+function childEnv(
+    configHome: string,
+    cwd: string,
+    journalPath?: string,
+): NodeJS.ProcessEnv {
     const env = { ...process.env };
     for (const key of [
         "OPENCODE_SESSION_ID",
@@ -3380,6 +3568,14 @@ function childEnv(configHome: string, cwd: string): NodeJS.ProcessEnv {
     }
     env.XDG_CONFIG_HOME = configHome;
     env.PWD = cwd;
+    // The docs plugin's opt-in instrumentation env var. Per case, beside its
+    // trail: the model cannot write it, and another case cannot satisfy this
+    // case's evidence.
+    if (journalPath !== undefined) {
+        env.DOCS_OPERATION_JOURNAL = journalPath;
+    } else {
+        delete env.DOCS_OPERATION_JOURNAL;
+    }
     return env;
 }
 
@@ -4869,6 +5065,44 @@ function necessaryAncestorDirs(
     );
 }
 
+/**
+ * The plugin's own publication housekeeping: `.docs-lock` is created beside
+ * the target's deepest existing ancestor while a write is in flight, and its
+ * lock file is removed on release — the now-empty directory remains. Only
+ * that exact shape is permitted: an added, empty, readable directory named
+ * `.docs-lock`, inside the documentation surface, sited at an ancestor of an
+ * expected document (beside the target or higher while its parents were
+ * created). A symlink, a directory holding anything, a stale lock file, or one
+ * anywhere else remains an unrelated change.
+ * @param evidence The recorded mutation evidence.
+ * @param expectedPaths The case's expected document paths.
+ * @returns The permitted housekeeping directory paths.
+ */
+function pluginLockHousekeeping(
+    evidence: MutationEvidence,
+    expectedPaths: string[],
+): string[] {
+    return evidence.diff.added.filter((path) => {
+        if (basename(path) !== ".docs-lock") return false;
+        if (!evidence.onSurface(path)) return false;
+        const entry = evidence.snapshot.entries.get(path);
+        if (entry?.kind !== "dir" || entry.mode === "unreadable") return false;
+        // Empty means the release removed its lock file. A remaining child is
+        // a stale/foreign object and stays a finding.
+        if (
+            [...evidence.snapshot.entries.keys()].some((candidate) =>
+                candidate.startsWith(`${path}/`),
+            )
+        ) {
+            return false;
+        }
+        const parent = dirname(path);
+        return expectedPaths.some((expected) =>
+            expected.startsWith(`${parent}/`),
+        );
+    });
+}
+
 /** Whether anything besides the expected paths changed inside the surface. */
 function unrelatedSurfaceChangeProblem(
     evidence: MutationEvidence,
@@ -4877,6 +5111,7 @@ function unrelatedSurfaceChangeProblem(
     const permitted = [
         ...expectedPaths,
         ...necessaryAncestorDirs(evidence, expectedPaths),
+        ...pluginLockHousekeeping(evidence, expectedPaths),
     ];
     const others = evidence.surfaceTouched.filter(
         ([path]) => !permitted.includes(path),
@@ -5768,7 +6003,7 @@ function requiredPathProblems(
         const relevant = trail.entries.filter((entry) => {
             const kind = docsEntryKind(entry);
             return (
-                (kind === "native" || kind === "twin") &&
+                (kind === "native" || kind === "twin" || kind === "nested") &&
                 entry.status === "completed" &&
                 docsEntryVerb(kind, entry) === "read" &&
                 typedPathHit(entry, fragment)
@@ -6123,7 +6358,11 @@ async function runOne(
     const diagnostic = isDiagnosticCase(testCase);
     const callArgs: CallArgs = {
         cwd: join(live, "work"),
-        env: childEnv(join(live, "config-home"), join(live, "work")),
+        env: childEnv(
+            join(live, "config-home"),
+            join(live, "work"),
+            join(resultDir, OPERATION_JOURNAL_FILE),
+        ),
         model: options.model,
         title: `placement-${testCase.id}`,
         prompt: readFileSync(promptPath, "utf8"),
@@ -6150,7 +6389,10 @@ async function runOne(
         lastPartKind,
     } = extract(result.stdout ?? "");
     const telemetry = {
-        ...docsTelemetry(toolCalls, parseFailures),
+        ...docsTelemetry(
+            mergeNestedOperations(toolCalls, readOperationJournal(resultDir)),
+            parseFailures,
+        ),
         events,
         parseFailures,
     };
