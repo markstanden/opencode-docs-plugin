@@ -795,7 +795,7 @@ function validatedCorpusEntry(entry: unknown, requireFull: boolean): TrialCase |
             return null;
         }
     }
-    return record as TrialCase;
+    return record as unknown as TrialCase;
 }
 
 function select(options: CliOptions) {
