@@ -208,6 +208,46 @@ const writeFakeOpencode = (root: string) => {
     return path;
 };
 
+/**
+ * A Node fake that records its real process.cwd() and PWD before answering.
+ * Used only by the child-environment regression: the shell fake cannot report
+ * process.cwd() and PWD distinctly.
+ */
+const writeProbeOpencode = (root: string) => {
+    const path = file(
+        root,
+        "fake-probe-opencode.mjs",
+        [
+            "#!/usr/bin/env node",
+            'import { writeFileSync } from "node:fs";',
+            "const args = process.argv.slice(2);",
+            'if (args[0] === "--version") {',
+            '    process.stdout.write("fake-opencode-1.2.3\\n");',
+            "    process.exit(0);",
+            "}",
+            "const probe = process.env.FAKE_CHILD_PROBE;",
+            "if (probe) {",
+            "    writeFileSync(",
+            "        probe,",
+            "        JSON.stringify({",
+            "            title: args[args.indexOf('--title') + 1] ?? '',",
+            "            cwd: process.cwd(),",
+            "            pwd: process.env.PWD ?? null,",
+            "        }) + '\\n',",
+            "    );",
+            "}",
+            "process.stdout.write(",
+            "    JSON.stringify({",
+            "        part: { type: 'text', text: 'Intended: the repo lake.' },",
+            "    }) + '\\n',",
+            ");",
+            "",
+        ].join("\n"),
+    );
+    chmodSync(path, 0o755);
+    return path;
+};
+
 /** Env for a harness invocation; deletes undefined entries. */
 function envFor(root: string, fake: string, extra: Env = {}): Env {
     const env: Env = {
@@ -2669,6 +2709,39 @@ test("F12: wrapper default selection enumerates the corpus ids", () => {
         2,
         "one container per corpus case, any id namespace",
     );
+    rmRoot(root);
+});
+
+/* ------------------------------------------------------------------ *
+ * Launch environment — child cwd and PWD
+ * ------------------------------------------------------------------ */
+
+test("PWD: the harness child's PWD is the cwd it was spawned in", () => {
+    // Arrange: a harness invocation inheriting a PWD that is deliberately
+    // not the fixture work directory, and a fake child that reports both
+    // process.cwd() and PWD.
+    const root = newRoot("pwd-child");
+    const fake = writeProbeOpencode(root);
+    const { paths } = generate(root, fake, [baselineCase("T01")]);
+    const inherited = join(root, "inherited-pwd");
+    mkdirSync(inherited, { recursive: true });
+    const probe = join(root, "child-probe.json");
+    const intendedWork = join(paths.results, "s1", "T01", "live", "work");
+
+    // Act: run the real harness launch path.
+    const run = runHarness(
+        root,
+        fake,
+        ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        { PWD: inherited, FAKE_CHILD_PROBE: probe },
+    );
+
+    // Assert: the child starts in, and reports, the intended fixture cwd.
+    assert.equal(run.status, 0, run.stderr);
+    const observed = readJson(probe);
+    assert.equal(observed.cwd, intendedWork);
+    assert.equal(observed.pwd, intendedWork);
+    assert.notEqual(observed.cwd, inherited);
     rmRoot(root);
 });
 

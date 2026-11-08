@@ -2478,6 +2478,7 @@ interface DiagnosticRecord {
         command: string;
         args: string[];
         cwd: string;
+        pwd?: string | null;
         promptSha256: string;
         startedAt: string;
         config: unknown;
@@ -2497,6 +2498,8 @@ interface DiagnosticRecord {
     };
     environment: {
         invokedCwd: string | null;
+        childPwd: string | null;
+        pwdMatches: boolean | null;
         hostDirectory: string | null;
         cwdMatches: boolean | null;
     };
@@ -2588,14 +2591,20 @@ function registrationFromLog(
     };
 }
 
-/** The invoked cwd against the host's own location report. */
+/** The invoked cwd, child PWD and host's own location report. */
 function diagnosticEnvironment(
     invocation: DiagnosticRecord["invocation"],
     hostDirectory: string | null,
 ): DiagnosticRecord["environment"] {
     const invokedCwd = invocation?.cwd ?? null;
+    const childPwd = invocation?.pwd ?? null;
     return {
         invokedCwd,
+        childPwd,
+        pwdMatches:
+            invokedCwd === null || childPwd === null
+                ? null
+                : invokedCwd === childPwd,
         hostDirectory,
         cwdMatches:
             invokedCwd === null || hostDirectory === null
@@ -3103,7 +3112,7 @@ function diagnosticFor(resultDir: string): DiagnosticRecord | null {
     };
 }
 
-/** The invoked-cwd vs host-location line, exposing a launch mismatch. */
+/** The invoked-cwd, child-PWD and host-location lines, exposing a launch mismatch. */
 function diagnosticEnvironmentLine(record: DiagnosticRecord): string {
     const environment = record.environment;
     const match =
@@ -3112,7 +3121,16 @@ function diagnosticEnvironmentLine(record: DiagnosticRecord): string {
             : environment.cwdMatches
               ? "match"
               : "MISMATCH — the fixture config was not loaded";
-    return `- Host location: ${environment.hostDirectory ?? "unknown"}; invoked cwd ${environment.invokedCwd ?? "unknown"}; ${match}`;
+    const pwdMatch =
+        environment.pwdMatches === null
+            ? "unknown"
+            : environment.pwdMatches
+              ? "match"
+              : "MISMATCH — the child inherited a different directory";
+    return [
+        `- Host location: ${environment.hostDirectory ?? "unknown"}; invoked cwd ${environment.invokedCwd ?? "unknown"}; ${match}`,
+        `- Child PWD: ${environment.childPwd ?? "unknown"}; ${pwdMatch}`,
+    ].join("\n");
 }
 
 /** The invocation line, with the prompt argument abbreviated. */
@@ -3184,7 +3202,16 @@ function resultIsDiagnostic(resultDir: string): boolean {
     );
 }
 
-function childEnv(configHome: string): NodeJS.ProcessEnv {
+/**
+ * The child environment. `spawn`'s cwd changes the process directory but
+ * leaves an inherited PWD untouched; OpenCode resolves its config path from
+ * PWD, so an inherited host value sends the child to the wrong directory and
+ * skips the fixture config. Set PWD after every other overlay, to the exact
+ * cwd this spawn uses.
+ * @param configHome The isolated XDG config directory.
+ * @param cwd The absolute working directory passed to `spawn`.
+ */
+function childEnv(configHome: string, cwd: string): NodeJS.ProcessEnv {
     const env = { ...process.env };
     for (const key of [
         "OPENCODE_SESSION_ID",
@@ -3195,6 +3222,7 @@ function childEnv(configHome: string): NodeJS.ProcessEnv {
         delete env[key];
     }
     env.XDG_CONFIG_HOME = configHome;
+    env.PWD = cwd;
     return env;
 }
 
@@ -5879,7 +5907,7 @@ async function runOne(
     const diagnostic = isDiagnosticCase(testCase);
     const callArgs: CallArgs = {
         cwd: join(live, "work"),
-        env: childEnv(join(live, "config-home")),
+        env: childEnv(join(live, "config-home"), join(live, "work")),
         model: options.model,
         title: `placement-${testCase.id}`,
         prompt: readFileSync(promptPath, "utf8"),
@@ -5928,6 +5956,7 @@ async function runOne(
               command: options.opencode,
               args: opencodeArgs(callArgs),
               cwd: callArgs.cwd,
+              pwd: callArgs.env.PWD ?? null,
               startedAt,
               promptSha256: fileHash(promptPath),
               config:
@@ -6691,7 +6720,7 @@ async function judgeOne(
     const modelStart = Date.now();
     const result = await opencodeCall({
         cwd: join(root, "work"),
-        env: childEnv(join(root, "config-home")),
+        env: childEnv(join(root, "config-home"), join(root, "work")),
         model: judgeModel,
         title: `placement-judge-${testCase.id}-${attempt}`,
         prompt,
