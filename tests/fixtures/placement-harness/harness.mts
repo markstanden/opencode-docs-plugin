@@ -1610,24 +1610,31 @@ function docsCriterionShape(value: unknown): string[] {
             isStringArray,
             false,
         );
-        // Relevant paths are read targets: only the read verb (or no verb
-        // list at all) is compatible with them. A paths-free verb list is
-        // judge-verifiable for any docs verb (a successful native help
-        // call is an observable completion), so it is not restricted —
-        // see trial-cases D01's help-discovery gate.
-        if (
-            "paths" in value &&
-            isStringArray(value.verbs) &&
-            !value.verbs.every((verb) => verb === "read")
-        ) {
-            out.push(
-                'paths gate read targets; verbs must be undefined or ["read"]',
-            );
-        }
+        out.push(...pathVerbConsistency(value));
     } else if ("paths" in value) {
         out.push("paths belongs to the minVerifiedCalls criterion");
     }
     return out;
+}
+
+/**
+ * A read-path criterion stays read-shaped: paths name read targets, so a
+ * criterion containing paths refuses any verb list that demands something
+ * other than read. A paths-free verb list is judge-verifiable for any docs
+ * verb (a successful native help call is an observable completion), so it
+ * is not restricted — see trial-cases D01's help-discovery gate.
+ * @param value The docs criterion, already proven an object.
+ * @returns The inconsistency problems, if any.
+ */
+function pathVerbConsistency(value: Record<string, unknown>): string[] {
+    if (
+        !("paths" in value) ||
+        !isStringArray(value.verbs) ||
+        value.verbs.every((verb) => verb === "read")
+    ) {
+        return [];
+    }
+    return ['paths gate read targets; verbs must be undefined or ["read"]'];
 }
 
 /** The problems with one case's artefact expectation, or when absent. */

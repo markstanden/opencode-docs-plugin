@@ -3124,8 +3124,8 @@ test("D01: a help-discovery gate is satisfied by a successful native help call",
             "call-1",
             "completed",
             { search: "help" },
-            "- docs (Repository [repo]): this repository's knowledge\n"
-                + "- doclake (Personal [machine]): personal setup\n",
+            "- docs (Repository [repo]): this repository's knowledge\n" +
+                "- doclake (Personal [machine]): personal setup\n",
         ) + ANSWER_JSONL(),
     );
     // Assert: the gate passes and the semantic judge decides on merits.
@@ -3152,8 +3152,8 @@ test("D01: a help-discovery gate refuses a completed blank help call", () => {
         paths,
         "T01",
         "s1",
-        TOOL_JSONL("docs", "call-1", "completed", { search: "help" }, "")
-            + ANSWER_JSONL(),
+        TOOL_JSONL("docs", "call-1", "completed", { search: "help" }, "") +
+            ANSWER_JSONL(),
     );
     // Assert: a completed empty inventory is not a success.
     assert.equal(verdict.verdict, "invalid");
@@ -3184,7 +3184,6 @@ test("D01: a path criterion still refuses verbs beside read", () => {
     );
     rmRoot(root);
 });
-
 
 test("M04: a floor-only criterion counts successes, never completed failures", () => {
     // Arrange: a gate with a floor and no verb/path requirements.
