@@ -203,6 +203,9 @@ prepare_cases_run() {
             }
             return {
                 id: doc.id,
+                ...(typeof doc.promptKind === "string"
+                    ? { promptKind: doc.promptKind }
+                    : {}),
                 mutationPolicy: doc.mutationPolicy ?? null,
                 docsCriterion: doc.docsCriterion ?? null,
                 generationInputsHash,
