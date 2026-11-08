@@ -56,7 +56,7 @@ these cases evaluate lives in the registered `docs` skill and
 
 ### The harness
 
-`tests/fixtures/placement-harness/harness.mjs` materialises and runs the
+`tests/fixtures/placement-harness/harness.mts` materialises and runs the
 trials:
 
 | Subcommand | What it does                                                      |

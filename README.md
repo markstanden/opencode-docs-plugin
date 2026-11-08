@@ -420,7 +420,7 @@ paths and summaries only; never snapshot a real docs tree into it.
 `tests/fixtures/placement-cases.json` is a synthetic evaluation fixture for
 the placement guidance (cases E01–E18, each with a claim, evidence,
 destinations, expected scope or action, acceptable rationale and tempting
-wrong answer). `tests/fixtures/placement-harness/harness.mjs` runs the cases
+wrong answer). `tests/fixtures/placement-harness/harness.mts` runs the cases
 behaviourally: `generate` materialises one prompt, one pristine fixture tree
 and one out-of-band rubric per case (defaults `~/tmp/docs-placement/` for
 prompts, rubrics and results, `~/test-dir/docs-placement/` for fixtures),
