@@ -764,28 +764,38 @@ function loadCases(fixturePath: string, requireFull: boolean): TrialCase[] {
     }
     const cases: TrialCase[] = [];
     for (const entry of parsed) {
-        if (entry === null || typeof entry !== "object" || !("id" in entry)) {
-            usage(`corpus ${fixturePath} has a case entry without an id`);
-        }
-        const id = (entry as { id: unknown }).id;
-        if (typeof id !== "string" || id === "") {
-            usage(`corpus ${fixturePath} has a case entry without a usable id`);
-        }
-        if (
-            requireFull &&
-            (typeof (entry as { claim?: unknown }).claim !== "string" ||
-                !Array.isArray(
-                    (entry as { destinations?: unknown }).destinations,
-                ))
-        ) {
+        const validated = validatedCorpusEntry(entry, requireFull);
+        if (validated === null) {
             usage(
-                `corpus ${fixturePath}: case ${id} is a redacted entry; ` +
-                    "this command needs case definitions with claim and destinations",
+                `corpus ${fixturePath}: an entry lacks the shape of a ` +
+                    (requireFull ? "full case" : "usable id"),
             );
         }
-        cases.push(entry as TrialCase);
+        cases.push(validated);
     }
     return cases;
+}
+
+/**
+ * One validated corpus entry: proven by inspection, narrowed once — the
+ * widening is only what the inspection above proves.
+ * @param entry An array element of a loaded corpus.
+ * @param requireFull Whether claim/destinations must be present.
+ * @returns The narrowed case entry, or null when the shape fails.
+ */
+function validatedCorpusEntry(entry: unknown, requireFull: boolean): TrialCase | null {
+    if (entry === null || typeof entry !== "object") return null;
+    const record = entry as Record<string, unknown>;
+    const id = record.id;
+    if (typeof id !== "string" || id === "") return null;
+    if (requireFull) {
+        const claim = record.claim;
+        const destinations = record.destinations;
+        if (typeof claim !== "string" || !Array.isArray(destinations)) {
+            return null;
+        }
+    }
+    return record as TrialCase;
 }
 
 function select(options: CliOptions) {
@@ -943,26 +953,39 @@ function extractEvent(
         return "text";
     }
     if (part.type === "tool") {
-        const id =
-            typeof part.id === "string" && part.id !== ""
-                ? part.id
-                : `unkeyed-${++unkeyed.count}`;
-        calls.set(
-            id,
-            mergedToolCall(
-                calls.get(id) ?? {},
-                {
-                    type: "tool",
-                    id,
-                    tool: typeof part.tool === "string" ? part.tool : undefined,
-                    state: isRecord(part.state) ? part.state : undefined,
-                } satisfies RawToolPart,
-                id,
-            ),
-        );
+        foldToolPart(part, calls, unkeyed);
         return "tool";
     }
     return null;
+}
+
+/**
+ * One CLI tool part, folded into the deduplicated call map: repeated
+ * events for one stable id merge latest-state-wins; parts without an id
+ * get the `unkeyed` counter's stable fill.
+ */
+function foldToolPart(
+    part: Record<string, unknown>,
+    calls: Map<string, ToolCall>,
+    unkeyed: UnkeyedCounter,
+): void {
+    const id =
+        typeof part.id === "string" && part.id !== ""
+            ? part.id
+            : `unkeyed-${++unkeyed.count}`;
+    calls.set(
+        id,
+        mergedToolCall(
+            calls.get(id) ?? {},
+            {
+                type: "tool",
+                id,
+                tool: typeof part.tool === "string" ? part.tool : undefined,
+                state: isRecord(part.state) ? part.state : undefined,
+            } satisfies RawToolPart,
+            id,
+        ),
+    );
 }
 
 function extract(stdout: string) {
