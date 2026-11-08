@@ -179,11 +179,54 @@ prepare_case_fixture() {
 # host. The frozen generation's inputs hash rides along, so a staged
 # generation record can be tied to the frozen experiment (M02) even though
 # the full corpus cannot cross the container boundary.
+#
+# The cache is keyed by the REDACTION IDENTITY, not the corpus alone: the
+# corpus bytes, every case's generation inputs hash (model, plugin, case
+# definition, variant and sandbox permissions) and the redaction schema
+# version. Regenerating for a different model therefore names a different
+# file instead of reusing the previous generation's metadata.
 prepare_cases_run() {
-    local corpus_hash
-    corpus_hash="$(sha256sum "$CASES" | awk '{print substr($1, 1, 16)}')"
-    CASES_RUN="$RUN_FIXTURES/cases-$corpus_hash.json"
-    [ -f "$CASES_RUN" ] && [ "$CASES_RUN" -nt "$CASES" ] && return 0
+    local identity
+    identity="$(node -e '
+        const crypto = require("node:crypto");
+        const fs = require("node:fs");
+        const [corpusPath, fixturesRoot] = process.argv.slice(1);
+        const bytes = fs.readFileSync(corpusPath);
+        const cases = JSON.parse(bytes.toString("utf8"));
+        const inputs = cases.map((doc) => {
+            let inputsHash = null;
+            try {
+                inputsHash =
+                    JSON.parse(
+                        fs.readFileSync(
+                            fixturesRoot + "/" + doc.id + "/generation.json",
+                            "utf8",
+                        ),
+                    ).inputsHash ?? null;
+            } catch {
+                /* the run validation reports the missing/stale generation */
+            }
+            return { id: doc.id, inputsHash };
+        });
+        const identity = {
+            redactionVersion: 1,
+            corpusHash: crypto
+                .createHash("sha256")
+                .update(bytes)
+                .digest("hex"),
+            generation: inputs,
+        };
+        process.stdout.write(
+            crypto
+                .createHash("sha256")
+                .update(JSON.stringify(identity))
+                .digest("hex")
+                .slice(0, 16),
+        );
+    ' "$CASES" "$FIXTURES")"
+    CASES_RUN="$RUN_FIXTURES/cases-$identity.json"
+    [ -f "$CASES_RUN" ] && return 0
+    local staging="$CASES_RUN.tmp-$$"
     node -e '
         const fs = require("node:fs");
         const [corpusPath, fixturesRoot, outPath] = process.argv.slice(1);
@@ -212,7 +255,8 @@ prepare_cases_run() {
             };
         });
         fs.writeFileSync(outPath, JSON.stringify(redacted, null, 2) + "\n");
-    ' "$CASES" "$FIXTURES" "$CASES_RUN"
+    ' "$CASES" "$FIXTURES" "$staging"
+    mv "$staging" "$CASES_RUN"
 }
 
 parse_run_args() {
@@ -229,7 +273,7 @@ parse_run_args() {
             STAMP="${1#*=}"
             shift
             ;;
-        --model | --judge-model | --opencode)
+        --model | --judge-model | --opencode | --condition)
             RUN_ARGS+=("$1" "$2")
             shift 2
             ;;
@@ -249,7 +293,7 @@ parse_run_args() {
             RUN_ARGS+=("$1" "$2")
             shift 2
             ;;
-        --allow-writes | --no-judge | --discovery)
+        --allow-writes | --no-judge | --discovery | --print-logs)
             RUN_ARGS+=("$1")
             shift
             ;;
@@ -297,6 +341,8 @@ run_cases() {
         node "$HERE/harness.mts" \
         describe \
         --stamp "$STAMP" \
+        --prompts "$PROMPTS" \
+        --fixtures "$FIXTURES" \
         --results "$RESULTS" \
         --fixture "$CASES" \
         --rubrics "$RUBRICS" \

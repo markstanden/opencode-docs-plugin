@@ -24,6 +24,12 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+    NAMING_MAP_VERSION,
+    SCENARIO_DISPLAY,
+    conditionLabel,
+    formatScenarioName,
+} from "./fixtures/placement-harness/scenario-names.mts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const HARNESS = join(HERE, "fixtures", "placement-harness", "harness.mts");
@@ -203,6 +209,46 @@ const writeFakeOpencode = (root: string) => {
         root,
         "fake-opencode",
         FAKE_OPENCODE_LINES.join("\n") + "\n",
+    );
+    chmodSync(path, 0o755);
+    return path;
+};
+
+/**
+ * A Node fake that records its real process.cwd() and PWD before answering.
+ * Used only by the child-environment regression: the shell fake cannot report
+ * process.cwd() and PWD distinctly.
+ */
+const writeProbeOpencode = (root: string) => {
+    const path = file(
+        root,
+        "fake-probe-opencode.mjs",
+        [
+            "#!/usr/bin/env node",
+            'import { writeFileSync } from "node:fs";',
+            "const args = process.argv.slice(2);",
+            'if (args[0] === "--version") {',
+            '    process.stdout.write("fake-opencode-1.2.3\\n");',
+            "    process.exit(0);",
+            "}",
+            "const probe = process.env.FAKE_CHILD_PROBE;",
+            "if (probe) {",
+            "    writeFileSync(",
+            "        probe,",
+            "        JSON.stringify({",
+            "            title: args[args.indexOf('--title') + 1] ?? '',",
+            "            cwd: process.cwd(),",
+            "            pwd: process.env.PWD ?? null,",
+            "        }) + '\\n',",
+            "    );",
+            "}",
+            "process.stdout.write(",
+            "    JSON.stringify({",
+            "        part: { type: 'text', text: 'Intended: the repo lake.' },",
+            "    }) + '\\n',",
+            ");",
+            "",
+        ].join("\n"),
     );
     chmodSync(path, 0o755);
     return path;
@@ -1886,7 +1932,10 @@ test("F12: a custom corpus id namespace runs end to end", () => {
         "s1",
         ...commandArgs(paths),
     ]);
-    assert.match(summary.stdout, /\| R01 \| Personal \| fail \| doclake \|/);
+    assert.match(
+        summary.stdout,
+        /\| REUSE-01 — Read and reuse the existing test instructions \(R01\) \| Personal \| fail \| doclake \|/,
+    );
     rmRoot(root);
 });
 
@@ -2649,6 +2698,115 @@ test("F12: the wrapper mounts the selected corpus and stages per stamp+case", ()
     rmRoot(root);
 });
 
+test("F12: the redacted cache follows generation identity, not corpus bytes", () => {
+    // Arrange: one corpus, generated for two models in turn.
+    const root = newRoot("f12-redacted-identity");
+    const fake = writeFakeOpencode(root);
+    const stubDir = join(root, "stub");
+    mkdirSync(stubDir, { recursive: true });
+    chmodSync(writeStubPodman(stubDir), 0o755);
+    const corpus = [baselineCase("T01")];
+    const first = generate(root, fake, corpus, { model: "x/one" });
+    assert.equal(first.result.status, 0, first.result.stderr);
+
+    // Act: run the same generation twice (reuse), then regenerate for a
+    // different model and run again.
+    const runOne = () =>
+        runWrapper(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "one", "--model", "x/one"],
+            {
+                PATH: stubDir + ":" + process.env.PATH,
+            },
+        );
+    const firstRun = runOne();
+    assert.equal(firstRun.status, 0, firstRun.stderr);
+    const firstFiles = readdirSync(join(root, "run-fixtures")).filter((name) =>
+        name.startsWith("cases-"),
+    );
+    const firstFile = firstFiles[0];
+    assert.ok(firstFile, "the first run stages one redacted list");
+    assert.equal(firstFiles.length, 1);
+    assert.equal(
+        readJson(join(root, "run-fixtures", firstFile))[0].generationInputsHash,
+        readJson(join(first.paths.fixtures, "T01", "generation.json"))
+            .inputsHash,
+    );
+    const runTwo = runWrapper(
+        root,
+        fake,
+        ["run", "T01", "--stamp", "two", "--model", "x/one"],
+        { PATH: stubDir + ":" + process.env.PATH },
+    );
+    assert.equal(runTwo.status, 0);
+    assert.deepEqual(
+        readdirSync(join(root, "run-fixtures"))
+            .filter((name) => name.startsWith("cases-"))
+            .sort(),
+        firstFiles.sort(),
+        "unchanged inputs reuse the same redacted list",
+    );
+
+    const second = generate(root, fake, corpus, {
+        model: "x/two",
+        force: true,
+    });
+    assert.equal(second.result.status, 0, second.result.stderr);
+    const runThree = runWrapper(
+        root,
+        fake,
+        ["run", "T01", "--stamp", "three", "--model", "x/two"],
+        { PATH: stubDir + ":" + process.env.PATH },
+    );
+
+    // Assert: the new generation names a new cache entry with its own hash.
+    assert.equal(runThree.status, 0, runThree.stderr);
+    const files = readdirSync(join(root, "run-fixtures"))
+        .filter((name) => name.startsWith("cases-"))
+        .sort();
+    assert.equal(files.length, 2);
+    const changed = files.find((name) => !firstFiles.includes(name));
+    assert.ok(changed, "a changed generation must not reuse the old cache");
+    assert.equal(
+        readJson(join(root, "run-fixtures", changed))[0].generationInputsHash,
+        readJson(join(first.paths.fixtures, "T01", "generation.json"))
+            .inputsHash,
+    );
+    rmRoot(root);
+});
+
+test("F12: a run model with no matching generation refuses before staging", () => {
+    // Arrange: fixtures generated for one model only.
+    const root = newRoot("f12-redacted-stale-model");
+    const fake = writeFakeOpencode(root);
+    const stubDir = join(root, "stub");
+    mkdirSync(stubDir, { recursive: true });
+    chmodSync(writeStubPodman(stubDir), 0o755);
+    generate(root, fake, [baselineCase("T01")], { model: "x/one" });
+
+    // Act: ask the wrapper to run the never-generated second model.
+    const run = runWrapper(
+        root,
+        fake,
+        ["run", "T01", "--stamp", "stale", "--model", "x/two"],
+        { PATH: stubDir + ":" + process.env.PATH },
+    );
+
+    // Assert: the freeze refuses rather than labelling stale config as x/two.
+    assert.notEqual(run.status, 0);
+    assert.match(
+        run.stderr,
+        /prepared generation does not match the frozen experiment/,
+    );
+    assert.equal(
+        existsSync(join(root, "results", "stale", "T01")),
+        false,
+        "no case is staged under a stale generation",
+    );
+    rmRoot(root);
+});
+
 test("F12: wrapper default selection enumerates the corpus ids", () => {
     const root = newRoot("f12-default");
     const fake = writeFakeOpencode(root);
@@ -2669,6 +2827,45 @@ test("F12: wrapper default selection enumerates the corpus ids", () => {
         2,
         "one container per corpus case, any id namespace",
     );
+    rmRoot(root);
+});
+
+/* ------------------------------------------------------------------ *
+ * Launch environment — child cwd and PWD
+ * ------------------------------------------------------------------ */
+
+test("PWD: the harness child's PWD is the cwd it was spawned in", () => {
+    // Arrange: a harness invocation inheriting a PWD that is deliberately
+    // not the fixture work directory, and a fake child that reports both
+    // process.cwd() and PWD.
+    const root = newRoot("pwd-child");
+    const fake = writeProbeOpencode(root);
+    const { paths } = generate(root, fake, [baselineCase("T01")]);
+    const inherited = join(root, "inherited-pwd");
+    mkdirSync(inherited, { recursive: true });
+    const probe = join(root, "child-probe.json");
+    const intendedWork = join(paths.results, "s1", "T01", "live", "work");
+
+    // Act: run the real harness launch path.
+    const run = runHarness(
+        root,
+        fake,
+        ["run", "T01", "--stamp", "s1", "--print-logs", ...commandArgs(paths)],
+        { PWD: inherited, FAKE_CHILD_PROBE: probe },
+    );
+
+    // Assert: the child starts in, and reports, the intended fixture cwd;
+    // the invocation record carries the same child PWD.
+    assert.equal(run.status, 0, run.stderr);
+    const observed = readJson(probe);
+    assert.equal(observed.cwd, intendedWork);
+    assert.equal(observed.pwd, intendedWork);
+    assert.notEqual(observed.cwd, inherited);
+    const invocation = readJson(
+        join(paths.results, "s1", "T01", "invocation.json"),
+    );
+    assert.equal(invocation.cwd, intendedWork);
+    assert.equal(invocation.pwd, intendedWork);
     rmRoot(root);
 });
 
@@ -6189,4 +6386,209 @@ test("A01: a diagnostic case is report-only, never semantically judged", () => {
     );
     assert.equal(existsSync(join(paths.results, "s1", "A01", "judge")), false);
     rmRoot(root);
+});
+
+test("CONTROL: the explicit read variant keeps its authored prompt and seed", () => {
+    // Arrange: the control is a versioned diagnostic corpus, separate from
+    // the natural R01 prompt and from A01.
+    const corpus = readJson(
+        join(HERE, "fixtures", "read-control-cases.json"),
+    ) as Array<{
+        id: string;
+        promptKind: string;
+        diagnosticPrompt: string;
+        seeds: Array<{ path: string; contents?: string }>;
+    }>;
+    const control = corpus.find((entry) => entry.id === "R01");
+    assert.ok(control, "the read control must keep the R01 selector");
+    assert.equal(control.promptKind, "diagnostic");
+    const root = newRoot("read-control-corpus");
+    const fake = writeFakeOpencode(root);
+    const paths = layout(root);
+
+    // Act: generate from the checked-in control corpus.
+    const run = runHarness(root, fake, [
+        "generate",
+        "R01",
+        "--fixture",
+        join(HERE, "fixtures", "read-control-cases.json"),
+        "--prompts",
+        paths.prompts,
+        "--fixtures",
+        paths.fixtures,
+        "--rubrics",
+        paths.rubrics,
+        "--results",
+        paths.results,
+    ]);
+
+    // Assert: the authored prompt and the seeded document are intact.
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(
+        readFileSync(join(paths.prompts, "R01.md"), "utf8"),
+        control.diagnosticPrompt,
+    );
+    assert.match(
+        control.diagnosticPrompt,
+        /operation-level documentation call/,
+    );
+    assert.equal(
+        readFileSync(
+            join(
+                paths.fixtures,
+                "R01",
+                "lakes",
+                "docs",
+                "kb",
+                "test-commands.md",
+            ),
+            "utf8",
+        ),
+        control.seeds[0]?.contents,
+    );
+    rmRoot(root);
+});
+
+/* ------------------------------------------------------------------ *
+ * Scenario naming — display-only map, saved per run
+ * ------------------------------------------------------------------ */
+
+test("NAMING: every current corpus case has one unique display identity", () => {
+    // Arrange: the current corpora are the completeness boundary.
+    const corpora = [
+        join(HERE, "fixtures", "placement-cases.json"),
+        join(HERE, "fixtures", "trial-cases.json"),
+        join(HERE, "fixtures", "diagnostic-cases.json"),
+    ];
+    const ids = corpora.flatMap((path) =>
+        (readJson(path) as Array<{ id: string }>).map((entry) => entry.id),
+    );
+
+    // Act: the authoritative map.
+    const mapped = ids.map((id) => [id, SCENARIO_DISPLAY[id]] as const);
+
+    // Assert: complete, one-to-one and nonblank.
+    for (const [id, display] of mapped) {
+        assert.ok(display, `no display identity for current case ${id}`);
+        assert.notEqual(display.displayId.trim(), "");
+        assert.notEqual(display.title.trim(), "");
+    }
+    const displayIds = mapped.flatMap(([, display]) =>
+        display ? [display.displayId] : [],
+    );
+    assert.equal(new Set(displayIds).size, displayIds.length);
+    const rendered = mapped.map(([id, display]) =>
+        formatScenarioName(id, display, null),
+    );
+    assert.equal(
+        new Set(rendered).size,
+        rendered.length,
+        "each current case renders a distinct scenario label",
+    );
+    assert.deepEqual(
+        Object.keys(SCENARIO_DISPLAY).sort(),
+        [...new Set(ids)].sort(),
+        "the map holds exactly the current corpus ids",
+    );
+    assert.equal(SCENARIO_DISPLAY.A01?.displayId, "CONTROL-02");
+    assert.equal(SCENARIO_DISPLAY.R01?.displayId, "REUSE-01");
+});
+
+test("NAMING: a new run snapshots readable names and a condition phrase", () => {
+    // Arrange: a current corpus case and a historical condition code.
+    const root = newRoot("naming-new");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [baselineCase("R01")]);
+    const out = file(root, "answer.jsonl", ANSWER_JSONL("The repo lake."));
+
+    // Act: run and report.
+    const run = runHarness(
+        root,
+        fake,
+        [
+            "run",
+            "R01",
+            "--stamp",
+            "s1",
+            "--condition",
+            "A",
+            ...commandArgs(paths),
+        ],
+        { FAKE_TRIAL_OUT: out },
+    );
+    assert.equal(run.status, 0, run.stderr);
+    const summary = runHarness(root, fake, [
+        "summary",
+        "--stamp",
+        "s1",
+        ...commandArgs(paths),
+    ]);
+    const exported = runHarness(root, fake, [
+        "export",
+        "--stamp",
+        "s1",
+        ...commandArgs(paths),
+    ]);
+
+    // Assert: the frozen description carries the snapshot, and both reports
+    // render it with the historical id still traceable.
+    const saved = readJson(join(paths.results, "s1", "run.json"));
+    assert.equal(saved.namingMapVersion, NAMING_MAP_VERSION);
+    assert.equal(saved.condition, "native instruction");
+    assert.deepEqual(saved.cases[0].display, {
+        displayId: "REUSE-01",
+        title: "Read and reuse the existing test instructions",
+    });
+    assert.equal(summary.status, 0, summary.stderr);
+    assert.match(
+        summary.stdout,
+        /REUSE-01 — Read and reuse the existing test instructions \(R01\)/,
+    );
+    assert.match(summary.stdout, /Condition: native instruction/);
+    assert.equal(exported.status, 0, exported.stderr);
+    assert.match(
+        readFileSync(join(paths.results, "s1", "dossier.md"), "utf8"),
+        /## REUSE-01 — Read and reuse the existing test instructions \(R01\) — Expected:/,
+    );
+    rmRoot(root);
+});
+
+test("NAMING: a legacy run keeps its own id and never adopts a new title", () => {
+    // Arrange: a representative v1 stamp with no saved display metadata.
+    const root = newRoot("naming-legacy");
+    const fake = writeFakeOpencode(root);
+    const paths = layout(root);
+    writeCorpus(root, [baselineCase("T01")]);
+    stageV1Stamp(root, paths);
+
+    // Act: render the summary.
+    const summary = runHarness(root, fake, [
+        "summary",
+        "--stamp",
+        "v1stamp",
+        ...commandArgs(paths),
+    ]);
+
+    // Assert: the old id remains, with no newly assigned title.
+    assert.equal(summary.status, 0, summary.stderr);
+    assert.match(summary.stdout, /\| T01 \|/);
+    assert.doesNotMatch(summary.stdout, /REUSE-01/);
+    assert.equal(
+        formatScenarioName("R01", null, "Recorded claim from the old stamp."),
+        "R01 — Recorded claim from the old stamp.",
+    );
+    rmRoot(root);
+});
+
+test("NAMING: condition codes render as phrases, never as letters", () => {
+    assert.equal(conditionLabel("A"), "native instruction");
+    assert.equal(conditionLabel("A2"), "sharpened native instruction");
+    assert.equal(conditionLabel("B"), "Code Mode instruction");
+    assert.equal(conditionLabel("C"), "natural task");
+    assert.equal(
+        conditionLabel("explicit_read_control"),
+        "explicit read control",
+    );
+    assert.equal(conditionLabel("C01"), undefined);
+    assert.equal(conditionLabel("A01"), undefined);
 });

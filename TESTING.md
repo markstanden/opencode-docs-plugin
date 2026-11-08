@@ -10,6 +10,11 @@ This repository is tested on two layers, answering two different questions:
    placement cases; a fixture asserting expected answers in Node cannot prove
    that.
 
+**Vocabulary and readable names:** [docs/testing/test-glossary.md](docs/testing/test-glossary.md)
+defines the reporting terms, the display-only scenario prefixes (for example
+REUSE-01 for R01), and the condition phrases (A/B/C/A2). Fixture ids remain the
+stable selectors.
+
 ## Quick start
 
 ```sh
@@ -518,8 +523,11 @@ PLACEMENT_CASES="$PWD/tests/fixtures/diagnostic-cases.json" \
 ```
 
 The diagnostic run adds `--print-logs` to the child invocation and saves an
-`invocation.json` (exact argv, cwd, redacted config, prompt hash). It reports
-five separate facts per run, rendered into `summary.md` and the dossier:
+`invocation.json` (exact argv, cwd, child PWD, redacted config, prompt hash).
+It reports five separate facts per run, rendered into `summary.md` and the
+dossier. The cwd/PWD/host match lines make a stale launch (the pre-fix
+`PWD=/workspace` defect) visible in the report rather than inferred from a
+missing plugin log. The facts reported per run are:
 
 - **Registration** — observed from a plugin-load log record, absent only in a
   complete startup/shutdown trace with no such record, otherwise unknown.

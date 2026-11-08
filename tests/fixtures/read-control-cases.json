@@ -1,0 +1,40 @@
+[
+    {
+        "id": "R01",
+        "family": "diagnostic",
+        "promptKind": "diagnostic",
+        "diagnosticPrompt": "This is an access control. Use only the documentation tool available in this session (the native docs tool, or its Code Mode twin if that is the advertised route).\n\nRead the seeded repository document `kb/test-commands.md` through the documentation tool. Report the exact content you received and the revision line the tool returned. Do not use the built-in read tool, a shell command, or the filesystem to obtain it; the retrieval must be an operation-level documentation call.\n\nIf no documentation tool is advertised, report that limitation and stop without reading files or inspecting configuration.\n",
+        "claim": "The seeded test-command document is readable through the documentation tool in a fresh harness child.",
+        "evidence": "The docs tool's read result, including the document content and revision line, plus the child's operation trail.",
+        "destinations": [
+            {
+                "name": "docs",
+                "class": "repo",
+                "description": "This repository's decisions and traps."
+            }
+        ],
+        "expected": "The seeded document content and its revision, retrieved through the docs tool with operation-level evidence.",
+        "accepts": [
+            "A native docs read completed with the seeded content and a revision line.",
+            "A Code Mode docs read completed with the seeded content and a revision line, when the nested operation is observable."
+        ],
+        "temptingWrong": [
+            "Using the built-in read tool or shell to read the file.",
+            "Claiming success from a Code Mode execute wrapper without an observable nested docs operation."
+        ],
+        "seeds": [
+            {
+                "surface": "lakes",
+                "path": "docs/kb/test-commands.md",
+                "contents": "---\nArea: kb\nKeywords: node, test, runner, commands\nSummary: How this repo is tested and typechecked.\n---\n\n# Running the suite\n\n### Facts\n\n- npm test runs everything with Node's built-in runner.\n- npm run typecheck runs tsc --noEmit.\n"
+            }
+        ],
+        "docsCriterion": {
+            "minVerifiedCalls": 1,
+            "verbs": ["read"],
+            "paths": ["kb/test-commands.md"]
+        },
+        "expectedDocs": null,
+        "mutationPolicy": null
+    }
+]

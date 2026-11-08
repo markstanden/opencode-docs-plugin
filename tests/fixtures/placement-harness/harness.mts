@@ -48,6 +48,13 @@ import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import {
+    NAMING_MAP_VERSION,
+    conditionLabel,
+    formatScenarioName,
+    scenarioDisplayFor,
+} from "./scenario-names.mts";
+import type { ScenarioDisplay } from "./scenario-names.mts";
 /* ------------------------------------------------------------------ *
  * Trial shapes: corpus entries, policies, criteria, artefact rules
  * ------------------------------------------------------------------ */
@@ -181,9 +188,11 @@ interface CliOptions {
     noJudge: boolean;
     allowWrites: boolean;
     discovery: boolean;
+    printLogs: boolean;
     help?: boolean;
     model: string;
     judgeModel: string;
+    condition: string;
     opencode: string;
     timeoutMs: number;
     jobs: number;
@@ -439,6 +448,8 @@ interface RunCase {
     mutationPolicy?: MutationPolicy | null;
     docsCriterion?: DocsCriterion | null;
     expectedDocs?: ExpectedDocs | null;
+    /** Saved display identity; absent on runs recorded before the naming map. */
+    display?: ScenarioDisplay | undefined;
     definition: TrialCase;
 }
 
@@ -452,6 +463,8 @@ interface RunDescription {
     variant?: string;
     model?: string;
     judgeModel?: string | null;
+    condition?: string;
+    namingMapVersion?: number;
     timeoutMs?: number;
     allowWrites?: boolean;
     jobs?: number;
@@ -506,6 +519,7 @@ interface MutationEvidence {
 /** One summary row rendered from saved evidence. */
 interface SummaryRow {
     id: string;
+    scenario: string;
     expected: string;
     verdict: string;
     destination: string | null;
@@ -610,6 +624,7 @@ interface DefaultedOptions {
     results: string;
     model: string;
     judgeModel: string;
+    condition: string;
     opencode: string;
     timeoutMs: number;
     jobs: number;
@@ -625,6 +640,7 @@ const DEFAULTS: DefaultedOptions = {
     results: join(HOME, "tmp", "docs-placement", "results"),
     model: process.env.TRIAL_MODEL || "opencode-go/deepseek-v4.1-flash",
     judgeModel: process.env.TRIAL_JUDGE_MODEL || "",
+    condition: "",
     opencode:
         process.env.TRIAL_OPENCODE || process.env.OPENCODE_BIN || "opencode",
     fixture: DEFAULT_FIXTURE,
@@ -635,13 +651,15 @@ const DEFAULTS: DefaultedOptions = {
 };
 
 /** Letters where a bare switch flag lands in `CliOptions`. */
-type BooleanSwitch = "force" | "noJudge" | "allowWrites" | "discovery" | "help";
+type BooleanSwitch =
+    "force" | "noJudge" | "allowWrites" | "discovery" | "printLogs" | "help";
 
 const SWITCHES: Record<string, BooleanSwitch> = {
     "--force": "force",
     "--no-judge": "noJudge",
     "--allow-writes": "allowWrites",
     "--discovery": "discovery",
+    "--print-logs": "printLogs",
     "--help": "help",
     "-h": "help",
 };
@@ -649,6 +667,7 @@ const SWITCHES: Record<string, BooleanSwitch> = {
 type StringOptionKey =
     | "model"
     | "judgeModel"
+    | "condition"
     | "opencode"
     | "prompts"
     | "fixtures"
@@ -669,6 +688,7 @@ type FlagValueSpec =
 const VALUE_FLAGS: Record<string, FlagValueSpec> = {
     "--model": { flagType: "string", key: "model" },
     "--judge-model": { flagType: "string", key: "judgeModel" },
+    "--condition": { flagType: "string", key: "condition" },
     "--stamp": { flagType: "string", key: "stamp" },
     "--opencode": { flagType: "string", key: "opencode" },
     "--jobs": { flagType: "number", key: "jobs" },
@@ -707,6 +727,9 @@ common options:
   --judge-model MODEL      model for local judging; defaults to --model. Use a
                            stronger model here, or skip judging and run
                            'export' to deep-scan a sweep with an external model
+  --condition NAME         report-only condition phrase for this stamp:
+                           A/A2/B/C or a descriptive condition such as
+                           explicit-read-control. Never changes a prompt
   --prompts DIR            prompt output (default ${DEFAULTS.prompts})
   --fixtures DIR           fixture root (default ${DEFAULTS.fixtures})
   --rubrics DIR            rubric/case output, kept out of the run sandbox
@@ -728,6 +751,8 @@ common options:
   --discovery              omit destinations from prompts; the lakes are then
                            discoverable only through 'docs help', which the
                            prompt mentions without requiring
+  --print-logs             capture the child's host logs (diagnostics already
+                           do this); saved as stderr.log plus invocation.json
 
   TRIAL_TIMEOUT_MS         per-session timeout (default ${DEFAULTS.timeoutMs} ms)
   TRIAL_JOBS/TRIAL_JUDGE_JOBS  default worker counts`);
@@ -743,6 +768,23 @@ function applyFlag(options: CliOptions, arg: string, argv: string[]) {
         options[flagKey] = true;
         return true;
     }
+    return applyValueFlag(options, arg, argv);
+}
+
+/** Resolve and validate a condition flag's report phrase. */
+function conditionOption(raw: string, arg: string) {
+    const label = conditionLabel(raw);
+    if (label === undefined) {
+        usage(
+            `${arg} must name a known condition: ` +
+                "A, A2, B, C or a descriptive condition",
+        );
+    }
+    return label;
+}
+
+/** Apply one value-taking flag; false when the argument takes no value. */
+function applyValueFlag(options: CliOptions, arg: string, argv: string[]) {
     const spec = VALUE_FLAGS[arg];
     if (!spec) return false;
     if (argv.length === 0) usage(`${arg} needs a value`);
@@ -757,7 +799,12 @@ function applyFlag(options: CliOptions, arg: string, argv: string[]) {
         return true;
     }
     const key = spec.key;
-    options[key] = spec.path === true ? resolve(raw) : raw;
+    options[key] =
+        key === "condition"
+            ? conditionOption(raw, arg)
+            : spec.path === true
+              ? resolve(raw)
+              : raw;
     return true;
 }
 
@@ -771,6 +818,7 @@ function parseArgs(argv: string[]) {
         noJudge: false,
         allowWrites: false,
         discovery: false,
+        printLogs: false,
         ids: [],
     };
     while (argv.length > 0) {
@@ -1196,6 +1244,24 @@ function runDescriptionShape(value: unknown): string[] {
         out.push("schemaVersion must be a nonnegative integer");
         return out;
     }
+    // Display-only report metadata: optional, so pre-naming stamps stay
+    // valid; when present it must still be shaped.
+    fieldProblems(
+        out,
+        value,
+        "condition",
+        "must be a string",
+        (v) => typeof v === "string",
+        false,
+    );
+    fieldProblems(
+        out,
+        value,
+        "namingMapVersion",
+        "must be a nonnegative integer",
+        nonnegativeInt,
+        false,
+    );
     // Legacy v1 stamps carried fewer fields: validate what is present —
     // never demanding v2-only fields — but any consumed field that IS there
     // still must be well-formed.
@@ -1338,6 +1404,41 @@ function runCasesShape(
     return out;
 }
 
+/** Instrumentation copies one frozen slice may carry; each is validated. */
+function frozenInstrumentationProblems(
+    entry: Record<string, unknown>,
+    prefix: string,
+): string[] {
+    const out: string[] = [];
+    for (const [field, shape] of [
+        ["mutationPolicy", mutationPolicyShape],
+        ["docsCriterion", docsCriterionShape],
+        ["expectedDocs", expectedDocsShape],
+    ] as const) {
+        if (entry[field] === undefined) continue;
+        out.push(
+            ...shape(entry[field]).map(
+                (problem) => `${prefix}.${field}: ${problem}`,
+            ),
+        );
+    }
+    return out;
+}
+
+/** Problems with an optional saved display identity. */
+function frozenDisplayProblems(display: unknown, prefix: string): string[] {
+    if (display === undefined) return [];
+    if (!isRecord(display)) return [`${prefix}.display must be a JSON object`];
+    const out: string[] = [];
+    if (typeof display.displayId !== "string" || display.displayId === "") {
+        out.push(`${prefix}.display.displayId must be a nonempty string`);
+    }
+    if (typeof display.title !== "string" || display.title === "") {
+        out.push(`${prefix}.display.title must be a nonempty string`);
+    }
+    return out;
+}
+
 /**
  * The problems with one frozen per-case slice: its id, its instrumentation
  * copies (policy, criterion, artefact expectation), and — depending on the
@@ -1359,18 +1460,8 @@ function frozenSliceProblems(
     if (typeof entry.id !== "string" || entry.id === "") {
         out.push(`${prefix}.id must be a nonempty string`);
     }
-    for (const [field, shape] of [
-        ["mutationPolicy", mutationPolicyShape],
-        ["docsCriterion", docsCriterionShape],
-        ["expectedDocs", expectedDocsShape],
-    ] as const) {
-        if (entry[field] === undefined) continue;
-        out.push(
-            ...shape(entry[field]).map(
-                (problem) => `${prefix}.${field}: ${problem}`,
-            ),
-        );
-    }
+    out.push(...frozenInstrumentationProblems(entry, prefix));
+    out.push(...frozenDisplayProblems(entry.display, prefix));
     if (entry.definition === undefined) {
         if (definitionMode === "full") {
             out.push(`${prefix}.definition is required for a v2 case`);
@@ -2478,6 +2569,7 @@ interface DiagnosticRecord {
         command: string;
         args: string[];
         cwd: string;
+        pwd?: string | null;
         promptSha256: string;
         startedAt: string;
         config: unknown;
@@ -2497,6 +2589,8 @@ interface DiagnosticRecord {
     };
     environment: {
         invokedCwd: string | null;
+        childPwd: string | null;
+        pwdMatches: boolean | null;
         hostDirectory: string | null;
         cwdMatches: boolean | null;
     };
@@ -2588,14 +2682,20 @@ function registrationFromLog(
     };
 }
 
-/** The invoked cwd against the host's own location report. */
+/** The invoked cwd, child PWD and host's own location report. */
 function diagnosticEnvironment(
     invocation: DiagnosticRecord["invocation"],
     hostDirectory: string | null,
 ): DiagnosticRecord["environment"] {
     const invokedCwd = invocation?.cwd ?? null;
+    const childPwd = invocation?.pwd ?? null;
     return {
         invokedCwd,
+        childPwd,
+        pwdMatches:
+            invokedCwd === null || childPwd === null
+                ? null
+                : invokedCwd === childPwd,
         hostDirectory,
         cwdMatches:
             invokedCwd === null || hostDirectory === null
@@ -3103,7 +3203,7 @@ function diagnosticFor(resultDir: string): DiagnosticRecord | null {
     };
 }
 
-/** The invoked-cwd vs host-location line, exposing a launch mismatch. */
+/** The invoked-cwd, child-PWD and host-location lines, exposing a launch mismatch. */
 function diagnosticEnvironmentLine(record: DiagnosticRecord): string {
     const environment = record.environment;
     const match =
@@ -3112,7 +3212,16 @@ function diagnosticEnvironmentLine(record: DiagnosticRecord): string {
             : environment.cwdMatches
               ? "match"
               : "MISMATCH — the fixture config was not loaded";
-    return `- Host location: ${environment.hostDirectory ?? "unknown"}; invoked cwd ${environment.invokedCwd ?? "unknown"}; ${match}`;
+    const pwdMatch =
+        environment.pwdMatches === null
+            ? "unknown"
+            : environment.pwdMatches
+              ? "match"
+              : "MISMATCH — the child inherited a different directory";
+    return [
+        `- Host location: ${environment.hostDirectory ?? "unknown"}; invoked cwd ${environment.invokedCwd ?? "unknown"}; ${match}`,
+        `- Child PWD: ${environment.childPwd ?? "unknown"}; ${pwdMatch}`,
+    ].join("\n");
 }
 
 /** The invocation line, with the prompt argument abbreviated. */
@@ -3184,7 +3293,16 @@ function resultIsDiagnostic(resultDir: string): boolean {
     );
 }
 
-function childEnv(configHome: string): NodeJS.ProcessEnv {
+/**
+ * The child environment. `spawn`'s cwd changes the process directory but
+ * leaves an inherited PWD untouched; OpenCode resolves its config path from
+ * PWD, so an inherited host value sends the child to the wrong directory and
+ * skips the fixture config. Set PWD after every other overlay, to the exact
+ * cwd this spawn uses.
+ * @param configHome The isolated XDG config directory.
+ * @param cwd The absolute working directory passed to `spawn`.
+ */
+function childEnv(configHome: string, cwd: string): NodeJS.ProcessEnv {
     const env = { ...process.env };
     for (const key of [
         "OPENCODE_SESSION_ID",
@@ -3195,6 +3313,7 @@ function childEnv(configHome: string): NodeJS.ProcessEnv {
         delete env[key];
     }
     env.XDG_CONFIG_HOME = configHome;
+    env.PWD = cwd;
     return env;
 }
 
@@ -4899,6 +5018,8 @@ function runDescription(
         variant: options.discovery ? "discovery" : "destinations",
         model: options.model,
         judgeModel: options.judgeModel || null,
+        ...(options.condition ? { condition: options.condition } : {}),
+        namingMapVersion: NAMING_MAP_VERSION,
         timeoutMs: options.timeoutMs,
         allowWrites: options.allowWrites === true,
         jobs: options.jobs,
@@ -4911,6 +5032,9 @@ function runDescription(
             mutationPolicy: testCase.mutationPolicy ?? null,
             docsCriterion: testCase.docsCriterion ?? null,
             expectedDocs: testCase.expectedDocs ?? null,
+            ...(scenarioDisplayFor(testCase.id) === undefined
+                ? {}
+                : { display: scenarioDisplayFor(testCase.id) }),
             definition: testCase,
         })),
     };
@@ -5014,6 +5138,17 @@ function runDescriptionConflicts(
                   "orchestration",
               ];
     const conflicts = comparedFieldConflicts(existing, description, compared);
+    // A saved condition is part of the experiment's report identity. Legacy
+    // stamps without one are not relabelled by a new invocation.
+    if (
+        existing.condition !== undefined &&
+        existing.condition !== description.condition
+    ) {
+        conflicts.push(
+            `condition: ${JSON.stringify(existing.condition)} vs ` +
+                `${JSON.stringify(description.condition)}`,
+        );
+    }
     // Full-corpus flows compare the authoritative definitions too, so a
     // corpus edit cannot relabel a frozen experiment.
     if (!containerFlow && !legacy) {
@@ -5071,6 +5206,47 @@ function containerFreezesVerified(
     return true;
 }
 
+/** A new freeze must not label a prepared generation it does not own. */
+function preparedGenerationRefusal(
+    options: CliOptions,
+    selected: TrialCase[],
+): string | null {
+    if (!selectedAreFullDefinitions(selected)) return null;
+    const stale = selected
+        .map((testCase) => ({
+            id: testCase.id,
+            problems: validateGeneration(testCase, options, true).problems,
+        }))
+        .filter((entry) => entry.problems.length > 0);
+    if (stale.length === 0) return null;
+    return (
+        `prepared generation does not match the frozen experiment: ` +
+        stale
+            .map((entry) => `${entry.id} (${entry.problems.join("; ")})`)
+            .join(", ")
+    );
+}
+
+/** Re-verify an existing freeze without rewriting its saved metadata. */
+function existingDescriptionVerified(
+    existing: RunDescription,
+    description: RunDescription,
+    path: string,
+    containerFlow: boolean,
+) {
+    const conflicts = runDescriptionConflicts(
+        existing,
+        description,
+        containerFlow,
+    );
+    if (conflicts.length === 0) return true;
+    console.error(
+        `run.json at ${path} already describes a different ` +
+            `experiment (${conflicts.join("; ")}); use a new --stamp`,
+    );
+    return false;
+}
+
 function ensureRunDescription(
     options: CliOptions,
     stamp: string,
@@ -5093,19 +5269,21 @@ function ensureRunDescription(
         boundaryOf().containerised === true;
     const description = runDescription(options, stamp, selected, command);
     if (existing !== undefined) {
-        const conflicts = runDescriptionConflicts(
+        return existingDescriptionVerified(
             existing,
             description,
+            path,
             containerFlow,
         );
-        if (conflicts.length > 0) {
-            console.error(
-                `run.json at ${path} already describes a different ` +
-                    `experiment (${conflicts.join("; ")}); use a new --stamp`,
-            );
-            return false;
-        }
-        return true;
+    }
+    // A new freeze must not label a prepared generation it does not own.
+    // The full corpus is authoritative here, so a changed model, plugin,
+    // variant or case definition refuses before any container stages a
+    // prompt whose config carries different inputs.
+    const generationRefusal = preparedGenerationRefusal(options, selected);
+    if (generationRefusal !== null) {
+        console.error(generationRefusal);
+        return false;
     }
     if (boundaryOf().containerised === true) {
         // Inside a trial container this stamp's run description is neither
@@ -5879,13 +6057,13 @@ async function runOne(
     const diagnostic = isDiagnosticCase(testCase);
     const callArgs: CallArgs = {
         cwd: join(live, "work"),
-        env: childEnv(join(live, "config-home")),
+        env: childEnv(join(live, "config-home"), join(live, "work")),
         model: options.model,
         title: `placement-${testCase.id}`,
         prompt: readFileSync(promptPath, "utf8"),
         opencode: options.opencode,
         timeoutMs: options.timeoutMs,
-        printLogs: diagnostic,
+        printLogs: diagnostic || options.printLogs,
     };
     const result = await opencodeCall(callArgs);
     timings.modelMs = Date.now() - modelStart;
@@ -5923,19 +6101,21 @@ async function runOne(
     const answerValid = invalidReason === null;
     timings.totalMs = Date.now() - totalStart;
     const configAt = jsonAt(join(callArgs.cwd, "opencode.json"));
-    const invocation = diagnostic
-        ? {
-              command: options.opencode,
-              args: opencodeArgs(callArgs),
-              cwd: callArgs.cwd,
-              startedAt,
-              promptSha256: fileHash(promptPath),
-              config:
-                  configAt.kind === "value"
-                      ? redactedConfig(configAt.value)
-                      : "unreadable",
-          }
-        : null;
+    const invocation =
+        diagnostic || options.printLogs
+            ? {
+                  command: options.opencode,
+                  args: opencodeArgs(callArgs),
+                  cwd: callArgs.cwd,
+                  pwd: callArgs.env.PWD ?? null,
+                  startedAt,
+                  promptSha256: fileHash(promptPath),
+                  config:
+                      configAt.kind === "value"
+                          ? redactedConfig(configAt.value)
+                          : "unreadable",
+              }
+            : null;
 
     writeRunEvidence(
         resultDir,
@@ -6691,7 +6871,7 @@ async function judgeOne(
     const modelStart = Date.now();
     const result = await opencodeCall({
         cwd: join(root, "work"),
-        env: childEnv(join(root, "config-home")),
+        env: childEnv(join(root, "config-home"), join(root, "work")),
         model: judgeModel,
         title: `placement-judge-${testCase.id}-${attempt}`,
         prompt,
@@ -6750,6 +6930,23 @@ function summaryExposure(resultDir: string, trail: ToolTrail | null) {
         : exposureFor(resultDir).join(" + ") || "none";
 }
 
+/** Whether a saved description predates the naming map. */
+function isLegacyRun(runDescription: RunDescription | null) {
+    return (
+        runDescription === null || runDescription.namingMapVersion === undefined
+    );
+}
+
+/** The Scenario cell: saved display, a legacy claim fallback, else the id. */
+function reportedScenario(caseInfo: RunCase | undefined, legacy: boolean) {
+    const id = caseInfo?.id ?? "?";
+    return formatScenarioName(
+        id,
+        caseInfo?.display ?? null,
+        legacy ? (caseInfo?.definition?.claim ?? null) : null,
+    );
+}
+
 function summaryRow(
     runDescription: RunDescription | null,
     caseInfo: RunCase | undefined,
@@ -6767,8 +6964,10 @@ function summaryRow(
             : docsTelemetry(trail.entries, trail.parseFailures);
     const metaAt = metaRecordAt(join(resultDir, "meta.json"));
     const meta = metaAt.kind === "value" ? metaAt.value : {};
+    const legacy = isLegacyRun(runDescription);
     return {
         id: caseInfo?.id ?? "?",
+        scenario: reportedScenario(caseInfo, legacy),
         expected: summaryExpected(caseInfo, runDescription),
         verdict:
             verdictAt.kind === "malformed"
@@ -6847,6 +7046,9 @@ function summaryHeaderLines(run: RunDescription | null, stamp: string) {
         `Run created: ${described.createdAt ?? "unknown (legacy)"}`,
         `Reported: ${new Date().toISOString()} (rendering time, not run time)`,
         `Model: ${described.model ?? "unknown (legacy)"}`,
+        ...(described.condition === undefined
+            ? []
+            : [`Condition: ${described.condition}`]),
         `Variant: ${described.variant ?? "unknown (legacy)"}`,
         `Boundary: ${summaryBoundary(run)}`,
         ...summaryProvenanceLines(
@@ -6859,11 +7061,11 @@ function summaryHeaderLines(run: RunDescription | null, stamp: string) {
 /** The markdown case table of the summary. */
 function summaryTable(rows: SummaryRow[]) {
     return [
-        "| Case | Expected | Verdict | Destination | Writes | Docs | Discovery | Exposure |",
-        "| ---- | -------- | ------- | ----------- | ------ | ---- | --------- | -------- |",
+        "| Scenario | Expected | Verdict | Destination | Writes | Docs | Discovery | Exposure |",
+        "| -------- | -------- | ------- | ----------- | ------ | ---- | --------- | -------- |",
         ...rows.map(
             (row) =>
-                `| ${row.id} | ${row.expected} | ${row.verdict}${row.modelMismatch} | ${row.destination || "-"} | ${row.writes} | ${row.docs} | ${row.discovery} | ${row.exposure} |`,
+                `| ${row.scenario} | ${row.expected} | ${row.verdict}${row.modelMismatch} | ${row.destination || "-"} | ${row.writes} | ${row.docs} | ${row.discovery} | ${row.exposure} |`,
         ),
     ];
 }
@@ -7003,10 +7205,14 @@ function caseMetaLine(meta: MetaRecord) {
 }
 
 /** The dossier section for one case: rubric, prompt, answer, trail, verdict. */
-function caseSection(caseInfo: RunCase | undefined, resultDir: string) {
+function caseSection(
+    caseInfo: RunCase | undefined,
+    resultDir: string,
+    legacy: boolean = false,
+) {
     const metaAt = metaRecordAt(join(resultDir, "meta.json"));
     const meta = metaAt.kind === "value" ? metaAt.value : {};
-    const id = caseInfo?.id ?? "?";
+    const scenario = reportedScenario(caseInfo, legacy);
     const expected = caseInfo?.expected ?? "(unknown — legacy run)";
     const diagnostic = resultIsDiagnostic(resultDir)
         ? diagnosticFor(resultDir)
@@ -7014,7 +7220,7 @@ function caseSection(caseInfo: RunCase | undefined, resultDir: string) {
     return [
         "---",
         "",
-        `## ${id} — Expected: ${expected}`,
+        `## ${scenario} — Expected: ${expected}`,
         "",
         ...artifactSection(resultDir, "### Rubric", "rubric.md"),
         ...artifactSection(
@@ -7097,6 +7303,9 @@ function dossierRunLines(run: RunDescription | null) {
         `- Run created: ${described.createdAt ?? "unknown (legacy)"}`,
         `- Reported: ${new Date().toISOString()} (rendering time, not run time)`,
         `- Trial model: ${described.model ?? "unknown (legacy)"}`,
+        ...(described.condition === undefined
+            ? []
+            : [`- Condition: ${described.condition}`]),
         `- Variant: ${described.variant ?? "unknown (legacy)"}`,
     ];
 }
@@ -7151,6 +7360,7 @@ function exportDossier(options: CliOptions, stamp: string) {
     const run = runAt.kind === "absent" ? null : runAt.value;
     const parts = dossierHeader(options, stamp, run);
     let cases = 0;
+    const legacy = isLegacyRun(run);
     const ids =
         run?.caseIds ??
         readdirSync(stampDir, { withFileTypes: true })
@@ -7169,6 +7379,7 @@ function exportDossier(options: CliOptions, stamp: string) {
             ...caseSection(
                 run?.cases?.find((entry: RunCase) => entry.id === id),
                 resultDir,
+                legacy,
             ),
         );
     }
