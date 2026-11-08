@@ -31,12 +31,8 @@
         ],
         "docsCriterion": {
             "minVerifiedCalls": 1,
-            "verbs": [
-                "read"
-            ],
-            "paths": [
-                "kb/test-commands.md"
-            ]
+            "verbs": ["read"],
+            "paths": ["kb/test-commands.md"]
         },
         "expectedDocs": null,
         "mutationPolicy": null

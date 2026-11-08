@@ -652,12 +652,7 @@ const DEFAULTS: DefaultedOptions = {
 
 /** Letters where a bare switch flag lands in `CliOptions`. */
 type BooleanSwitch =
-    | "force"
-    | "noJudge"
-    | "allowWrites"
-    | "discovery"
-    | "printLogs"
-    | "help";
+    "force" | "noJudge" | "allowWrites" | "discovery" | "printLogs" | "help";
 
 const SWITCHES: Record<string, BooleanSwitch> = {
     "--force": "force",
@@ -773,6 +768,23 @@ function applyFlag(options: CliOptions, arg: string, argv: string[]) {
         options[flagKey] = true;
         return true;
     }
+    return applyValueFlag(options, arg, argv);
+}
+
+/** Resolve and validate a condition flag's report phrase. */
+function conditionOption(raw: string, arg: string) {
+    const label = conditionLabel(raw);
+    if (label === undefined) {
+        usage(
+            `${arg} must name a known condition: ` +
+                "A, A2, B, C or a descriptive condition",
+        );
+    }
+    return label;
+}
+
+/** Apply one value-taking flag; false when the argument takes no value. */
+function applyValueFlag(options: CliOptions, arg: string, argv: string[]) {
     const spec = VALUE_FLAGS[arg];
     if (!spec) return false;
     if (argv.length === 0) usage(`${arg} needs a value`);
@@ -787,18 +799,12 @@ function applyFlag(options: CliOptions, arg: string, argv: string[]) {
         return true;
     }
     const key = spec.key;
-    if (key === "condition") {
-        const label = conditionLabel(raw);
-        if (label === undefined) {
-            usage(
-                `${arg} must name a known condition: ` +
-                    "A, A2, B, C or a descriptive condition",
-            );
-        }
-        options.condition = label;
-        return true;
-    }
-    options[key] = spec.path === true ? resolve(raw) : raw;
+    options[key] =
+        key === "condition"
+            ? conditionOption(raw, arg)
+            : spec.path === true
+              ? resolve(raw)
+              : raw;
     return true;
 }
 
@@ -1398,6 +1404,41 @@ function runCasesShape(
     return out;
 }
 
+/** Instrumentation copies one frozen slice may carry; each is validated. */
+function frozenInstrumentationProblems(
+    entry: Record<string, unknown>,
+    prefix: string,
+): string[] {
+    const out: string[] = [];
+    for (const [field, shape] of [
+        ["mutationPolicy", mutationPolicyShape],
+        ["docsCriterion", docsCriterionShape],
+        ["expectedDocs", expectedDocsShape],
+    ] as const) {
+        if (entry[field] === undefined) continue;
+        out.push(
+            ...shape(entry[field]).map(
+                (problem) => `${prefix}.${field}: ${problem}`,
+            ),
+        );
+    }
+    return out;
+}
+
+/** Problems with an optional saved display identity. */
+function frozenDisplayProblems(display: unknown, prefix: string): string[] {
+    if (display === undefined) return [];
+    if (!isRecord(display)) return [`${prefix}.display must be a JSON object`];
+    const out: string[] = [];
+    if (typeof display.displayId !== "string" || display.displayId === "") {
+        out.push(`${prefix}.display.displayId must be a nonempty string`);
+    }
+    if (typeof display.title !== "string" || display.title === "") {
+        out.push(`${prefix}.display.title must be a nonempty string`);
+    }
+    return out;
+}
+
 /**
  * The problems with one frozen per-case slice: its id, its instrumentation
  * copies (policy, criterion, artefact expectation), and — depending on the
@@ -1419,36 +1460,8 @@ function frozenSliceProblems(
     if (typeof entry.id !== "string" || entry.id === "") {
         out.push(`${prefix}.id must be a nonempty string`);
     }
-    for (const [field, shape] of [
-        ["mutationPolicy", mutationPolicyShape],
-        ["docsCriterion", docsCriterionShape],
-        ["expectedDocs", expectedDocsShape],
-    ] as const) {
-        if (entry[field] === undefined) continue;
-        out.push(
-            ...shape(entry[field]).map(
-                (problem) => `${prefix}.${field}: ${problem}`,
-            ),
-        );
-    }
-    if (entry.display !== undefined) {
-        if (!isRecord(entry.display)) {
-            out.push(`${prefix}.display must be a JSON object`);
-        } else {
-            if (
-                typeof entry.display.displayId !== "string" ||
-                entry.display.displayId === ""
-            ) {
-                out.push(`${prefix}.display.displayId must be a nonempty string`);
-            }
-            if (
-                typeof entry.display.title !== "string" ||
-                entry.display.title === ""
-            ) {
-                out.push(`${prefix}.display.title must be a nonempty string`);
-            }
-        }
-    }
+    out.push(...frozenInstrumentationProblems(entry, prefix));
+    out.push(...frozenDisplayProblems(entry.display, prefix));
     if (entry.definition === undefined) {
         if (definitionMode === "full") {
             out.push(`${prefix}.definition is required for a v2 case`);
@@ -5193,6 +5206,47 @@ function containerFreezesVerified(
     return true;
 }
 
+/** A new freeze must not label a prepared generation it does not own. */
+function preparedGenerationRefusal(
+    options: CliOptions,
+    selected: TrialCase[],
+): string | null {
+    if (!selectedAreFullDefinitions(selected)) return null;
+    const stale = selected
+        .map((testCase) => ({
+            id: testCase.id,
+            problems: validateGeneration(testCase, options, true).problems,
+        }))
+        .filter((entry) => entry.problems.length > 0);
+    if (stale.length === 0) return null;
+    return (
+        `prepared generation does not match the frozen experiment: ` +
+        stale
+            .map((entry) => `${entry.id} (${entry.problems.join("; ")})`)
+            .join(", ")
+    );
+}
+
+/** Re-verify an existing freeze without rewriting its saved metadata. */
+function existingDescriptionVerified(
+    existing: RunDescription,
+    description: RunDescription,
+    path: string,
+    containerFlow: boolean,
+) {
+    const conflicts = runDescriptionConflicts(
+        existing,
+        description,
+        containerFlow,
+    );
+    if (conflicts.length === 0) return true;
+    console.error(
+        `run.json at ${path} already describes a different ` +
+            `experiment (${conflicts.join("; ")}); use a new --stamp`,
+    );
+    return false;
+}
+
 function ensureRunDescription(
     options: CliOptions,
     stamp: string,
@@ -5215,43 +5269,21 @@ function ensureRunDescription(
         boundaryOf().containerised === true;
     const description = runDescription(options, stamp, selected, command);
     if (existing !== undefined) {
-        const conflicts = runDescriptionConflicts(
+        return existingDescriptionVerified(
             existing,
             description,
+            path,
             containerFlow,
         );
-        if (conflicts.length > 0) {
-            console.error(
-                `run.json at ${path} already describes a different ` +
-                    `experiment (${conflicts.join("; ")}); use a new --stamp`,
-            );
-            return false;
-        }
-        return true;
     }
     // A new freeze must not label a prepared generation it does not own.
     // The full corpus is authoritative here, so a changed model, plugin,
     // variant or case definition refuses before any container stages a
     // prompt whose config carries different inputs.
-    if (selectedAreFullDefinitions(selected)) {
-        const stale = selected
-            .map((testCase) => ({
-                id: testCase.id,
-                problems: validateGeneration(testCase, options, true).problems,
-            }))
-            .filter((entry) => entry.problems.length > 0);
-        if (stale.length > 0) {
-            console.error(
-                `prepared generation does not match the frozen experiment: ` +
-                    stale
-                        .map(
-                            (entry) =>
-                                `${entry.id} (${entry.problems.join("; ")})`,
-                        )
-                        .join(", "),
-            );
-            return false;
-        }
+    const generationRefusal = preparedGenerationRefusal(options, selected);
+    if (generationRefusal !== null) {
+        console.error(generationRefusal);
+        return false;
     }
     if (boundaryOf().containerised === true) {
         // Inside a trial container this stamp's run description is neither
@@ -6898,6 +6930,13 @@ function summaryExposure(resultDir: string, trail: ToolTrail | null) {
         : exposureFor(resultDir).join(" + ") || "none";
 }
 
+/** Whether a saved description predates the naming map. */
+function isLegacyRun(runDescription: RunDescription | null) {
+    return (
+        runDescription === null || runDescription.namingMapVersion === undefined
+    );
+}
+
 /** The Scenario cell: saved display, a legacy claim fallback, else the id. */
 function reportedScenario(caseInfo: RunCase | undefined, legacy: boolean) {
     const id = caseInfo?.id ?? "?";
@@ -6925,9 +6964,7 @@ function summaryRow(
             : docsTelemetry(trail.entries, trail.parseFailures);
     const metaAt = metaRecordAt(join(resultDir, "meta.json"));
     const meta = metaAt.kind === "value" ? metaAt.value : {};
-    const legacy =
-        runDescription === null ||
-        runDescription.namingMapVersion === undefined;
+    const legacy = isLegacyRun(runDescription);
     return {
         id: caseInfo?.id ?? "?",
         scenario: reportedScenario(caseInfo, legacy),
@@ -7323,6 +7360,7 @@ function exportDossier(options: CliOptions, stamp: string) {
     const run = runAt.kind === "absent" ? null : runAt.value;
     const parts = dossierHeader(options, stamp, run);
     let cases = 0;
+    const legacy = isLegacyRun(run);
     const ids =
         run?.caseIds ??
         readdirSync(stampDir, { withFileTypes: true })
@@ -7341,7 +7379,7 @@ function exportDossier(options: CliOptions, stamp: string) {
             ...caseSection(
                 run?.cases?.find((entry: RunCase) => entry.id === id),
                 resultDir,
-                run === null || run.namingMapVersion === undefined,
+                legacy,
             ),
         );
     }

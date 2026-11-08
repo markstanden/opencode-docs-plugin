@@ -11,7 +11,9 @@ export const NAMING_MAP_VERSION = 1;
 
 /** One scenario's display identity. */
 export interface ScenarioDisplay {
+    /** The readable, stable report name, such as `REUSE-01`. */
     displayId: string;
+    /** The short task title shown after the display id. */
     title: string;
 }
 
@@ -21,8 +23,14 @@ export interface ScenarioDisplay {
  * own ids. A01 is the implemented implementation-diagnostic control.
  */
 export const SCENARIO_DISPLAY: Readonly<Record<string, ScenarioDisplay>> = {
-    E01: { displayId: "PLACE-01", title: "Place the search-index design decision" },
-    E02: { displayId: "PLACE-02", title: "Place Kylo's Secure Boot requirement" },
+    E01: {
+        displayId: "PLACE-01",
+        title: "Place the search-index design decision",
+    },
+    E02: {
+        displayId: "PLACE-02",
+        title: "Place Kylo's Secure Boot requirement",
+    },
     E03: { displayId: "PLACE-03", title: "Place personal editor preferences" },
     E04: {
         displayId: "PLACE-04",
@@ -32,12 +40,18 @@ export const SCENARIO_DISPLAY: Readonly<Record<string, ScenarioDisplay>> = {
         displayId: "PLACE-05",
         title: "Keep the SDK finding within its proven scope",
     },
-    E06: { displayId: "PLACE-06", title: "Choose where test instructions belong" },
+    E06: {
+        displayId: "PLACE-06",
+        title: "Choose where test instructions belong",
+    },
     E07: {
         displayId: "PLACE-07",
         title: "Place a diagnosed regression and its evidence",
     },
-    E08: { displayId: "PLACE-08", title: "Route an onboarding narrative to the wiki" },
+    E08: {
+        displayId: "PLACE-08",
+        title: "Route an onboarding narrative to the wiki",
+    },
     E09: {
         displayId: "PLACE-09",
         title: "Place a service exception to an existing policy",
@@ -150,9 +164,14 @@ export function scenarioDisplayFor(id: string): ScenarioDisplay | undefined {
  * Resolve a condition code or descriptive value to its report phrase.
  * @returns The phrase, or undefined when the value is not a known condition.
  */
-export function conditionLabel(value: string | null | undefined): string | undefined {
+export function conditionLabel(
+    value: string | null | undefined,
+): string | undefined {
     if (value === null || value === undefined) return undefined;
-    const key = value.trim().toLowerCase().replace(/[_\s]+/g, "-");
+    const key = value
+        .trim()
+        .toLowerCase()
+        .replace(/[_\s]+/g, "-");
     return CONDITION_LABELS[key];
 }
 

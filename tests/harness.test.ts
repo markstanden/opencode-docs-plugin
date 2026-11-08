@@ -2712,9 +2712,14 @@ test("F12: the redacted cache follows generation identity, not corpus bytes", ()
     // Act: run the same generation twice (reuse), then regenerate for a
     // different model and run again.
     const runOne = () =>
-        runWrapper(root, fake, ["run", "T01", "--stamp", "one", "--model", "x/one"], {
-            PATH: stubDir + ":" + process.env.PATH,
-        });
+        runWrapper(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "one", "--model", "x/one"],
+            {
+                PATH: stubDir + ":" + process.env.PATH,
+            },
+        );
     const firstRun = runOne();
     assert.equal(firstRun.status, 0, firstRun.stderr);
     const firstFiles = readdirSync(join(root, "run-fixtures")).filter((name) =>
@@ -2724,8 +2729,7 @@ test("F12: the redacted cache follows generation identity, not corpus bytes", ()
     assert.ok(firstFile, "the first run stages one redacted list");
     assert.equal(firstFiles.length, 1);
     assert.equal(
-        readJson(join(root, "run-fixtures", firstFile))[0]
-            .generationInputsHash,
+        readJson(join(root, "run-fixtures", firstFile))[0].generationInputsHash,
         readJson(join(first.paths.fixtures, "T01", "generation.json"))
             .inputsHash,
     );
@@ -2846,14 +2850,7 @@ test("PWD: the harness child's PWD is the cwd it was spawned in", () => {
     const run = runHarness(
         root,
         fake,
-        [
-            "run",
-            "T01",
-            "--stamp",
-            "s1",
-            "--print-logs",
-            ...commandArgs(paths),
-        ],
+        ["run", "T01", "--stamp", "s1", "--print-logs", ...commandArgs(paths)],
         { PWD: inherited, FAKE_CHILD_PROBE: probe },
     );
 
@@ -6431,10 +6428,20 @@ test("CONTROL: the explicit read variant keeps its authored prompt and seed", ()
         readFileSync(join(paths.prompts, "R01.md"), "utf8"),
         control.diagnosticPrompt,
     );
-    assert.match(control.diagnosticPrompt, /operation-level documentation call/);
+    assert.match(
+        control.diagnosticPrompt,
+        /operation-level documentation call/,
+    );
     assert.equal(
         readFileSync(
-            join(paths.fixtures, "R01", "lakes", "docs", "kb", "test-commands.md"),
+            join(
+                paths.fixtures,
+                "R01",
+                "lakes",
+                "docs",
+                "kb",
+                "test-commands.md",
+            ),
             "utf8",
         ),
         control.seeds[0]?.contents,
