@@ -3431,6 +3431,231 @@ test("M05: mutation evidence edited after the run is refused, not graded", () =>
     rmRoot(root);
 });
 
+/* ------------------------------------------------------------------ *
+ * C01 — the recording gate does not punish necessary ancestors, and
+ * rejects docs the plugin would never collect
+ * ------------------------------------------------------------------ */
+
+/** The actual corpus case, so the regressions exercise the shipped shapes. */
+const corpusCaseById = (id: string): Record<string, unknown> => {
+    const cases = readJson(
+        join(HERE, "fixtures", "trial-cases.json"),
+    ) as Array<Record<string, unknown>>;
+    const found = cases.find((entry) => entry.id === id);
+    if (found === undefined) throw new Error(`no corpus case ${id}`);
+    return found;
+};
+
+/** A deterministically valid record.md body (the W01 finding). */
+const VALID_RECORD_DOC =
+    [
+        "---",
+        "Area: docs",
+        "Keywords: publication, lock, rename",
+        "Summary: The publication lock only coordinates beside its target.",
+        "---",
+        "",
+        "# Publication lock beside its target",
+        "",
+        "### Facts",
+        "",
+        "- The cross-device rename proved the lock must sit beside its target.",
+    ].join("\n") + "\n";
+
+test("C01: a valid doc in a new subdirectory judges — its ancestor directory is necessary, not unrelated", () => {
+    const root = newRoot("c01-new-area");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [corpusCaseById("W01")]);
+    const hook = file(
+        root,
+        "record.sh",
+        "#!/bin/sh\nmkdir -p ../lakes/docs/decisions\ncat > ../lakes/docs/decisions/record.md <<'EOD'\n" +
+            VALID_RECORD_DOC +
+            "EOD\n",
+    );
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "W01", "--stamp", "s1", ...commandArgs(paths)],
+            {
+                FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()),
+                FAKE_TRIAL_HOOK: hook,
+            },
+            20_000,
+        ).status,
+        0,
+    );
+    const marker = file(root, "judge-invoked", "");
+    const judge = runHarness(
+        root,
+        fake,
+        ["judge", "W01", "--stamp", "s1", ...commandArgs(paths)],
+        {
+            FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()),
+            FAKE_JUDGE_HOOK: markerHook(root, marker),
+        },
+    );
+    assert.equal(judge.status, 0, judge.stderr);
+    assert.equal(
+        readJson(join(paths.results, "s1", "W01", "verdict.json")).verdict,
+        "pass",
+    );
+    assert.equal(
+        readFileSync(marker, "utf8"),
+        "invoked\n",
+        "the artefact gate must not block a necessary ancestor directory",
+    );
+    rmRoot(root);
+});
+
+test("C01: a valid doc created in the existing docs area judges", () => {
+    const root = newRoot("c01-existing-area");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [corpusCaseById("W01")]);
+    const hook = file(
+        root,
+        "record.sh",
+        "#!/bin/sh\ncat > ../lakes/docs/w01-record.md <<'EOD'\n" +
+            VALID_RECORD_DOC +
+            "EOD\n",
+    );
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "W01", "--stamp", "s1", ...commandArgs(paths)],
+            {
+                FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()),
+                FAKE_TRIAL_HOOK: hook,
+            },
+            20_000,
+        ).status,
+        0,
+    );
+    const judge = runHarness(
+        root,
+        fake,
+        ["judge", "W01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+    );
+    assert.equal(judge.status, 0, judge.stderr);
+    assert.equal(
+        readJson(join(paths.results, "s1", "W01", "verdict.json")).verdict,
+        "pass",
+    );
+    rmRoot(root);
+});
+
+test("C01: an extra unrelated directory beside a valid creation fails the gate", () => {
+    const root = newRoot("c01-extra-dir");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [corpusCaseById("W01")]);
+    const hook = file(
+        root,
+        "record.sh",
+        "#!/bin/sh\nmkdir -p ../lakes/docs/decisions ../lakes/docs/extra-dir\ncat > ../lakes/docs/decisions/record.md <<'EOD'\n" +
+            VALID_RECORD_DOC +
+            "EOD\n",
+    );
+    runHarness(
+        root,
+        fake,
+        ["run", "W01", "--stamp", "s1", ...commandArgs(paths)],
+        {
+            FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()),
+            FAKE_TRIAL_HOOK: hook,
+        },
+        20_000,
+    );
+    const judge = runHarness(
+        root,
+        fake,
+        ["judge", "W01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+    );
+    assert.notEqual(judge.status, 0);
+    const verdict = readJson(join(paths.results, "s1", "W01", "verdict.json"));
+    assert.match(verdict.reason, /unrelated change/);
+    assert.match(verdict.reason, /extra-dir/);
+    rmRoot(root);
+});
+
+test("C01: a hidden doc is an uncollectable target, refused before any semantic judge", () => {
+    const root = newRoot("c01-hidden");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [corpusCaseById("W01")]);
+    const hook = file(
+        root,
+        "hidden.sh",
+        "#!/bin/sh\ncat > ../lakes/docs/.hidden.md <<'EOD'\n" +
+            VALID_RECORD_DOC +
+            "EOD\n",
+    );
+    runHarness(
+        root,
+        fake,
+        ["run", "W01", "--stamp", "s1", ...commandArgs(paths)],
+        {
+            FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()),
+            FAKE_TRIAL_HOOK: hook,
+        },
+        20_000,
+    );
+    const marker = file(root, "judge-invoked", "");
+    const judge = runHarness(
+        root,
+        fake,
+        ["judge", "W01", "--stamp", "s1", ...commandArgs(paths)],
+        {
+            FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()),
+            FAKE_JUDGE_HOOK: markerHook(root, marker),
+        },
+    );
+    assert.notEqual(judge.status, 0);
+    const verdict = readJson(join(paths.results, "s1", "W01", "verdict.json"));
+    assert.match(verdict.reason, /collectable/);
+    assert.equal(
+        readFileSync(marker, "utf8"),
+        "",
+        "the collection rule must fire before the semantic judge",
+    );
+    rmRoot(root);
+});
+
+test("C01: a doc in an excluded knowledge area is an uncollectable target", () => {
+    const root = newRoot("c01-excluded-area");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [corpusCaseById("W01")]);
+    const hook = file(
+        root,
+        "plans.sh",
+        "#!/bin/sh\nmkdir -p ../lakes/docs/plans\ncat > ../lakes/docs/plans/record.md <<'EOD'\n" +
+            VALID_RECORD_DOC +
+            "EOD\n",
+    );
+    runHarness(
+        root,
+        fake,
+        ["run", "W01", "--stamp", "s1", ...commandArgs(paths)],
+        {
+            FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()),
+            FAKE_TRIAL_HOOK: hook,
+        },
+        20_000,
+    );
+    const judge = runHarness(
+        root,
+        fake,
+        ["judge", "W01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+    );
+    assert.notEqual(judge.status, 0);
+    const verdict = readJson(join(paths.results, "s1", "W01", "verdict.json"));
+    assert.match(verdict.reason, /collectable/);
+    rmRoot(root);
+});
+
 test("F04: a recording minimum invalidates a run that wrote nothing", () => {
     const root = newRoot("f04-minwrites");
     const fake = writeFakeOpencode(root);

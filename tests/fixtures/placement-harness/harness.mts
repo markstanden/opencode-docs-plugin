@@ -2659,13 +2659,82 @@ function recordedDocBytes(liveDir: string, snapshot: Snapshot, path: string) {
     }
 }
 
+/** The plugin's collection rule skips these areas in a knowledge lake's root. */
+const KNOWLEDGE_EXCLUDED_AREAS = ["plans", "requirements", "wiki"];
+
+/**
+ * The lake-root anchors the case's own mutation policy implies: a `x/**`
+ * pattern authorises exactly the tree at `x`, so the collection rule can be
+ * applied lake-relative without recomputing the trial's lake config.
+ */
+function policyLakeRoots(evidence: MutationEvidence, definition: TrialCase) {
+    return (definition.mutationPolicy?.allowed ?? [])
+        .filter((pattern) => pattern.endsWith("/**"))
+        .map((pattern) => pattern.slice(0, -3));
+}
+
+/**
+ * The plugin's collection rule, mirrored from `uncollectedSegment`: the
+ * first lake-relative segment that keeps a doc out of the index, or null
+ * when collection reaches it. Dot directories and `node_modules` are
+ * skipped at any depth; knowledge lakes skip the scratch/mirror areas at
+ * the top only. (ponytail: every sandbox lake is knowledge-profiled, so the
+ * wiki-profile exemption is not modelled — a wiki-lake recording criterion
+ * would over-reject here.)
+ * @returns The refusal detail, or null when the doc is collectable.
+ */
+function uncollectableDocReason(
+    path: string,
+    roots: string[],
+): string | null {
+    for (const root of roots) {
+        if (path !== root && !path.startsWith(`${root}/`)) continue;
+        const segments = path.slice(root.length + 1).split("/");
+        for (const [index, segment] of segments.entries()) {
+            if (segment.startsWith(".") || segment === "node_modules") {
+                return `hidden or ignored segment '${segment}' — the plugin's collector never indexes it`;
+            }
+            if (
+                index === 0 &&
+                (KNOWLEDGE_EXCLUDED_AREAS as string[]).includes(segment)
+            ) {
+                return `scratch or mirror area '${segment}' — knowledge lakes never collect it`;
+            }
+        }
+        return null;
+    }
+    return null;
+}
+
+/**
+ * Newly added directories that are plain ancestors of an expected path:
+ * creating `a/b/c.md` must create `a` and `a/b`, so the parent-of chain of
+ * an expected document is necessary mutation evidence, not an unrelated
+ * surface change. Everything else — unrelated empty directories, symlinks,
+ * mode changes, extra files — still counts.
+ * @returns The added ancestor-directory paths of the expected docs.
+ */
+function necessaryAncestorDirs(
+    evidence: MutationEvidence,
+    expectedPaths: string[],
+): string[] {
+    return evidence.diff.added.filter(
+        (path) =>
+            evidence.snapshot.entries.get(path)?.kind === "dir" &&
+            expectedPaths.some((expected) =>
+                expected.startsWith(`${path}/`),
+            ),
+    );
+}
+
 /** Whether anything besides the expected paths changed inside the surface. */
 function unrelatedSurfaceChangeProblem(
     evidence: MutationEvidence,
     expectedPaths: string[],
 ): string | null {
+    const permitted = [...expectedPaths, ...necessaryAncestorDirs(evidence, expectedPaths)];
     const others = evidence.surfaceTouched.filter(
-        ([path]) => !expectedPaths.includes(path),
+        ([path]) => !permitted.includes(path),
     );
     if (others.length === 0) return null;
     return (
@@ -2709,10 +2778,11 @@ function replaceDocVerdict(
     };
 }
 
-/** Create-verb expectations: exactly one valid knowledge doc on the surface. */
+/** Create-verb expectations: exactly one valid, collectable knowledge doc. */
 function createDocVerdict(
     evidence: MutationEvidence,
     expectation: ExpectedDocs,
+    definition: TrialCase,
 ): GateVerdict {
     const candidates = evidence.diff.added
         .filter((path) => evidence.onSurface(path) && path.endsWith(".md"))
@@ -2739,6 +2809,18 @@ function createDocVerdict(
     if (text === null) {
         return {
             problem: `created doc ${path} is not a readable regular file`,
+        };
+    }
+    const uncollectable = uncollectableDocReason(
+        path,
+        policyLakeRoots(evidence, definition),
+    );
+    if (uncollectable !== null) {
+        return {
+            problem:
+                `created doc ${path} is not collectable knowledge ` +
+                `(${uncollectable}): a recording case cannot be satisfied ` +
+                "by a doc the plugin never indexes",
         };
     }
     const content = docContentProblem(path, text, expectation, "created");
@@ -2802,7 +2884,7 @@ function expectedDocsGate(
     const verdict =
         expectation.kind === "replace"
             ? replaceDocVerdict(evidence, expectation)
-            : createDocVerdict(evidence, expectation);
+            : createDocVerdict(evidence, expectation, definition);
     return { ...verdict, artifacts: verdict.artifacts ?? [] };
 }
 
