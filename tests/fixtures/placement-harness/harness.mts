@@ -188,9 +188,6 @@ interface CliOptions {
     stamp?: string;
 }
 
-/** The mutable options object during flag parsing. */
-type MutableCliOptions = CliOptions;
-
 /**
  * One raw CLI tool part, exactly as `opencode run --format json` emits it:
  * the payload fields sit inside `state`, and repeated events for one call
@@ -497,9 +494,6 @@ interface SummaryRow {
 /** One outcome in the ordered worker-pool results. */
 type PoolOutcome = { ok: true; value: number } | { ok: false; error: unknown };
 
-/** A worker processes one selected trial case and leaves a status code. */
-type WorkerFn = (testCase: TrialCase, index: number) => Promise<number>;
-
 /** What a sweep-style command should do, derived once. */
 interface Plan {
     generates: boolean;
@@ -533,7 +527,6 @@ interface AttemptMetaArgs {
     problems: string[];
     judgeStatus: string;
 }
-
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_FIXTURE = resolve(HERE, "..", "placement-cases.json");
@@ -781,7 +774,9 @@ function loadCases(fixturePath: string, requireFull: boolean): TrialCase[] {
         if (
             requireFull &&
             (typeof (entry as { claim?: unknown }).claim !== "string" ||
-                !Array.isArray((entry as { destinations?: unknown }).destinations))
+                !Array.isArray(
+                    (entry as { destinations?: unknown }).destinations,
+                ))
         ) {
             usage(
                 `corpus ${fixturePath}: case ${id} is a redacted entry; ` +
@@ -909,7 +904,11 @@ function toolOutput(value: unknown) {
  *   prove its stream ended on an answer rather than a mid-turn tool call.
  */
 /** The call state after folding one tool part over the previous entry: latest state wins. */
-function mergedToolCall(previous: ToolCall, part: RawToolPart, id: string): ToolCall {
+function mergedToolCall(
+    previous: ToolCall,
+    part: RawToolPart,
+    id: string,
+): ToolCall {
     const state = isRecord(part.state) ? part.state : undefined;
     return {
         ...previous,
@@ -936,7 +935,8 @@ function extractEvent(
     calls: Map<string, ToolCall>,
     unkeyed: UnkeyedCounter,
 ): "text" | "tool" | null {
-    const part: unknown = !isRecord(event) || event.part === undefined ? event : event.part;
+    const part: unknown =
+        !isRecord(event) || event.part === undefined ? event : event.part;
     if (!isRecord(part)) return null;
     if (part.type === "text" && typeof part.text === "string") {
         texts.push(part.text);
@@ -1015,7 +1015,9 @@ const isCodeModeDocs = (entry: ToolCall): boolean =>
     CODE_MODE_DOCS.test(entry.input.code);
 
 /** The docs family an entry belongs to: "code-mode", "native", "twin", or null. */
-function docsEntryKind(entry: ToolCall): "code-mode" | "native" | "twin" | null {
+function docsEntryKind(
+    entry: ToolCall,
+): "code-mode" | "native" | "twin" | null {
     const native = entry.tool === "docs" || entry.tool === "docs_search";
     if (isCodeModeDocs(entry)) return "code-mode";
     return native ? (entry.tool === "docs" ? "native" : "twin") : null;
@@ -1154,9 +1156,7 @@ function codeModeVerbOf(code: string | undefined): string {
     if (/\.check\s*\(/.test(source)) return "check";
     if (/\.read\s*\(/.test(source)) return "read";
     if (/search\s*[(:]/.test(source)) {
-        return /search\s*[(:]\s*["'`]\s*help\s*["'`]/.test(
-            source,
-        )
+        return /search\s*[(:]\s*["'`]\s*help\s*["'`]/.test(source)
             ? "help"
             : "search";
     }
@@ -1610,7 +1610,10 @@ function certificationMap(entries: Map<string, TreeEntry>) {
  * Every recorded entry must exist with an identical identity, and the
  * prepared tree must contain nothing the record does not know.
  */
-function certificationProblems(actual: Map<string, TreeEntry>, expected: Record<string, TreeEntry> | undefined) {
+function certificationProblems(
+    actual: Map<string, TreeEntry>,
+    expected: Record<string, TreeEntry> | undefined,
+) {
     if (!expected || typeof expected !== "object") {
         return [
             "the generation record certifies no prepared tree " +
@@ -1690,7 +1693,10 @@ function seedFixture(testCase: FullTrialCase, caseDir: string) {
  * configuration: the case definition, the generator/template version, the
  * model baked into the config, the plugin identity and the variant flags.
  */
-function generationInputsHash(testCase: TrialCase, options: CliOptions): string {
+function generationInputsHash(
+    testCase: TrialCase,
+    options: CliOptions,
+): string {
     return sha256(
         JSON.stringify({
             generationVersion: GENERATION_VERSION,
@@ -1729,7 +1735,11 @@ function generationOutputs(testCase: FullTrialCase, options: CliOptions) {
 }
 
 /** Whether the recorded prompt, config and (when present) rubric are byte-intact. */
-function fixtureOutputsIntact(options: CliOptions, fixture: FixturePaths, outputs: GenerationOutputs) {
+function fixtureOutputsIntact(
+    options: CliOptions,
+    fixture: FixturePaths,
+    outputs: GenerationOutputs,
+) {
     const matches = (path: string, text: string): boolean =>
         existsSync(path) && readFileSync(path, "utf8") === text;
     return (
@@ -1795,7 +1805,12 @@ function reusedFixtureRefusal(
 }
 
 /** Write one case's generated prompt, rubric, case.json, config and generation record. */
-function writeGeneratedFixture(testCase: FullTrialCase, options: CliOptions, fingerprint: string, fixture: FixturePaths) {
+function writeGeneratedFixture(
+    testCase: FullTrialCase,
+    options: CliOptions,
+    fingerprint: string,
+    fixture: FixturePaths,
+) {
     const outputs = generationOutputs(testCase, options);
     buildFixtureTree(testCase, fixture.caseDir);
     write(fixture.promptPath, outputs.promptText);
@@ -1884,8 +1899,7 @@ function generateAll(options: CliOptions): number {
                 testCase.id,
                 {
                     status: "incomplete",
-                    detail:
-                        "case entry lacks the claim/destinations a generation renders from",
+                    detail: "case entry lacks the claim/destinations a generation renders from",
                 },
             ]);
             failures += 1;
@@ -1961,7 +1975,11 @@ function selectedAreFullDefinitions(selected: TrialCase[]) {
 }
 
 /** Output-hash problems for the rubric, when this host can see one. */
-function rubricOutputProblems(stored: GenerationRecord, testCase: TrialCase, options: CliOptions) {
+function rubricOutputProblems(
+    stored: GenerationRecord,
+    testCase: TrialCase,
+    options: CliOptions,
+) {
     if (!existsSync(options.rubrics)) return [];
     const rubricPath = join(options.rubrics, testCase.id, "rubric.md");
     if (!existsSync(rubricPath)) return ["no rubric generated"];
@@ -1972,7 +1990,11 @@ function rubricOutputProblems(stored: GenerationRecord, testCase: TrialCase, opt
 }
 
 /** Output-hash problems for one prepared generation (prompt/config/rubric). */
-function generationOutputProblems(stored: GenerationRecord, testCase: TrialCase, options: CliOptions) {
+function generationOutputProblems(
+    stored: GenerationRecord,
+    testCase: TrialCase,
+    options: CliOptions,
+) {
     const problems = [];
     const promptPath = join(options.prompts, `${testCase.id}.md`);
     const configPath = join(
@@ -1992,7 +2014,12 @@ function generationOutputProblems(stored: GenerationRecord, testCase: TrialCase,
 }
 
 /** Input-fingerprint problems: recomputed on full flows; receipts in flows without one. */
-function generationInputProblems(testCase: TrialCase, options: CliOptions, corpusComplete: boolean, stored: GenerationRecord) {
+function generationInputProblems(
+    testCase: TrialCase,
+    options: CliOptions,
+    corpusComplete: boolean,
+    stored: GenerationRecord,
+) {
     if (corpusComplete) {
         const current = generationInputsHash(testCase, options);
         if (stored.inputsHash !== current) {
@@ -2015,7 +2042,11 @@ function generationInputProblems(testCase: TrialCase, options: CliOptions, corpu
 }
 
 /** The prepared-tree identities to certify, rewalked against the record. */
-function preparedTreeProblems(stored: GenerationRecord, testCase: TrialCase, options: CliOptions) {
+function preparedTreeProblems(
+    stored: GenerationRecord,
+    testCase: TrialCase,
+    options: CliOptions,
+) {
     const caseFixture = join(options.fixtures, testCase.id);
     return certificationProblems(
         certifiedTreeSnapshot(caseFixture),
@@ -2237,26 +2268,55 @@ function snapshotLive(live: string) {
 }
 
 /** The change label between two entries of the same kind. */
-function sameKindChangeLabel(kind: string, before: TreeEntry, after: TreeEntry): string {
-    if (kind === before.kind && before.kind === after.kind) {
-        if (before.kind === "file" && after.kind === "file") {
-            if (before.hash !== after.hash) return "content";
-            if (before.mode !== undefined && after.mode !== undefined && before.mode !== after.mode)
-                return "mode";
-            return "";
-        }
-        if (before.kind === "symlink" && after.kind === "symlink") {
-            return before.target !== after.target ? "target" : "";
-        }
-        if (
-            before.kind === "dir" &&
-            after.kind === "dir" &&
-            before.mode !== undefined &&
-            after.mode !== undefined &&
-            before.mode !== after.mode
-        ) {
-            return "mode";
-        }
+function sameKindChangeLabel(
+    kind: string,
+    before: TreeEntry,
+    after: TreeEntry,
+): string {
+    if (kind !== before.kind || kind !== after.kind) return "";
+    if (kind === "file" && before.kind === "file" && after.kind === "file") {
+        return fileKindChangeLabel(before, after);
+    }
+    if (
+        kind === "symlink" &&
+        before.kind === "symlink" &&
+        after.kind === "symlink"
+    ) {
+        return before.target !== after.target ? "target" : "";
+    }
+    if (kind === "dir" && before.kind === "dir" && after.kind === "dir") {
+        return dirKindChangeLabel(before, after);
+    }
+    return "";
+}
+
+/** Content first, then the permission-mode change. */
+function fileKindChangeLabel(
+    before: { hash: string; mode?: string | undefined },
+    after: { hash: string; mode?: string | undefined },
+): string {
+    if (before.hash !== after.hash) return "content";
+    if (
+        before.mode !== undefined &&
+        after.mode !== undefined &&
+        before.mode !== after.mode
+    ) {
+        return "mode";
+    }
+    return "";
+}
+
+/** The permission-only directory change. */
+function dirKindChangeLabel(
+    before: { mode?: string | undefined },
+    after: { mode?: string | undefined },
+): string {
+    if (
+        before.mode !== undefined &&
+        after.mode !== undefined &&
+        before.mode !== after.mode
+    ) {
+        return "mode";
     }
     return "";
 }
@@ -2346,9 +2406,15 @@ function policyViolation(diff: WriteDiff, testCase: TrialCase) {
     const allowed = testCase.mutationPolicy?.allowed ?? [];
     const runtime = testCase.mutationPolicy?.runtimeAllow ?? [];
     const paths = [
-        ...diff.added.map((path: string) => [path, "added"] as [string, string]),
-        ...diff.modified.map((path: string) => [path, "modified"] as [string, string]),
-        ...diff.removed.map((path: string) => [path, "removed"] as [string, string]),
+        ...diff.added.map(
+            (path: string) => [path, "added"] as [string, string],
+        ),
+        ...diff.modified.map(
+            (path: string) => [path, "modified"] as [string, string],
+        ),
+        ...diff.removed.map(
+            (path: string) => [path, "removed"] as [string, string],
+        ),
     ];
     const violations = [];
     for (const [path, action] of paths) {
@@ -2477,7 +2543,11 @@ function artefactExcerpt(path: string, text: string, limit: number = 1200) {
  * @param definition The case definition.
  * @returns The evidence fields, or the refusal problem.
  */
-function recordedMutationEvidence(resultDir: string, meta: MetaRecord, definition: TrialCase) {
+function recordedMutationEvidence(
+    resultDir: string,
+    meta: MetaRecord,
+    definition: TrialCase,
+) {
     const liveDir = join(resultDir, "live");
     const snapshot = snapshotLive(liveDir);
     const metaDigest = meta?.finalStateDigest;
@@ -2501,9 +2571,15 @@ function recordedMutationEvidence(resultDir: string, meta: MetaRecord, definitio
     }
     const allowed = definition.mutationPolicy?.allowed ?? [];
     const touched = [
-        ...diff.added.map((path: string) => [path, "added"] as [string, string]),
-        ...diff.modified.map((path: string) => [path, "modified"] as [string, string]),
-        ...diff.removed.map((path: string) => [path, "removed"] as [string, string]),
+        ...diff.added.map(
+            (path: string) => [path, "added"] as [string, string],
+        ),
+        ...diff.modified.map(
+            (path: string) => [path, "modified"] as [string, string],
+        ),
+        ...diff.removed.map(
+            (path: string) => [path, "removed"] as [string, string],
+        ),
     ];
     const onSurface = (path: string): boolean =>
         allowed.some((pattern) => globMatch(pattern, path));
@@ -2690,7 +2766,11 @@ function preservedPathProblem(
  * @returns The gate verdict: `problem` null when met, else the refusal and
  *   always-empty artefacts; on success the verified artefact list.
  */
-function expectedDocsGate(resultDir: string, meta: MetaRecord, definition: TrialCase) {
+function expectedDocsGate(
+    resultDir: string,
+    meta: MetaRecord,
+    definition: TrialCase,
+) {
     const expectation = definition?.expectedDocs;
     if (!expectation) return { problem: null, artifacts: [] };
     const evidence = recordedMutationEvidence(resultDir, meta, definition);
@@ -2737,7 +2817,12 @@ function trialBoundaryOf(): BoundaryFact {
  * trials' actual container/image; `orchestration` records the freezing
  * process's identity; each case's own per-run facts stay in meta.json.
  */
-function runDescription(options: CliOptions, stamp: string, selected: TrialCase[], command: string) {
+function runDescription(
+    options: CliOptions,
+    stamp: string,
+    selected: TrialCase[],
+    command: string,
+) {
     return {
         schemaVersion: RUN_SCHEMA_VERSION,
         createdAt: new Date().toISOString(),
@@ -2812,7 +2897,10 @@ function comparedFieldConflicts(
 }
 
 /** Definition-level conflicts: counts and each case's frozen definition. */
-function definitionConflicts(existingCases: RunCase[], currentCases: RunCase[]) {
+function definitionConflicts(
+    existingCases: RunCase[],
+    currentCases: RunCase[],
+) {
     if (existingCases.length !== currentCases.length) {
         return [
             "cases: " +
@@ -2881,7 +2969,12 @@ function runDescriptionConflicts(
  * absent freeze is refused everywhere: a filesystem permission error is
  * not evidence that another process recorded the description correctly.
  */
-function ensureRunDescription(options: CliOptions, stamp: string, selected: TrialCase[], command: string) {
+function ensureRunDescription(
+    options: CliOptions,
+    stamp: string,
+    selected: TrialCase[],
+    command: string,
+) {
     const path = join(options.results, stamp, "run.json");
     const existing = readRunJson(path);
     const containerFlow =
@@ -2977,7 +3070,11 @@ function termGraceFromEnv() {
 function opencodeCall(args: CallArgs): Promise<SpawnResult> {
     const { cwd, env, model, title, prompt, opencode, timeoutMs } = args;
     return new Promise((resolve: (value: SpawnResult) => void) => {
-        let child: import("child_process").ChildProcessByStdio<null, import("stream").Readable, import("stream").Readable>;
+        let child: import("child_process").ChildProcessByStdio<
+            null,
+            import("stream").Readable,
+            import("stream").Readable
+        >;
         try {
             child = spawn(
                 opencode,
@@ -3052,7 +3149,11 @@ function opencodeCall(args: CallArgs): Promise<SpawnResult> {
                 }
             }, termGraceFromEnv());
         }, timeoutMs);
-        const finish = (result: { status: number | null; signal: string | null; error: NodeJS.ErrnoException | null }) => {
+        const finish = (result: {
+            status: number | null;
+            signal: string | null;
+            error: NodeJS.ErrnoException | null;
+        }) => {
             if (settled) return;
             settled = true;
             clearTimeout(timer);
@@ -3119,7 +3220,10 @@ function reserveResultDir(resultDir: string) {
     try {
         mkdirSync(resultDir, { recursive: false });
     } catch (error: unknown) {
-        const code = error instanceof Error ? (error as { code?: string }).code : undefined;
+        const code =
+            error instanceof Error
+                ? (error as { code?: string }).code
+                : undefined;
         if (code !== "EEXIST") throw error;
         if (resultExists(resultDir)) {
             return {
@@ -3138,7 +3242,10 @@ function reserveResultDir(resultDir: string) {
             { flag: "wx" },
         );
     } catch (error: unknown) {
-        const code = error instanceof Error ? (error as { code?: string }).code : undefined;
+        const code =
+            error instanceof Error
+                ? (error as { code?: string }).code
+                : undefined;
         if (code === "EEXIST") {
             return {
                 reserved: false,
@@ -3156,9 +3263,7 @@ function reserveResultDir(resultDir: string) {
 function snapshotDigest(snapshot: Snapshot): string {
     const encode = (
         map: Map<string, TreeEntry> | Map<string, string>,
-    ): string =>
-
-        JSON.stringify([...map].sort(([a], [b]) => (a < b ? -1 : 1)));
+    ): string => JSON.stringify([...map].sort(([a], [b]) => (a < b ? -1 : 1)));
     return sha256(`${encode(snapshot.entries)}\n${encode(snapshot.git)}`);
 }
 
@@ -3226,7 +3331,11 @@ function metaFor(
  * the per-case run container the rubric root is not mounted, so this is a
  * no-op and the host copies them after the container exits.
  */
-function copyCaseEvidence(options: CliOptions, testCase: TrialCase, resultDir: string) {
+function copyCaseEvidence(
+    options: CliOptions,
+    testCase: TrialCase,
+    resultDir: string,
+) {
     const sourceDir = join(options.rubrics, testCase.id);
     for (const name of ["rubric.md", "case.json"]) {
         const source = join(sourceDir, name);
@@ -3392,7 +3501,14 @@ function runProcessFailure(result: SpawnResult, options: CliOptions) {
 }
 
 /** Capture, parsability, blankness and completion-shape evidence problems. */
-function runTrailEvidenceProblem(result: SpawnResult, text: string, parseFailures: number, textParts: number, lastPartKind: string | null, events: number) {
+function runTrailEvidenceProblem(
+    result: SpawnResult,
+    text: string,
+    parseFailures: number,
+    textParts: number,
+    lastPartKind: string | null,
+    events: number,
+) {
     if (
         result.outputOverflow === true ||
         result.stdoutOverflow === true ||
@@ -3424,7 +3540,15 @@ function runTrailEvidenceProblem(result: SpawnResult, text: string, parseFailure
  * cannot be verified), a blank answer, or a stream that never ended on a
  * final answer text part.
  */
-function trialInvalidReason(result: SpawnResult, text: string, parseFailures: number, events: number, options: CliOptions, textParts: number, lastPartKind: string | null) {
+function trialInvalidReason(
+    result: SpawnResult,
+    text: string,
+    parseFailures: number,
+    events: number,
+    options: CliOptions,
+    textParts: number,
+    lastPartKind: string | null,
+) {
     const processProblem = runProcessFailure(result, options);
     if (processProblem !== null) return processProblem;
     return runTrailEvidenceProblem(
@@ -3797,7 +3921,12 @@ function nextAttempt(resultDir: string) {
     return String(Math.max(0, ...attempts) + 1).padStart(3, "0");
 }
 
-function writeInvalidVerdict(caseId: string, resultDir: string, reason: string, answerHash: string) {
+function writeInvalidVerdict(
+    caseId: string,
+    resultDir: string,
+    reason: string,
+    answerHash: string,
+) {
     const verdict = {
         verdict: "invalid",
         reason,
@@ -3847,7 +3976,11 @@ function policyReason(meta: MetaRecord, testCase: TrialCase) {
  * deterministic gates: answer validity, exit status, and the case's mutation
  * policy ({@link policyReason}).
  */
-function runInvalidReason(resultDir: string, options: CliOptions, testCase: TrialCase) {
+function runInvalidReason(
+    resultDir: string,
+    options: CliOptions,
+    testCase: TrialCase,
+) {
     const answer = answerInvalidReason(resultDir);
     if (answer !== null) return answer;
     const meta = readMetaRecord(join(resultDir, "meta.json"));
@@ -3932,7 +4065,14 @@ function judgeFailureReason(result: SpawnResult, problems: string[]) {
 }
 
 /** Record the result-level judge-error pointer and report it; always a failure. */
-function writeJudgeErrorVerdict(caseId: string, resultDir: string, judgeModel: string, identities: JudgeIdentities, attempt: string, why: string) {
+function writeJudgeErrorVerdict(
+    caseId: string,
+    resultDir: string,
+    judgeModel: string,
+    identities: JudgeIdentities,
+    attempt: string,
+    why: string,
+) {
     write(
         join(resultDir, "verdict.json"),
         JSON.stringify(
@@ -3951,7 +4091,13 @@ function writeJudgeErrorVerdict(caseId: string, resultDir: string, judgeModel: s
 }
 
 /** Record the result-level verdict pointer for a genuinely judged attempt. */
-function writeJudgedVerdict(resultDir: string, parsed: unknown, judgeModel: string, identities: JudgeIdentities, attempt: string) {
+function writeJudgedVerdict(
+    resultDir: string,
+    parsed: unknown,
+    judgeModel: string,
+    identities: JudgeIdentities,
+    attempt: string,
+) {
     write(
         join(resultDir, "verdict.json"),
         JSON.stringify(
@@ -3968,7 +4114,11 @@ function writeJudgedVerdict(resultDir: string, parsed: unknown, judgeModel: stri
 }
 
 /** A judge attempt's output problems: verdict completeness + trail honesty. */
-function judgeOutputProblems(parsed: unknown, judgeParseFailures: number, judgeTextParts: number) {
+function judgeOutputProblems(
+    parsed: unknown,
+    judgeParseFailures: number,
+    judgeTextParts: number,
+) {
     return [
         ...(parsed === undefined
             ? ["no JSON object in output"]
@@ -4078,10 +4228,18 @@ function judgeKey(identities: JudgeIdentities) {
  * with the resume provenance and return the prior verdict's exit code. Null
  * when no attempt with matching inputs and settings was judged.
  */
-function resumePriorAttempt(caseId: string, resultDir: string, judgeRoot: string, key: string, identities: JudgeIdentities) {
+function resumePriorAttempt(
+    caseId: string,
+    resultDir: string,
+    judgeRoot: string,
+    key: string,
+    identities: JudgeIdentities,
+) {
     for (const entry of readdirSync(judgeRoot, { withFileTypes: true })) {
         if (!entry.isDirectory() || !/^attempt-\d+$/.test(entry.name)) continue;
-        const prior = readJudgeAttemptMeta(join(judgeRoot, entry.name, "meta.json"));
+        const prior = readJudgeAttemptMeta(
+            join(judgeRoot, entry.name, "meta.json"),
+        );
         if (prior?.judgeKey === key && prior?.judgeStatus === "judged") {
             const verdict = readVerdictRecord(
                 join(judgeRoot, entry.name, "verdict.json"),
@@ -4134,10 +4292,11 @@ function judgeSelection(options: CliOptions, stamp: string): FullTrialCase[] {
         }
         return legacyCases;
     }
-    const full: FullTrialCase[] = (run.cases ?? [])
-        .map((entry: RunCase) => entry.definition ?? entry)
-        .filter((definition: unknown) => isRecord(definition))
-        ?.filter(isFullCase) ?? [];
+    const full: FullTrialCase[] =
+        (run.cases ?? [])
+            .map((entry: RunCase) => entry.definition ?? entry)
+            .filter((definition: unknown) => isRecord(definition))
+            ?.filter(isFullCase) ?? [];
     if (full.length === 0) {
         usage(
             `run.json at ${join(options.results, stamp)} records no usable full case definitions`,
@@ -4190,14 +4349,21 @@ function judgeGateReason(
  * replaced-upstream or edited copy is refused rather than adopted.
  * @returns The refusal reason, or null when matching or not checkable.
  */
-function recordedRubricProblem(testCase: FullTrialCase, recordedRubric: string) {
+function recordedRubricProblem(
+    testCase: FullTrialCase,
+    recordedRubric: string,
+) {
     if (!selectedAreFullDefinitions([testCase])) return null;
     return recordedRubric === rubricFor(testCase)
         ? null
         : "recorded rubric does not match the experiment's saved definition";
 }
 
-async function judgeOne(testCase: FullTrialCase, options: CliOptions, stamp: string) {
+async function judgeOne(
+    testCase: FullTrialCase,
+    options: CliOptions,
+    stamp: string,
+) {
     const resultDir = join(options.results, stamp, testCase.id);
     if (!existsSync(resultDir)) {
         console.log(`${testCase.id}: no run recorded, skipping judge`);
@@ -4294,7 +4460,10 @@ async function judgeOne(testCase: FullTrialCase, options: CliOptions, stamp: str
  * ------------------------------------------------------------------ */
 
 /** The Expected column: the case's expectation, or why the run has none. */
-function summaryExpected(caseInfo: RunCase | undefined, runDescription: RunDescription | null) {
+function summaryExpected(
+    caseInfo: RunCase | undefined,
+    runDescription: RunDescription | null,
+) {
     return (
         caseInfo?.expected ??
         (runDescription === null ? "(legacy run)" : "(missing from run.json)")
@@ -4307,7 +4476,10 @@ function summaryVerdict(verdict: VerdictRecord | undefined, resultDir: string) {
 }
 
 /** The ` [model: …]` suffix for a result produced by a different model. */
-function summaryModelMismatch(runDescription: RunDescription | null, meta: MetaRecord) {
+function summaryModelMismatch(
+    runDescription: RunDescription | null,
+    meta: MetaRecord,
+) {
     return runDescription !== null &&
         meta?.model !== undefined &&
         meta.model !== runDescription.model
@@ -4322,7 +4494,11 @@ function summaryExposure(resultDir: string, trail: ToolTrail | null) {
         : exposureFor(resultDir).join(" + ") || "none";
 }
 
-function summaryRow(runDescription: RunDescription | null, caseInfo: RunCase | undefined, resultDir: string) {
+function summaryRow(
+    runDescription: RunDescription | null,
+    caseInfo: RunCase | undefined,
+    resultDir: string,
+) {
     const verdict = readVerdictRecord(join(resultDir, "verdict.json"));
     const report = existsSync(join(resultDir, "writes.txt"))
         ? readFileSync(join(resultDir, "writes.txt"), "utf8").trim()
@@ -4652,7 +4828,11 @@ function dossierExecutionLines(run: RunDescription | null) {
     ];
 }
 
-function dossierHeader(options: CliOptions, stamp: string, run: RunDescription | null) {
+function dossierHeader(
+    options: CliOptions,
+    stamp: string,
+    run: RunDescription | null,
+) {
     return [
         `# Placement-trial dossier ${stamp}`,
         "",
@@ -4771,12 +4951,6 @@ async function runSelected(
     );
 }
 
-/** The case list a judge answers: saved definitions only (M01). */
-interface JudgedCase {
-    id: string;
-    definition: FullTrialCase;
-}
-
 async function judgeSelected(
     options: CliOptions,
     stamp: string,
@@ -4837,7 +5011,12 @@ function planFor(command: string, noJudge: boolean) {
     };
 }
 
-async function executeAndReport(options: CliOptions, plan: Plan, stamp: string, selected: TrialCase[]) {
+async function executeAndReport(
+    options: CliOptions,
+    plan: Plan,
+    stamp: string,
+    selected: TrialCase[],
+) {
     let worst = 0;
     let infra = 0;
     if (plan.generates) infra = await generateAll(options);
@@ -4850,7 +5029,10 @@ async function executeAndReport(options: CliOptions, plan: Plan, stamp: string, 
     if (infra !== 0) return infra;
     if (plan.judges) {
         const judgedCases = selected.filter(isFullCase);
-        worst = Math.max(worst, await judgeSelected(options, stamp, judgedCases));
+        worst = Math.max(
+            worst,
+            await judgeSelected(options, stamp, judgedCases),
+        );
     }
     if (plan.reports) {
         renderSummary(options, stamp);
@@ -4896,7 +5078,9 @@ main().then(
     (code) => process.exit(code),
     (error: unknown) => {
         console.error(
-            error instanceof Error ? (error.stack ?? String(error)) : String(error),
+            error instanceof Error
+                ? (error.stack ?? String(error))
+                : String(error),
         );
         process.exit(1);
     },
