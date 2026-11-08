@@ -2296,21 +2296,29 @@ function sameKindChangeLabel(
     before: TreeEntry,
     after: TreeEntry,
 ): string {
-    if (kind !== before.kind || kind !== after.kind) return "";
-    if (kind === "file" && before.kind === "file" && after.kind === "file") {
-        return fileKindChangeLabel(before, after);
+    if (before.kind !== kind || after.kind !== before.kind) return "";
+    switch (before.kind) {
+        case "file":
+            if (after.kind === "file") return fileKindChangeLabel(before, after);
+            return "";
+        case "symlink":
+            if (after.kind === "symlink" && before.target !== after.target) {
+                return "target";
+            }
+            return "";
+        case "dir":
+            if (
+                after.kind === "dir" &&
+                before.mode !== undefined &&
+                after.mode !== undefined &&
+                before.mode !== after.mode
+            ) {
+                return "mode";
+            }
+            return "";
+        default:
+            return "";
     }
-    if (
-        kind === "symlink" &&
-        before.kind === "symlink" &&
-        after.kind === "symlink"
-    ) {
-        return before.target !== after.target ? "target" : "";
-    }
-    if (kind === "dir" && before.kind === "dir" && after.kind === "dir") {
-        return dirKindChangeLabel(before, after);
-    }
-    return "";
 }
 
 /** Content first, then the permission-mode change. */
@@ -2319,21 +2327,6 @@ function fileKindChangeLabel(
     after: { hash: string; mode?: string | undefined },
 ): string {
     if (before.hash !== after.hash) return "content";
-    if (
-        before.mode !== undefined &&
-        after.mode !== undefined &&
-        before.mode !== after.mode
-    ) {
-        return "mode";
-    }
-    return "";
-}
-
-/** The permission-only directory change. */
-function dirKindChangeLabel(
-    before: { mode?: string | undefined },
-    after: { mode?: string | undefined },
-): string {
     if (
         before.mode !== undefined &&
         after.mode !== undefined &&
