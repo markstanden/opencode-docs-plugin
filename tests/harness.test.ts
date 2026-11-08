@@ -3074,10 +3074,7 @@ test("M04: a floor-only criterion counts successes, never completed failures", (
         paths,
         "T01",
         "s1",
-        R01_TRAIL(
-            { read: "kb/existing.md" },
-            "No doc at kb/existing.md.",
-        ),
+        R01_TRAIL({ read: "kb/existing.md" }, "No doc at kb/existing.md."),
     );
     // Assert: a completed not-found never becomes the verified floor.
     assert.equal(verdict.verdict, "invalid");
@@ -3388,9 +3385,7 @@ function runGateTrails(
     return {
         judge,
         marker,
-        verdict: readJson(
-            join(paths.results, stamp, caseId, "verdict.json"),
-        ),
+        verdict: readJson(join(paths.results, stamp, caseId, "verdict.json")),
     };
 }
 
@@ -3963,9 +3958,7 @@ const CORPUS_SHAPE_ROWS: Array<{
                 docsCriterion: { minVerifiedCalls: 1, minDocsCalls: 1 },
             },
         ],
-        problems: [
-            /needs exactly one of minVerifiedCalls or minDocsCalls/,
-        ],
+        problems: [/needs exactly one of minVerifiedCalls or minDocsCalls/],
     },
     {
         label: "neither criterion floor",
@@ -3981,9 +3974,7 @@ const CORPUS_SHAPE_ROWS: Array<{
                 docsCriterion: { verbs: ["read"] },
             },
         ],
-        problems: [
-            /needs exactly one of minVerifiedCalls or minDocsCalls/,
-        ],
+        problems: [/needs exactly one of minVerifiedCalls or minDocsCalls/],
     },
     {
         label: "legacy floor carrying the verified-only paths field",
@@ -4019,7 +4010,9 @@ const CORPUS_SHAPE_ROWS: Array<{
                 },
             },
         ],
-        problems: [/paths gate read targets; verbs must be undefined or \["read"\]/],
+        problems: [
+            /paths gate read targets; verbs must be undefined or \["read"\]/,
+        ],
     },
     {
         label: "a seed without a path",
@@ -4133,9 +4126,16 @@ test("C03: a corpus id that is whitespace-only or padded is refused", () => {
     for (const id of ["   ", " T01 "]) {
         const root = newRoot("c03-ws-id");
         const fake = writeFakeOpencode(root);
-        const { result } = generate(root, fake, [baselineCase("V01"), { ...baselineCase(id.trim()), id }]);
+        const { result } = generate(root, fake, [
+            baselineCase("V01"),
+            { ...baselineCase(id.trim()), id },
+        ]);
         // Assert: the id contract refuses before any generation.
-        assert.notEqual(result.status, 0, `id ${JSON.stringify(id)} must refuse`);
+        assert.notEqual(
+            result.status,
+            0,
+            `id ${JSON.stringify(id)} must refuse`,
+        );
         assert.match(
             result.stderr,
             /id must be a nonempty string without surrounding whitespace/,
@@ -4169,8 +4169,16 @@ test("C03: full-corpus commands refuse entries missing the fields their prompts 
     // Act: generate and describe against each. Assert: the missing field is
     // named with its case, never silently filtered out of the selection.
     for (const [label, cases, problem] of [
-        ["without accepts", withoutAccepts, /case "A1" is malformed.*accepts is required/s],
-        ["without destinations", withoutDestinations, /case "A2" is malformed.*destinations must be a nonempty array/s],
+        [
+            "without accepts",
+            withoutAccepts,
+            /case "A1" is malformed.*accepts is required/s,
+        ],
+        [
+            "without destinations",
+            withoutDestinations,
+            /case "A2" is malformed.*destinations must be a nonempty array/s,
+        ],
     ] as const) {
         const root = newRoot("c03-full-generate");
         const fake = writeFakeOpencode(root);
@@ -4244,7 +4252,16 @@ test("C03: a semantic pass cannot conceal a meta.json corrupted after the run", 
         "the mutation-diff damage is a refusal, not absent/legacy evidence",
     );
     assert.ok(
-        existsSync(join(paths.results, "s1", "T01", "judge", "attempt-001", "meta.json")),
+        existsSync(
+            join(
+                paths.results,
+                "s1",
+                "T01",
+                "judge",
+                "attempt-001",
+                "meta.json",
+            ),
+        ),
         "the original judged attempt is preserved",
     );
     rmRoot(root);
@@ -4308,7 +4325,16 @@ test("C03: a malformed frozen case definition refuses judging and reporting, pre
     // are preserved for the operator; the corrupt experiment itself is
     // what cannot be re-frozen or relabelled.
     assert.ok(
-        existsSync(join(paths.results, "s1", "T01", "judge", "attempt-001", "meta.json")),
+        existsSync(
+            join(
+                paths.results,
+                "s1",
+                "T01",
+                "judge",
+                "attempt-001",
+                "meta.json",
+            ),
+        ),
     );
     rmRoot(root);
 });
@@ -4384,10 +4410,7 @@ for (const row of RECEIPT_ROWS) {
         const root = newRoot("c03-fragile-receipt");
         const fake = writeFakeOpencode(root);
         const { paths } = generate(root, fake, [baselineCase("T01")]);
-        writeFileSync(
-            join(paths.fixtures, "T01", "frozen.json"),
-            row.receipt,
-        );
+        writeFileSync(join(paths.fixtures, "T01", "frozen.json"), row.receipt);
         // Act: run with the container boundary facts set.
         const run = runHarness(
             root,
@@ -4428,7 +4451,10 @@ test("C03: a malformed certification tree entry refuses the run and names the of
             "the prepared tree recorded entries",
         );
         generation.tree[offendingPath] = entry;
-        writeFileSync(generationPath, JSON.stringify(generation, null, 2) + "\n");
+        writeFileSync(
+            generationPath,
+            JSON.stringify(generation, null, 2) + "\n",
+        );
         const run = runHarness(
             root,
             fake,
@@ -4458,7 +4484,11 @@ const V1_RUN_JSON = {
     cases: [{ id: "T01", expected: "Repository" }],
 };
 
-function stageV1Stamp(root: string, paths: ReturnType<typeof layout>, overrides: Record<string, unknown> = {}) {
+function stageV1Stamp(
+    root: string,
+    paths: ReturnType<typeof layout>,
+    overrides: Record<string, unknown> = {},
+) {
     mkdirSync(join(paths.results, "v1stamp", "T01"), { recursive: true });
     writeFileSync(
         join(paths.results, "v1stamp", "run.json"),
@@ -4510,10 +4540,7 @@ test("C03: a representative v1 record without usable definitions refuses semanti
     // Assert: a clear refusal naming the missing definitions — never the
     // today's-corpus corpus adopted silently, never a pass.
     assert.equal(judge.status, 2);
-    assert.match(
-        judge.stderr,
-        /records no usable full case definitions/,
-    );
+    assert.match(judge.stderr, /records no usable full case definitions/);
     rmRoot(root);
 });
 

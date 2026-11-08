@@ -1317,47 +1317,66 @@ function runCasesShape(
 ): string[] {
     const out: string[] = [];
     for (const [index, entry] of cases.entries()) {
-        const prefix = `cases[${index}]`;
-        if (!isRecord(entry)) {
-            out.push(`${prefix} must be a JSON object`);
-            continue;
-        }
-        if (typeof entry.id !== "string" || entry.id === "") {
-            out.push(`${prefix}.id must be a nonempty string`);
-        }
-        for (const [field, shape] of [
-            ["mutationPolicy", mutationPolicyShape],
-            ["docsCriterion", docsCriterionShape],
-            ["expectedDocs", expectedDocsShape],
-        ] as const) {
-            if (entry[field] === undefined) continue;
-            out.push(
-                ...shape(entry[field]).map(
-                    (problem) => `${prefix}.${field}: ${problem}`,
-                ),
-            );
-        }
-        if (entry.definition === undefined) {
-            if (definitionMode === "full") {
-                out.push(`${prefix}.definition is required for a v2 case`);
-            }
-            continue;
-        }
-        if (!isRecord(entry.definition)) {
-            out.push(`${prefix}.definition must be a JSON object`);
-            continue;
-        }
-        const validated = validateCorpusEntry(
-            entry.definition,
-            definitionMode === "full",
+        out.push(
+            ...frozenSliceProblems(entry, `cases[${index}]`, definitionMode),
         );
-        if ("problems" in validated) {
-            out.push(
-                ...validated.problems.map(
-                    (problem) => `${prefix}.definition: ${problem}`,
-                ),
-            );
+    }
+    return out;
+}
+
+/**
+ * The problems with one frozen per-case slice: its id, its instrumentation
+ * copies (policy, criterion, artefact expectation), and — depending on the
+ * record's schema version — its `definition` (v2: required and validated
+ * with the same authoritative case validator as corpus input; v1:
+ * validated when present).
+ * @param entry One raw case slice.
+ * @param prefix The field path this slice reports under.
+ * @param definitionMode How the slice's definition must be proven.
+ * @returns The problems with the slice; empty means valid.
+ */
+function frozenSliceProblems(
+    entry: unknown,
+    prefix: string,
+    definitionMode: "full" | "present",
+): string[] {
+    if (!isRecord(entry)) return [`${prefix} must be a JSON object`];
+    const out: string[] = [];
+    if (typeof entry.id !== "string" || entry.id === "") {
+        out.push(`${prefix}.id must be a nonempty string`);
+    }
+    for (const [field, shape] of [
+        ["mutationPolicy", mutationPolicyShape],
+        ["docsCriterion", docsCriterionShape],
+        ["expectedDocs", expectedDocsShape],
+    ] as const) {
+        if (entry[field] === undefined) continue;
+        out.push(
+            ...shape(entry[field]).map(
+                (problem) => `${prefix}.${field}: ${problem}`,
+            ),
+        );
+    }
+    if (entry.definition === undefined) {
+        if (definitionMode === "full") {
+            out.push(`${prefix}.definition is required for a v2 case`);
         }
+        return out;
+    }
+    if (!isRecord(entry.definition)) {
+        out.push(`${prefix}.definition must be a JSON object`);
+        return out;
+    }
+    const validated = validateCorpusEntry(
+        entry.definition,
+        definitionMode === "full",
+    );
+    if ("problems" in validated) {
+        out.push(
+            ...validated.problems.map(
+                (problem) => `${prefix}.definition: ${problem}`,
+            ),
+        );
     }
     return out;
 }
@@ -1755,7 +1774,36 @@ function validateCorpusEntry(
             ],
         };
     }
-    const problems: string[] = [];
+    const problems = corpusFieldProblems(entry, requireFull);
+    if (requireFull) {
+        for (const field of ["claim", "evidence", "expected"]) {
+            fieldProblems(
+                problems,
+                entry,
+                field,
+                "is required",
+                (v) => typeof v === "string",
+                true,
+            );
+        }
+    }
+    if (problems.length > 0) return { problems };
+    return { case: entry as unknown as TrialCase };
+}
+
+/**
+ * The shared (non-full-critical) corpus fields, proven field-by-field so a
+ * redacted container list is validated exactly as far as the fields it
+ * carries and a full case additionally proves its instrumentation.
+ * @param entry One raw case entry.
+ * @param requireFull Whether full-definition demands apply.
+ * @returns The problems; empty means valid so far.
+ */
+function corpusFieldProblems(
+    entry: Record<string, unknown>,
+    requireFull: boolean,
+): FieldProblems {
+    const problems: FieldProblems = [];
     for (const field of [
         "family",
         "claim",
@@ -1798,20 +1846,7 @@ function validateCorpusEntry(
         (v) => typeof v === "string" || v === null,
         false,
     );
-    if (requireFull) {
-        for (const field of ["claim", "evidence", "expected"]) {
-            fieldProblems(
-                problems,
-                entry,
-                field,
-                "is required",
-                (v) => typeof v === "string",
-                true,
-            );
-        }
-    }
-    if (problems.length > 0) return { problems };
-    return { case: entry as unknown as TrialCase };
+    return problems;
 }
 
 /**
@@ -1875,22 +1910,44 @@ function mergedToolCall(
     id: string,
 ): ToolCall {
     const state = isRecord(part.state) ? part.state : undefined;
-    // Success facts come from the winning output BEFORE it is shortened to
-    // the display projection: the complete stream is the grading evidence.
-    const output = state?.output ?? previous.output;
-    const facts = outcomeFactsOf(typeof output === "string" ? output : "");
     return {
-        ...previous,
         id,
+        ...previous,
+        ...partFieldsOf(state, previous, part),
+        ...streamFactsOf(state?.output ?? previous.output),
+    };
+}
+
+/**
+ * One tool part's identity fields merged over the previous call: latest
+ * state wins for input, status and the result metadata; a part without
+ * them keeps the earlier evidence.
+ * @returns The merged, spreadable fields.
+ */
+function partFieldsOf(
+    state: Record<string, unknown> | undefined,
+    previous: ToolCall,
+    part: RawToolPart,
+) {
+    return {
         tool: typeof part.tool === "string" ? part.tool : previous.tool,
         input: state?.input ?? previous.input,
         status:
-            state !== undefined && typeof state.status === "string"
-                ? state.status
-                : previous.status,
-        output: toolOutput(output),
+            typeof state?.status === "string" ? state.status : previous.status,
         metadata: state?.metadata ?? previous.metadata,
-        outcome: facts,
+    };
+}
+
+/**
+ * The output projection of one merged call: the success facts come from the
+ * COMPLETE stream before the display cap shortens it — the complete
+ * evidence grades, the cap is display-only.
+ * @returns The truncated output and its outcome facts.
+ */
+function streamFactsOf(output: unknown) {
+    return {
+        output: toolOutput(output),
+        outcome: outcomeFactsOf(typeof output === "string" ? output : ""),
     };
 }
 
@@ -2063,6 +2120,34 @@ function tallyDocsEntry(entry: ToolCall, tallies: DocsTallies) {
 const READ_REVISION_MARK = /docs: revision [0-9a-f]{64} —/;
 
 /**
+ * The verdict one read envelope carries, or undefined without a `read`
+ * field: a nonempty read address proves retrieval; `read: null` is a
+ * refusal or not-found; any other type is unusable, not success.
+ * @param envelope The folded metadata, already proven an object.
+ * @returns The envelope's verdict, when it speaks about the read.
+ */
+function envelopeReadVerdict(
+    envelope: Record<string, unknown>,
+): boolean | undefined {
+    if (!("read" in envelope)) return undefined;
+    return typeof envelope.read === "string" && envelope.read !== "";
+}
+
+/**
+ * The success verdict from one operation's complete-output facts (the
+ * no-envelope fallback): refusals, not-founds and blanks oppose success; a
+ * read proves itself by the captured revision note, every other verb by
+ * its delivered nonblank content.
+ * @param facts The facts extracted at fold time.
+ * @param read Whether the operation is a read.
+ * @returns Whether the facts prove a successful operation.
+ */
+function outputFactsVerdict(facts: OutcomeFacts, read: boolean): boolean {
+    if (facts.refusal || facts.notFound) return false;
+    return read ? facts.verifiedRead : !facts.blank;
+}
+
+/**
  * Whether one completed docs operation's own result establishes success.
  * A completed status proves execution, not a successful read — the plugin
  * serves refusals and lake not-founds as normal tool content without
@@ -2087,18 +2172,17 @@ function docsOpSuccessful(entry: ToolCall): boolean {
     if (kind === null || kind === "code-mode" || entry.status !== "completed")
         return false;
     const envelope = isRecord(entry.metadata) ? entry.metadata : undefined;
-    if (envelope !== undefined && "read" in envelope) {
-        return typeof envelope.read === "string" && envelope.read !== "";
+    if (envelope !== undefined) {
+        const verdict = envelopeReadVerdict(envelope);
+        if (verdict !== undefined) return verdict;
     }
-    const facts =
+    return outputFactsVerdict(
         entry.outcome ??
-        outcomeFactsOf(
-            typeof entry.output === "string" ? entry.output : "",
-        );
-    if (facts.refusal || facts.notFound) return false;
-    return docsEntryVerb(kind, entry) === "read"
-        ? facts.verifiedRead
-        : !facts.blank;
+            outcomeFactsOf(
+                typeof entry.output === "string" ? entry.output : "",
+            ),
+        docsEntryVerb(kind, entry) === "read",
+    );
 }
 
 /**
@@ -3619,6 +3703,45 @@ function artefactExcerpt(path: string, text: string, limit: number = 1200) {
 }
 
 /**
+ * The problems a recorded meta carries for its final-state digest, or null
+ * when no digest is recorded or the re-snapshot matches.
+ * @param meta The run's meta.json.
+ * @param snapshot The re-walked live snapshot.
+ * @returns The digest refusal, or null when evidence is intact.
+ */
+function digestMismatchProblem(
+    meta: MetaRecord,
+    snapshot: Snapshot,
+): string | null {
+    const metaDigest = meta?.finalStateDigest;
+    if (
+        typeof metaDigest === "string" &&
+        snapshotDigest(snapshot) !== metaDigest
+    ) {
+        return (
+            "recorded mutation evidence altered after the run " +
+            "(final-state digest mismatch)"
+        );
+    }
+    return null;
+}
+
+/**
+ * The kinds labels of a recorded write diff in their Map contract: the
+ * labels ride meta.json as an object form, so a Map is restored before
+ * every consumer reduces over it. A non-object kinds (refused by the
+ * validators upstream) degrades to no labels.
+ * @param diff The recorded write diff.
+ * @returns The change-kind labels per recorded path.
+ */
+function recordedKinds(diff: WriteDiff): Map<string, string> {
+    if (diff.kinds instanceof Map) return diff.kinds;
+    return isRecord(diff.kinds)
+        ? new Map(Object.entries(diff.kinds))
+        : new Map();
+}
+
+/**
  * The recorded mutation evidence a recording gate works from: the live
  * tree re-snapshotted and digest-verified against meta, the recorded
  * write diff, and the in-policy surface slice of it.
@@ -3634,17 +3757,8 @@ function recordedMutationEvidence(
 ) {
     const liveDir = join(resultDir, "live");
     const snapshot = snapshotLive(liveDir);
-    const metaDigest = meta?.finalStateDigest;
-    if (
-        typeof metaDigest === "string" &&
-        snapshotDigest(snapshot) !== metaDigest
-    ) {
-        return {
-            problem:
-                "recorded mutation evidence altered after the run " +
-                "(final-state digest mismatch)",
-        };
-    }
+    const digestProblem = digestMismatchProblem(meta, snapshot);
+    if (digestProblem !== null) return { problem: digestProblem };
     const diff = meta?.writeKinds;
     if (!diff || !Array.isArray(diff.added)) {
         return {
@@ -3653,17 +3767,7 @@ function recordedMutationEvidence(
                 "re-run with the current harness",
         };
     }
-    // A recorded diff's `kinds` map serialises to a plain object and comes
-    // back from meta.json as one; restore the Map contract the live diff
-    // carries so every downstream consumer sees the same shape. Unknown
-    // kinds entries (a non-object kinds with metaShape refusing earlier
-    // leaves this unreachable) degrade to no labels.
-    const kinds =
-        diff.kinds instanceof Map
-            ? diff.kinds
-            : isRecord(diff.kinds)
-              ? new Map(Object.entries(diff.kinds))
-              : new Map();
+    const kinds = recordedKinds(diff);
     const allowed = definition.mutationPolicy?.allowed ?? [];
     const touched = [
         ...diff.added.map(
@@ -4622,7 +4726,10 @@ function docsCriterionProblem(testCase: FullTrialCase, resultDir: string) {
  * never conceals a missing or failed read of another.
  * @returns The per-fragment refusal lines, or null when all paths are met.
  */
-function requiredPathProblems(trail: ToolTrail, fragments: string[]): string[] | null {
+function requiredPathProblems(
+    trail: ToolTrail,
+    fragments: string[],
+): string[] | null {
     const unmet: string[] = [];
     for (const fragment of fragments) {
         const relevant = trail.entries.filter((entry) => {
@@ -4651,6 +4758,52 @@ function requiredPathProblems(trail: ToolTrail, fragments: string[]): string[] |
     return unmet.length > 0 ? unmet : null;
 }
 
+/**
+ * Why one criterion's required verbs are unmet, or null: every required
+ * verb needs one of its operations' own result evidence to prove success —
+ * attempts and completed-but-failed calls never count.
+ * @param trail The read trail.
+ * @param verbs The required verbs.
+ * @returns The refusal line, or null.
+ */
+function requiredVerbProblems(
+    trail: ToolTrail,
+    verbs: string[],
+): string | null {
+    const satisfied = verbs.some((verb) =>
+        trail.entries.some((entry) => {
+            const kind = docsEntryKind(entry);
+            return (
+                kind !== null &&
+                kind !== "code-mode" &&
+                docsEntryVerb(kind, entry) === verb &&
+                docsOpSuccessful(entry)
+            );
+        }),
+    );
+    if (satisfied) return null;
+    return `docs criterion unmet: no successful ${verbs.join("/")} operation (attempts and completed-but-failed calls are never success)`;
+}
+
+/**
+ * The unmet-floor message: the trail's success facts, with the
+ * code-mode-only caveat when attempts were the only observed docs usage.
+ * @param telemetry The trail's docs telemetry.
+ * @param required The floor claimed.
+ * @returns One refusal line.
+ */
+function floorUnmetMessage(telemetry: Telemetry, required: number): string {
+    if (telemetry.codeModeAttempted > 0 && telemetry.verifiedDocs === 0) {
+        return (
+            `${telemetry.codeModeAttempted} code-mode attempt(s) are ` +
+            "unobservable nested operations — inconclusive without a " +
+            `completed native or twin call ` +
+            `(0 successful docs op(s), required ${required})`
+        );
+    }
+    return `${telemetry.verifiedDocs} successful docs op(s), required ${required}`;
+}
+
 /** The `minVerifiedCalls` criterion: a floor on successful operations. */
 function verifiedDocsCriterionProblem(
     criterion: VerifiedDocsCriterion,
@@ -4673,31 +4826,17 @@ function verifiedDocsCriterionProblem(
     // success plus one refusal cannot meet a floor of two. An unmet floor
     // does not swallow the per-path diagnostics — they aggregate alongside.
     if (telemetry.verifiedDocs < required) {
-        const floorUnmet = telemetry.codeModeAttempted > 0 && telemetry.verifiedDocs === 0
-            ? `${telemetry.codeModeAttempted} code-mode attempt(s) are unobservable nested operations — inconclusive without a completed native or twin call (0 successful docs op(s), required ${required})`
-            : `${telemetry.verifiedDocs} successful docs op(s), required ${required}`;
+        const floor = floorUnmetMessage(telemetry, required);
         return pathProblems === null
-            ? `docs criterion unmet: ${floorUnmet}`
-            : `docs criterion unmet: ${floorUnmet}; ${pathProblems.join("; ")}`;
+            ? `docs criterion unmet: ${floor}`
+            : `docs criterion unmet: ${floor}; ${pathProblems.join("; ")}`;
     }
     if (pathProblems !== null) {
         return `docs criterion unmet: ${pathProblems.join("; ")}`;
     }
-    if (
-        criterion.verbs !== undefined &&
-        !criterion.verbs.some((verb) =>
-            trail.entries.some((entry) => {
-                const kind = docsEntryKind(entry);
-                return (
-                    kind !== null &&
-                    kind !== "code-mode" &&
-                    docsEntryVerb(kind, entry) === verb &&
-                    docsOpSuccessful(entry)
-                );
-            }),
-        )
-    ) {
-        return `docs criterion unmet: no successful ${criterion.verbs.join("/")} operation (attempts and completed-but-failed calls are never success)`;
+    if (criterion.verbs !== undefined) {
+        const verbProblem = requiredVerbProblems(trail, criterion.verbs);
+        if (verbProblem !== null) return verbProblem;
     }
     return null;
 }
