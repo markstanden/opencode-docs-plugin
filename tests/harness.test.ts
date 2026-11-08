@@ -2846,16 +2846,29 @@ test("PWD: the harness child's PWD is the cwd it was spawned in", () => {
     const run = runHarness(
         root,
         fake,
-        ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        [
+            "run",
+            "T01",
+            "--stamp",
+            "s1",
+            "--print-logs",
+            ...commandArgs(paths),
+        ],
         { PWD: inherited, FAKE_CHILD_PROBE: probe },
     );
 
-    // Assert: the child starts in, and reports, the intended fixture cwd.
+    // Assert: the child starts in, and reports, the intended fixture cwd;
+    // the invocation record carries the same child PWD.
     assert.equal(run.status, 0, run.stderr);
     const observed = readJson(probe);
     assert.equal(observed.cwd, intendedWork);
     assert.equal(observed.pwd, intendedWork);
     assert.notEqual(observed.cwd, inherited);
+    const invocation = readJson(
+        join(paths.results, "s1", "T01", "invocation.json"),
+    );
+    assert.equal(invocation.cwd, intendedWork);
+    assert.equal(invocation.pwd, intendedWork);
     rmRoot(root);
 });
 
@@ -6375,6 +6388,57 @@ test("A01: a diagnostic case is report-only, never semantically judged", () => {
         false,
     );
     assert.equal(existsSync(join(paths.results, "s1", "A01", "judge")), false);
+    rmRoot(root);
+});
+
+test("CONTROL: the explicit read variant keeps its authored prompt and seed", () => {
+    // Arrange: the control is a versioned diagnostic corpus, separate from
+    // the natural R01 prompt and from A01.
+    const corpus = readJson(
+        join(HERE, "fixtures", "read-control-cases.json"),
+    ) as Array<{
+        id: string;
+        promptKind: string;
+        diagnosticPrompt: string;
+        seeds: Array<{ path: string; contents?: string }>;
+    }>;
+    const control = corpus.find((entry) => entry.id === "R01");
+    assert.ok(control, "the read control must keep the R01 selector");
+    assert.equal(control.promptKind, "diagnostic");
+    const root = newRoot("read-control-corpus");
+    const fake = writeFakeOpencode(root);
+    const paths = layout(root);
+
+    // Act: generate from the checked-in control corpus.
+    const run = runHarness(root, fake, [
+        "generate",
+        "R01",
+        "--fixture",
+        join(HERE, "fixtures", "read-control-cases.json"),
+        "--prompts",
+        paths.prompts,
+        "--fixtures",
+        paths.fixtures,
+        "--rubrics",
+        paths.rubrics,
+        "--results",
+        paths.results,
+    ]);
+
+    // Assert: the authored prompt and the seeded document are intact.
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(
+        readFileSync(join(paths.prompts, "R01.md"), "utf8"),
+        control.diagnosticPrompt,
+    );
+    assert.match(control.diagnosticPrompt, /operation-level documentation call/);
+    assert.equal(
+        readFileSync(
+            join(paths.fixtures, "R01", "lakes", "docs", "kb", "test-commands.md"),
+            "utf8",
+        ),
+        control.seeds[0]?.contents,
+    );
     rmRoot(root);
 });
 

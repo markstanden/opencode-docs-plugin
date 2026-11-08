@@ -188,6 +188,7 @@ interface CliOptions {
     noJudge: boolean;
     allowWrites: boolean;
     discovery: boolean;
+    printLogs: boolean;
     help?: boolean;
     model: string;
     judgeModel: string;
@@ -650,13 +651,20 @@ const DEFAULTS: DefaultedOptions = {
 };
 
 /** Letters where a bare switch flag lands in `CliOptions`. */
-type BooleanSwitch = "force" | "noJudge" | "allowWrites" | "discovery" | "help";
+type BooleanSwitch =
+    | "force"
+    | "noJudge"
+    | "allowWrites"
+    | "discovery"
+    | "printLogs"
+    | "help";
 
 const SWITCHES: Record<string, BooleanSwitch> = {
     "--force": "force",
     "--no-judge": "noJudge",
     "--allow-writes": "allowWrites",
     "--discovery": "discovery",
+    "--print-logs": "printLogs",
     "--help": "help",
     "-h": "help",
 };
@@ -748,6 +756,8 @@ common options:
   --discovery              omit destinations from prompts; the lakes are then
                            discoverable only through 'docs help', which the
                            prompt mentions without requiring
+  --print-logs             capture the child's host logs (diagnostics already
+                           do this); saved as stderr.log plus invocation.json
 
   TRIAL_TIMEOUT_MS         per-session timeout (default ${DEFAULTS.timeoutMs} ms)
   TRIAL_JOBS/TRIAL_JUDGE_JOBS  default worker counts`);
@@ -802,6 +812,7 @@ function parseArgs(argv: string[]) {
         noJudge: false,
         allowWrites: false,
         discovery: false,
+        printLogs: false,
         ids: [],
     };
     while (argv.length > 0) {
@@ -6020,7 +6031,7 @@ async function runOne(
         prompt: readFileSync(promptPath, "utf8"),
         opencode: options.opencode,
         timeoutMs: options.timeoutMs,
-        printLogs: diagnostic,
+        printLogs: diagnostic || options.printLogs,
     };
     const result = await opencodeCall(callArgs);
     timings.modelMs = Date.now() - modelStart;
@@ -6058,20 +6069,21 @@ async function runOne(
     const answerValid = invalidReason === null;
     timings.totalMs = Date.now() - totalStart;
     const configAt = jsonAt(join(callArgs.cwd, "opencode.json"));
-    const invocation = diagnostic
-        ? {
-              command: options.opencode,
-              args: opencodeArgs(callArgs),
-              cwd: callArgs.cwd,
-              pwd: callArgs.env.PWD ?? null,
-              startedAt,
-              promptSha256: fileHash(promptPath),
-              config:
-                  configAt.kind === "value"
-                      ? redactedConfig(configAt.value)
-                      : "unreadable",
-          }
-        : null;
+    const invocation =
+        diagnostic || options.printLogs
+            ? {
+                  command: options.opencode,
+                  args: opencodeArgs(callArgs),
+                  cwd: callArgs.cwd,
+                  pwd: callArgs.env.PWD ?? null,
+                  startedAt,
+                  promptSha256: fileHash(promptPath),
+                  config:
+                      configAt.kind === "value"
+                          ? redactedConfig(configAt.value)
+                          : "unreadable",
+              }
+            : null;
 
     writeRunEvidence(
         resultDir,

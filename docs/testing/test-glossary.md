@@ -133,7 +133,9 @@ the phrase with `--condition` and reports render the phrase, not the letter.
 
 Natural tasks remain behavioural trials, not environment-control successes.
 The explicit read control used for access checks reports as
-`explicit read control`.
+`explicit read control`. It is a separate diagnostic corpus
+(`tests/fixtures/read-control-cases.json`) that keeps the `R01` selector and
+seed, asks for an operation-level docs read, and remains unjudged.
 
 ## Reporting glossary
 
