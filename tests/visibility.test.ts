@@ -3,12 +3,13 @@ import assert from "node:assert/strict";
 import {
     mkdirSync,
     mkdtempSync,
+    existsSync,
     readFileSync,
     rmSync,
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
     createDocsTool,
     createLakes,
@@ -375,5 +376,151 @@ describe("revision visibility through the host channels", () => {
             {} as never,
         );
         assert.equal(again.metadata?.written, true, String(again.content));
+    });
+});
+/* ------------------------------------------------------------------ *
+ * F09: accepted knowledge writes are collectable; invisible paths refuse
+ * ------------------------------------------------------------------ */
+
+import { collectDocPaths, uncollectedSegment } from "../src/index.ts";
+import type { LakeProfile } from "../src/index.ts";
+
+/** A valid create request; tests override Area or path as needed. */
+const addRequest = (overrides: Record<string, unknown> = {}) => ({
+    mode: "create",
+    metadata: {
+        Area: "kk",
+        Keywords: ["quark", "flow", "knowledge"],
+        Summary: "Fresh quark-flow knowledge.",
+    },
+    body: "# Fresh Quark Flow\n\n### Facts\n\n- The quark flow is documented.\n",
+    ...overrides,
+});
+
+const lakeTool = () => {
+    const spec = knowledgeSpec();
+    return { spec, tool: createDocsTool({ lakes: createLakes([spec]) }) };
+};
+
+describe("F09: writes invisible to collection refuse at the boundary", () => {
+    it("a derived create whose Area is a scratch area refuses (F09)", async () => {
+        const { spec, tool } = lakeTool();
+        const result = await tool.execute(
+            { add: addRequest({ metadata: { ...addRequest().metadata, Area: "plans" } }) } as never,
+            {} as never,
+        );
+        const content = String(result.content);
+        assert.match(content, /never collected/);
+        assert.match(content, /plans/);
+        assert.ok(!existsSync(join(spec.root, "plans")), "no file written");
+    });
+
+    it("a hidden or dependency directory refuses, top level or nested (F09)", async () => {
+        const { spec, tool } = lakeTool();
+        for (const [path, segment] of [
+            [".hidden/x.md", ".hidden"],
+            ["node_modules/x.md", "node_modules"],
+            ["aa/.b/c.md", ".b"],
+        ] as Array<[string, string]>) {
+            const result = await tool.execute(
+                {
+                    add: addRequest({
+                        metadata: { ...addRequest().metadata, Area: "kk" },
+                        path,
+                    }),
+                } as never,
+                {} as never,
+            );
+            assert.match(String(result.content), /never collected/, path);
+            assert.match(String(result.content), new RegExp(segment), path);
+        }
+        assert.deepEqual(collectDocPaths(spec.root, { profile: "knowledge" }), []);
+    });
+
+    it("an accepted write is then genuinely findable and readable (F09)", async () => {
+        const { spec, tool } = lakeTool();
+        const written = await tool.execute(
+            { add: addRequest({ path: "kk/flow-note.md" }) } as never,
+            {} as never,
+        );
+        assert.match(String(written.content), /docs: revision/);
+        assert.ok(existsSync(join(spec.root, "kk/flow-note.md")));
+        // Collected and searchable, not merely written.
+        const found = await tool.execute(
+            { search: "quark flow" } as never,
+            {} as never,
+        );
+        assert.match(String(found.content), /kk\/flow-note\.md/);
+        const read = await tool.execute(
+            { read: "kk/flow-note.md" } as never,
+            {} as never,
+        );
+        assert.match(String(read.content), /# Fresh Quark Flow/);
+    });
+
+    it("a replace targeting an invisible doc refuses (F09)", async () => {
+        const { spec, tool } = lakeTool();
+        mkdirSync(join(spec.root, "plans"), { recursive: true });
+        const raw =
+            "---\nArea: kk\nKeywords: quark-flow\nSummary: Hidden doc.\n---\n\n" +
+            "### Facts\n\n# Invisible\n\n- Body.\n";
+        writeFileSync(join(spec.root, "plans", "old.md"), raw);
+        // The doc exists on disk but collection never sees it; replace must
+        // refuse rather than succeed invisibly.
+        const result = await tool.execute(
+            {
+                add: {
+                    mode: "replace",
+                    path: "plans/old.md",
+                    metadata: addRequest().metadata,
+                    body: "# Fresh Quark Flow\n\n### Facts\n\n- Replacement.\n",
+                    expectedRevision: revisionOf(raw),
+                },
+            } as never,
+            {} as never,
+        );
+        assert.match(String(result.content), /never collected/);
+        assert.match(String(result.content), /plans/);
+    });
+
+    it("the shared rule drives both collection and the write validation (F09)", () => {
+        const cases: Array<[string, "knowledge" | "wiki", string | null]> = [
+            ["plans/x.md", "knowledge", "plans"],
+            ["plans/x.md", "wiki", null],
+            ["wiki/w.md", "knowledge", "wiki"],
+            ["wiki/w.md", "wiki", null],
+            [".h/x.md", "knowledge", ".h"],
+            ["node_modules/x.md", "knowledge", "node_modules"],
+            ["aa/.b/x.md", "knowledge", ".b"],
+            ["aa/x.md", "knowledge", null],
+            ["zz.md", "knowledge", null],
+        ];
+        for (const [path, profile, expected] of cases) {
+            assert.equal(
+                uncollectedSegment(path, profile as LakeProfile),
+                expected,
+                `${path} (${profile})`,
+            );
+        }
+        // The walk agrees with the predicate on a real tree: an excluded
+        // top-level Area, a dot dir, node_modules and a nested hidden dir all
+        // drop; ordinary paths stay.
+        const { spec: tree } = lakeTool();
+        for (const relative of [
+            "plans/x.md",
+            "aa/x.md",
+            "aa/.b/x.md",
+            ".h/x.md",
+            "node_modules/x.md",
+            "zz.md",
+        ]) {
+            const target = join(tree.root, relative);
+            mkdirSync(dirname(target), { recursive: true });
+            writeFileSync(target, "# x\n\n### Facts\n\n- x\n");
+        }
+        assert.deepEqual(
+            collectDocPaths(tree.root, { profile: "knowledge" }),
+            ["aa/x.md", "zz.md"],
+        );
     });
 });
