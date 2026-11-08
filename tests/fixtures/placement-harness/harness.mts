@@ -1611,8 +1611,12 @@ function docsCriterionShape(value: unknown): string[] {
             false,
         );
         // Relevant paths are read targets: only the read verb (or no verb
-        // list at all) is compatible with them.
+        // list at all) is compatible with them. A paths-free verb list is
+        // judge-verifiable for any docs verb (a successful native help
+        // call is an observable completion), so it is not restricted —
+        // see trial-cases D01's help-discovery gate.
         if (
+            "paths" in value &&
             isStringArray(value.verbs) &&
             !value.verbs.every((verb) => verb === "read")
         ) {
