@@ -2296,34 +2296,46 @@ function sameKindChangeLabel(
     before: TreeEntry,
     after: TreeEntry,
 ): string {
-    if (kind !== before.kind || kind !== after.kind) return "";
+    if (kind !== before.kind) return "";
+    if (after.kind !== before.kind) return "";
     switch (before.kind) {
         case "file":
-            if (after.kind === "file") return fileKindChangeLabel(before, after);
-            return "";
+            return fileKindChangeLabel(before, after);
         case "symlink":
-            if (after.kind === "symlink" && before.target !== after.target) {
-                return "target";
-            }
-            return "";
+            return symlinkKindChangeLabel(before, after);
         case "dir":
-            if (after.kind === "dir") {
-                return dirModeChanged(before, after) ? "mode" : "";
-            }
-            return "";
+            return dirKindChangeLabel(before, after);
         default:
             return "";
     }
 }
 
-/** The permission-only directory change between two dir entries. */
-function dirModeChanged(
-    before: { mode?: string | undefined },
-    after: { mode?: string | undefined },
-): boolean {
-    if (before.mode === undefined) return false;
-    if (after.mode === undefined) return false;
-    return before.mode !== after.mode;
+/** Content first, then the permission-mode change between two files. */
+function fileKindChangeLabel(before: TreeEntry, after: TreeEntry): string {
+    if (before.kind !== "file" || after.kind !== "file") return "";
+    if (before.hash !== after.hash) return "content";
+    if (
+        before.mode !== undefined &&
+        after.mode !== undefined &&
+        before.mode !== after.mode
+    ) {
+        return "mode";
+    }
+    return "";
+}
+
+/** The retarget change between two symlinks. */
+function symlinkKindChangeLabel(before: TreeEntry, after: TreeEntry): string {
+    if (before.kind !== "symlink" || after.kind !== "symlink") return "";
+    return before.target !== after.target ? "target" : "";
+}
+
+/** The permission-only directory change between two dirs. */
+function dirKindChangeLabel(before: TreeEntry, after: TreeEntry): string {
+    if (before.kind !== "dir" || after.kind !== "dir") return "";
+    if (before.mode === undefined) return "";
+    if (after.mode === undefined) return "";
+    return before.mode !== after.mode ? "mode" : "";
 }
 
 /** Content first, then the permission-mode change. */
