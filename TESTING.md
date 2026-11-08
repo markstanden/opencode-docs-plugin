@@ -103,7 +103,7 @@ variant, the timeout, the trials' execution boundary (`trialBoundary` —
 the wrapper passes the trial container image/id to it, so a containerised
 sweep is described as one), the host orchestration identity
 (`orchestration`: fixture/plugin content hashes, lockfile hash, plugin
-commit and dirty state, CLI version — of the *describing* process), each
+commit and dirty state, CLI version — of the _describing_ process), each
 case's criteria (`mutationPolicy`, `docsCriterion`, `expectedDocs`) and the
 harness version. Re-invoking `run` on an existing stamp verifies the whole
 identity — corpus edits, a different plugin or changed settings refuse
@@ -440,15 +440,15 @@ that showed it.
 `tests/fixtures/trial-cases.json` extends the baseline with three
 supplied-evidence-only families beyond the E01 legislative no.18 placements:
 
-| Family    | Cases         | What it measures                                         |
-| --------- | ------------- | -------------------------------------------------------- |
-| Discovery | D01           | same-class lakes picked by description                   |
+| Family    | Cases         | What it measures                                                 |
+| --------- | ------------- | ---------------------------------------------------------------- |
+| Discovery | D01           | same-class lakes picked by description                           |
 | Discovery | D02, D03      | natural triggers — genuinely undirected (M06-corrected template) |
-| Retrieval | R01, R05, R06 | existing knowledge reused; policy linked, not restated   |
-| Retrieval | R02           | stale doc read, token refreshed, replaced in place       |
-| Retrieval | R04           | justify ambiguity, ask rather than guess                 |
-| Recording | W01           | permitted write within a declared mutation policy        |
-| Recording | W02           | sizeable replace with exactly stored bytes               |
+| Retrieval | R01, R05, R06 | existing knowledge reused; policy linked, not restated           |
+| Retrieval | R02           | stale doc read, token refreshed, replaced in place               |
+| Retrieval | R04           | justify ambiguity, ask rather than guess                         |
+| Recording | W01           | permitted write within a declared mutation policy                |
+| Recording | W02           | in-place replace with a deterministic preservation marker        |
 
 The corpus schema adds optional fields the baseline never uses: `family`,
 `promptKind` (`baseline` | `recording` | `natural`), `seeds` (documents or

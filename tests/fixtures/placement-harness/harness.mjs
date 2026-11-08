@@ -417,7 +417,10 @@ function tallyDocsEntry(entry, tallies) {
     // Verified completions exist only for observable docs operations (a
     // native or twin call that completed). Code Mode attempts never prove
     // the nested operation ran, so they never raise a verified verb.
-    if ((kind === "native" || kind === "twin") && entry.status === "completed") {
+    if (
+        (kind === "native" || kind === "twin") &&
+        entry.status === "completed"
+    ) {
         tallies.verbsCompleted[verb] = (tallies.verbsCompleted[verb] ?? 0) + 1;
     }
 }
@@ -1470,7 +1473,8 @@ function walkTree(root, withModes, skip, prefix = "") {
             if (skip !== undefined && skip.includes(item.name)) continue;
             const entry = walkEntry(path, item, withModes);
             entries.set(name, entry);
-            if (entry.kind === "dir" && item.isDirectory()) walk(path, `${name}/`);
+            if (entry.kind === "dir" && item.isDirectory())
+                walk(path, `${name}/`);
         }
     };
     walk(root, prefix);
@@ -1706,7 +1710,8 @@ function invalidFrontMatterReason(frontMatter) {
         if (
             !frontMatter.some(
                 (line) =>
-                    line.startsWith(field) && line.slice(field.length).trim() !== "",
+                    line.startsWith(field) &&
+                    line.slice(field.length).trim() !== "",
             )
         ) {
             return `front-matter ${field.slice(0, -1)} missing or blank`;
@@ -1718,7 +1723,8 @@ function invalidFrontMatterReason(frontMatter) {
 /** Body problems: an H1, a claim section, and a nonempty claim body. */
 function invalidClaimBodyReason(body) {
     if (!body.some((line) => line.startsWith("# "))) return "no H1 heading";
-    const claimHeading = /^(#{2,3})\s*(Facts|Inferred|Tested|Failed approaches|Open questions)\s*$/;
+    const claimHeading =
+        /^(#{2,3})\s*(Facts|Inferred|Tested|Failed approaches|Open questions)\s*$/;
     const headingIndex = body.findIndex((line) => claimHeading.test(line));
     if (headingIndex === -1) return "no claim section";
     if (!body.slice(headingIndex + 1).some((line) => line.trim() !== "")) {
@@ -1873,11 +1879,7 @@ function replaceDocVerdict(evidence, expectation) {
                 "(unchanged; a second doc or an unrelated change cannot satisfy this case)",
         };
     }
-    const text = recordedDocBytes(
-        evidence.liveDir,
-        evidence.snapshot,
-        target,
-    );
+    const text = recordedDocBytes(evidence.liveDir, evidence.snapshot, target);
     if (text === null) {
         return {
             problem: `expected replacement target ${target} is not a readable regular file`,
@@ -1915,7 +1917,9 @@ function createDocVerdict(evidence, expectation) {
     const path = candidates[0];
     const text = recordedDocBytes(evidence.liveDir, evidence.snapshot, path);
     if (text === null) {
-        return { problem: `created doc ${path} is not a readable regular file` };
+        return {
+            problem: `created doc ${path} is not a readable regular file`,
+        };
     }
     const content = docContentProblem(path, text, expectation, "created");
     if (content !== null) return { problem: content };
@@ -2102,16 +2106,23 @@ function runDescriptionConflicts(existing, description, containerFlow) {
     const legacy = (existing.schemaVersion ?? 1) < RUN_SCHEMA_VERSION;
     const compared =
         containerFlow || legacy
-            ? ["variant", "model", "judgeModel", "timeoutMs", "allowWrites", "caseIds"]
+            ? [
+                  "variant",
+                  "model",
+                  "judgeModel",
+                  "timeoutMs",
+                  "allowWrites",
+                  "caseIds",
+              ]
             : [
-              "variant",
-              "model",
-              "judgeModel",
-              "timeoutMs",
-              "allowWrites",
-              "caseIds",
-              "orchestration",
-          ];
+                  "variant",
+                  "model",
+                  "judgeModel",
+                  "timeoutMs",
+                  "allowWrites",
+                  "caseIds",
+                  "orchestration",
+              ];
     const conflicts = comparedFieldConflicts(existing, description, compared);
     // Full-corpus flows compare the authoritative definitions too, so a
     // corpus edit cannot relabel a frozen experiment.
@@ -2184,7 +2195,9 @@ function ensureRunDescription(options, stamp, selected, command) {
     try {
         writeJsonAtomic(path, JSON.stringify(description, null, 2) + "\n");
     } catch (error) {
-        console.error(`cannot freeze ${path} (${error?.code ?? String(error)})`);
+        console.error(
+            `cannot freeze ${path} (${error?.code ?? String(error)})`,
+        );
         return false;
     }
     return true;
@@ -2223,15 +2236,7 @@ function termGraceFromEnv() {
  * @param args.opencode The CLI binary.
  * @param args.timeoutMs The per-call timeout.
  */
-function opencodeCall({
-    cwd,
-    env,
-    model,
-    title,
-    prompt,
-    opencode,
-    timeoutMs,
-}) {
+function opencodeCall({ cwd, env, model, title, prompt, opencode, timeoutMs }) {
     return new Promise((resolve) => {
         let child;
         try {
@@ -2310,7 +2315,8 @@ function opencodeCall({
                 ...result,
                 timedOut: killed,
                 killEscalated: escalated,
-                outputOverflow: streams.stdout.overflow || streams.stderr.overflow,
+                outputOverflow:
+                    streams.stdout.overflow || streams.stderr.overflow,
                 stdoutBytes: streams.stdout.bytes,
                 stderrBytes: streams.stderr.bytes,
                 stdout: streams.stdout.chunks.join(""),
@@ -2401,9 +2407,7 @@ function reserveResultDir(resultDir) {
 /** A stable digest over one tree snapshot's full identity (including git state). */
 function snapshotDigest(snapshot) {
     const encode = (map) =>
-        JSON.stringify(
-            [...map].sort(([a], [b]) => (a < b ? -1 : 1)),
-        );
+        JSON.stringify([...map].sort(([a], [b]) => (a < b ? -1 : 1)));
     return sha256(`${encode(snapshot.entries)}\n${encode(snapshot.git)}`);
 }
 
@@ -2558,7 +2562,9 @@ function verifiedDocsCriterionProblem(criterion, resultDir) {
     }
     if (
         criterion.verbs !== undefined &&
-        !criterion.verbs.some((verb) => (telemetry.verbsCompleted[verb] ?? 0) > 0)
+        !criterion.verbs.some(
+            (verb) => (telemetry.verbsCompleted[verb] ?? 0) > 0,
+        )
     ) {
         return `docs criterion unmet: no completed ${criterion.verbs.join("/")} operation (attempts are counted, never verified)`;
     }
@@ -2587,7 +2593,11 @@ function legacyDocsCriterionProblem(criterion, resultDir) {
             .filter(([, count]) => count > 0)
             .map(([verb]) => verb);
         if (!criterion.verbs.some((verb) => used.includes(verb))) {
-            return "(legacy attempted-operations) docs criterion unmet: no " + criterion.verbs.join("/") + " call observed";
+            return (
+                "(legacy attempted-operations) docs criterion unmet: no " +
+                criterion.verbs.join("/") +
+                " call observed"
+            );
         }
     }
     return null;
@@ -2625,7 +2635,14 @@ function runProcessFailure(result, options) {
 }
 
 /** Capture, parsability, blankness and completion-shape evidence problems. */
-function runTrailEvidenceProblem(result, text, parseFailures, textParts, lastPartKind, events) {
+function runTrailEvidenceProblem(
+    result,
+    text,
+    parseFailures,
+    textParts,
+    lastPartKind,
+    events,
+) {
     if (
         result.outputOverflow === true ||
         result.stdoutOverflow === true ||
@@ -2808,9 +2825,15 @@ async function runOne(testCase, options, stamp, corpusComplete) {
     const violations = policyViolation(diff, testCase);
     timings.snapshotMs = Date.now() - snapshotStart;
 
-    const { text, tools, events, parseFailures, toolCalls, textParts, lastPartKind } = extract(
-        result.stdout ?? "",
-    );
+    const {
+        text,
+        tools,
+        events,
+        parseFailures,
+        toolCalls,
+        textParts,
+        lastPartKind,
+    } = extract(result.stdout ?? "");
     const telemetry = {
         ...docsTelemetry(toolCalls, parseFailures),
         events,
@@ -3237,17 +3260,15 @@ async function judgeAttempt(
 ) {
     write(join(judgeDir, "stdout.jsonl"), result.stdout ?? "");
     write(join(judgeDir, "stderr.log"), result.stderr ?? "");
-    const { text, parseFailures: judgeParseFailures, textParts } = extract(
-        result.stdout ?? "",
-    );
+    const {
+        text,
+        parseFailures: judgeParseFailures,
+        textParts,
+    } = extract(result.stdout ?? "");
     write(join(judgeDir, "raw.md"), text);
 
     const parsed = parseVerdict(text);
-    const problems = judgeOutputProblems(
-        parsed,
-        judgeParseFailures,
-        textParts,
-    );
+    const problems = judgeOutputProblems(parsed, judgeParseFailures, textParts);
     const judgeStatus = judgeStatusOf(result, problems);
     const attemptMeta = judgeAttemptMeta({
         resultDir,
@@ -3636,7 +3657,9 @@ function summaryHeaderLines(run, stamp) {
         `Model: ${described.model ?? "unknown (legacy)"}`,
         `Variant: ${described.variant ?? "unknown (legacy)"}`,
         `Boundary: ${summaryBoundary(run)}`,
-        ...summaryProvenanceLines(described.orchestration ?? described.provenance),
+        ...summaryProvenanceLines(
+            described.orchestration ?? described.provenance,
+        ),
         ...legacyStampNotice(run),
     ];
 }
