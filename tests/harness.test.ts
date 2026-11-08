@@ -3161,6 +3161,110 @@ test("D01: a help-discovery gate refuses a completed blank help call", () => {
     rmRoot(root);
 });
 
+test("D01: a nonblank failed help result is not a successful help call", () => {
+    // Arrange: the same gate.
+    const root = newRoot("d01-help-failed");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [
+        docGateCase("T01", null, {
+            docsCriterion: { minVerifiedCalls: 1, verbs: ["help"] },
+            mutationPolicy: { allowed: ["lakes/kb/**"], minWrites: 0 },
+        }),
+    ]);
+    // Act: run a trail whose help call failed while still delivering
+    // nonblank output, then judge.
+    const { verdict } = runGateTrails(
+        root,
+        fake,
+        paths,
+        "T01",
+        "s1",
+        TOOL_JSONL(
+            "docs",
+            "call-1",
+            "error",
+            { search: "help" },
+            "help lookup failed: lakes unreachable",
+        ) + ANSWER_JSONL(),
+    );
+    // Assert: a nonblank failure is delivery, not success.
+    assert.equal(verdict.verdict, "invalid");
+    assert.match(verdict.reason, /0 successful docs op\(s\)/);
+    rmRoot(root);
+});
+
+test("D01: an observable twin help call satisfies the help gate", () => {
+    // Arrange: the same gate, with the twin registration name the plugin
+    // advertises.
+    const root = newRoot("d01-help-twin");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [
+        docGateCase("T01", null, {
+            docsCriterion: { minVerifiedCalls: 1, verbs: ["help"] },
+            mutationPolicy: { allowed: ["lakes/kb/**"], minWrites: 0 },
+        }),
+    ]);
+    // Act: run a trail whose twin help call completed with the inventory,
+    // then judge.
+    const { judge, verdict } = runGateTrails(
+        root,
+        fake,
+        paths,
+        "T01",
+        "s1",
+        TOOL_JSONL(
+            "docs_search",
+            "call-1",
+            "completed",
+            { search: "help" },
+            "- docs (Repository [repo]): this repository's knowledge\n",
+        ) + ANSWER_JSONL(),
+    );
+    // Assert: the observable twin counts like the native tool.
+    assert.equal(judge.status, 0, judge.stderr);
+    assert.equal(verdict.verdict, "pass");
+    rmRoot(root);
+});
+
+test("D01: a successful unrelated read cannot cover a failed help call", () => {
+    // Arrange: the same gate, floor met by an unrelated verb.
+    const root = newRoot("d01-help-mixed");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [
+        docGateCase("T01", null, {
+            docsCriterion: { minVerifiedCalls: 1, verbs: ["help"] },
+            mutationPolicy: { allowed: ["lakes/kb/**"], minWrites: 0 },
+        }),
+    ]);
+    // Act: one successful read plus a failed help call, then judge.
+    const { verdict } = runGateTrails(
+        root,
+        fake,
+        paths,
+        "T01",
+        "s1",
+        TOOL_JSONL(
+            "docs",
+            "call-1",
+            "completed",
+            { read: "kb/test-commands.md" },
+            SUCCESSFUL_READ_OUTPUT,
+        ) +
+            TOOL_JSONL(
+                "docs",
+                "call-2",
+                "error",
+                { search: "help" },
+                "help lookup failed: lakes unreachable",
+            ) +
+            ANSWER_JSONL(),
+    );
+    // Assert: the floor counts the read, the verb gate refuses.
+    assert.equal(verdict.verdict, "invalid");
+    assert.match(verdict.reason, /no successful help operation/);
+    rmRoot(root);
+});
+
 test("D01: a path criterion still refuses verbs beside read", () => {
     // Arrange: regression for the #38 invariant — a read-verification
     // with paths may not demand other verbs.
