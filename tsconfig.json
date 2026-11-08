@@ -5,13 +5,11 @@
         "module": "nodenext",
         "moduleResolution": "nodenext",
         "types": ["node"],
-
         "strict": true,
         "noUncheckedIndexedAccess": true,
         "exactOptionalPropertyTypes": true,
         "noImplicitOverride": true,
         "noFallthroughCasesInSwitch": true,
-
         // Nothing is compiled: OpenCode runs the plugin .ts directly (bun
         // strips types), and Node runs the tests the same way, so tsc exists
         // purely to typecheck the file the host actually loads.
@@ -20,8 +18,12 @@
         "erasableSyntaxOnly": true,
         "verbatimModuleSyntax": true,
         "isolatedModules": true,
-
         "skipLibCheck": true
     },
-    "include": ["src/**/*.ts", "tests/**/*.ts"]
+    "include": [
+        "src/**/*.ts",
+        "src/**/*.mts",
+        "tests/**/*.ts",
+        "tests/**/*.mts"
+    ]
 }
