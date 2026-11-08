@@ -24,6 +24,12 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+    NAMING_MAP_VERSION,
+    SCENARIO_DISPLAY,
+    conditionLabel,
+    formatScenarioName,
+} from "./fixtures/placement-harness/scenario-names.mts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const HARNESS = join(HERE, "fixtures", "placement-harness", "harness.mts");
@@ -1926,7 +1932,10 @@ test("F12: a custom corpus id namespace runs end to end", () => {
         "s1",
         ...commandArgs(paths),
     ]);
-    assert.match(summary.stdout, /\| R01 \| Personal \| fail \| doclake \|/);
+    assert.match(
+        summary.stdout,
+        /\| REUSE-01 — Read and reuse the existing test instructions \(R01\) \| Personal \| fail \| doclake \|/,
+    );
     rmRoot(root);
 });
 
@@ -6367,4 +6376,148 @@ test("A01: a diagnostic case is report-only, never semantically judged", () => {
     );
     assert.equal(existsSync(join(paths.results, "s1", "A01", "judge")), false);
     rmRoot(root);
+});
+
+/* ------------------------------------------------------------------ *
+ * Scenario naming — display-only map, saved per run
+ * ------------------------------------------------------------------ */
+
+test("NAMING: every current corpus case has one unique display identity", () => {
+    // Arrange: the current corpora are the completeness boundary.
+    const corpora = [
+        join(HERE, "fixtures", "placement-cases.json"),
+        join(HERE, "fixtures", "trial-cases.json"),
+        join(HERE, "fixtures", "diagnostic-cases.json"),
+    ];
+    const ids = corpora.flatMap((path) =>
+        (readJson(path) as Array<{ id: string }>).map((entry) => entry.id),
+    );
+
+    // Act: the authoritative map.
+    const mapped = ids.map((id) => [id, SCENARIO_DISPLAY[id]] as const);
+
+    // Assert: complete, one-to-one and nonblank.
+    for (const [id, display] of mapped) {
+        assert.ok(display, `no display identity for current case ${id}`);
+        assert.notEqual(display.displayId.trim(), "");
+        assert.notEqual(display.title.trim(), "");
+    }
+    const displayIds = mapped.flatMap(([, display]) =>
+        display ? [display.displayId] : [],
+    );
+    assert.equal(new Set(displayIds).size, displayIds.length);
+    const rendered = mapped.map(([id, display]) =>
+        formatScenarioName(id, display, null),
+    );
+    assert.equal(
+        new Set(rendered).size,
+        rendered.length,
+        "each current case renders a distinct scenario label",
+    );
+    assert.deepEqual(
+        Object.keys(SCENARIO_DISPLAY).sort(),
+        [...new Set(ids)].sort(),
+        "the map holds exactly the current corpus ids",
+    );
+    assert.equal(SCENARIO_DISPLAY.A01?.displayId, "CONTROL-02");
+    assert.equal(SCENARIO_DISPLAY.R01?.displayId, "REUSE-01");
+});
+
+test("NAMING: a new run snapshots readable names and a condition phrase", () => {
+    // Arrange: a current corpus case and a historical condition code.
+    const root = newRoot("naming-new");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [baselineCase("R01")]);
+    const out = file(root, "answer.jsonl", ANSWER_JSONL("The repo lake."));
+
+    // Act: run and report.
+    const run = runHarness(
+        root,
+        fake,
+        [
+            "run",
+            "R01",
+            "--stamp",
+            "s1",
+            "--condition",
+            "A",
+            ...commandArgs(paths),
+        ],
+        { FAKE_TRIAL_OUT: out },
+    );
+    assert.equal(run.status, 0, run.stderr);
+    const summary = runHarness(root, fake, [
+        "summary",
+        "--stamp",
+        "s1",
+        ...commandArgs(paths),
+    ]);
+    const exported = runHarness(root, fake, [
+        "export",
+        "--stamp",
+        "s1",
+        ...commandArgs(paths),
+    ]);
+
+    // Assert: the frozen description carries the snapshot, and both reports
+    // render it with the historical id still traceable.
+    const saved = readJson(join(paths.results, "s1", "run.json"));
+    assert.equal(saved.namingMapVersion, NAMING_MAP_VERSION);
+    assert.equal(saved.condition, "native instruction");
+    assert.deepEqual(saved.cases[0].display, {
+        displayId: "REUSE-01",
+        title: "Read and reuse the existing test instructions",
+    });
+    assert.equal(summary.status, 0, summary.stderr);
+    assert.match(
+        summary.stdout,
+        /REUSE-01 — Read and reuse the existing test instructions \(R01\)/,
+    );
+    assert.match(summary.stdout, /Condition: native instruction/);
+    assert.equal(exported.status, 0, exported.stderr);
+    assert.match(
+        readFileSync(join(paths.results, "s1", "dossier.md"), "utf8"),
+        /## REUSE-01 — Read and reuse the existing test instructions \(R01\) — Expected:/,
+    );
+    rmRoot(root);
+});
+
+test("NAMING: a legacy run keeps its own id and never adopts a new title", () => {
+    // Arrange: a representative v1 stamp with no saved display metadata.
+    const root = newRoot("naming-legacy");
+    const fake = writeFakeOpencode(root);
+    const paths = layout(root);
+    writeCorpus(root, [baselineCase("T01")]);
+    stageV1Stamp(root, paths);
+
+    // Act: render the summary.
+    const summary = runHarness(root, fake, [
+        "summary",
+        "--stamp",
+        "v1stamp",
+        ...commandArgs(paths),
+    ]);
+
+    // Assert: the old id remains, with no newly assigned title.
+    assert.equal(summary.status, 0, summary.stderr);
+    assert.match(summary.stdout, /\| T01 \|/);
+    assert.doesNotMatch(summary.stdout, /REUSE-01/);
+    assert.equal(
+        formatScenarioName("R01", null, "Recorded claim from the old stamp."),
+        "R01 — Recorded claim from the old stamp.",
+    );
+    rmRoot(root);
+});
+
+test("NAMING: condition codes render as phrases, never as letters", () => {
+    assert.equal(conditionLabel("A"), "native instruction");
+    assert.equal(conditionLabel("A2"), "sharpened native instruction");
+    assert.equal(conditionLabel("B"), "Code Mode instruction");
+    assert.equal(conditionLabel("C"), "natural task");
+    assert.equal(
+        conditionLabel("explicit_read_control"),
+        "explicit read control",
+    );
+    assert.equal(conditionLabel("C01"), undefined);
+    assert.equal(conditionLabel("A01"), undefined);
 });

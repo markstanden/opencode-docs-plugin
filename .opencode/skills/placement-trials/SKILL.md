@@ -3,6 +3,10 @@ name: placement-trials
 description: Run and score the behavioural placement-guidance trials (tests/fixtures/placement-cases.json) through tests/fixtures/placement-harness/harness.mts. Use for /placement, "placement trials", or when asked to evaluate the placement guidance against real model sessions.
 ---
 
+Names are display-only: fixture ids remain the selectors, and new run
+descriptions snapshot their display identity. Glossary and map:
+`docs/testing/test-glossary.md`.
+
 # Placement trials
 
 `tests/fixtures/placement-harness/harness.mts` runs the cases in

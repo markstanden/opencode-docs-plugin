@@ -273,7 +273,7 @@ parse_run_args() {
             STAMP="${1#*=}"
             shift
             ;;
-        --model | --judge-model | --opencode)
+        --model | --judge-model | --opencode | --condition)
             RUN_ARGS+=("$1" "$2")
             shift 2
             ;;

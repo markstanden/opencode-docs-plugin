@@ -10,6 +10,11 @@ This repository is tested on two layers, answering two different questions:
    placement cases; a fixture asserting expected answers in Node cannot prove
    that.
 
+**Vocabulary and readable names:** [docs/testing/test-glossary.md](docs/testing/test-glossary.md)
+defines the reporting terms, the display-only scenario prefixes (for example
+REUSE-01 for R01), and the condition phrases (A/B/C/A2). Fixture ids remain the
+stable selectors.
+
 ## Quick start
 
 ```sh
