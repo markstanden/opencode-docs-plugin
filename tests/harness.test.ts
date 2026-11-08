@@ -2579,6 +2579,31 @@ test("F05: host-only commands dispatch without podman on PATH", () => {
     rmRoot(root);
 });
 
+test("F05: standalone describe validates the custom prompt and fixture roots", () => {
+    // Arrange: generation writes into the wrapper's nondefault roots.
+    const root = newRoot("f05-describe-roots");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [baselineCase("T01")]);
+    // Act: describe via the wrapper, with no explicit prompt/fixture flags.
+    const described = runWrapper(root, fake, ["describe", "--stamp", "custom"]);
+    // Assert: it sees the same generation the host-side run would.
+    assert.equal(described.status, 0, described.stderr);
+    assert.ok(existsSync(join(paths.results, "custom", "run.json")));
+    // A prompt that no longer matches its generation record is refused.
+    writeFileSync(join(paths.prompts, "T01.md"), "tampered prompt\n");
+    const refused = runWrapper(root, fake, ["describe", "--stamp", "mismatch"]);
+    assert.notEqual(refused.status, 0);
+    assert.match(
+        refused.stderr,
+        /prepared generation does not match the frozen experiment/,
+    );
+    assert.match(
+        refused.stderr,
+        /prompt does not match the recorded generation/,
+    );
+    rmRoot(root);
+});
+
 test("F05: all --no-judge never invokes the judge and still reports", () => {
     const root = newRoot("f05-nojudge");
     const fake = writeFakeOpencode(root);

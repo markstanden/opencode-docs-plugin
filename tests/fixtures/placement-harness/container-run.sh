@@ -57,6 +57,8 @@ host_harness() {
     node "$HERE/harness.mts" "$@" \
         --results "$RESULTS" \
         --fixture "$CASES" \
+        --prompts "$PROMPTS" \
+        --fixtures "$FIXTURES" \
         --rubrics "$RUBRICS"
 }
 
