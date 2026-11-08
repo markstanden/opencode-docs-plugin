@@ -4,7 +4,6 @@ Keywords: r01, access-experiment, code-mode-catalogue, native-docs-tool, harness
 Summary: R01 diagnostic controls (13 harness-child sessions, 2 models across native/Code-Mode/natural conditions plus a sharpened A2 pair) on frozen e9d3926 semantics: the harness child never advertises the native docs tool; Code Mode docs dispatch flipped between success and the campaign's Unknown-tool error; every R01 criterion was deterministic-invalid and the semantic judge never ran.
 ---
 
-
 # The harness child advertises no native docs tool; Code Mode docs dispatch is session-dependent
 
 ## Facts
