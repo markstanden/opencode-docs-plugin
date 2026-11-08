@@ -3057,6 +3057,134 @@ test("M04: a verbs-only read gate refuses a failed read", () => {
     rmRoot(root);
 });
 
+/* ------------------------------------------------------------------ *
+ * D01 — the checked-in family corpus, and help discovery as a
+ * verifiable criterion
+ * ------------------------------------------------------------------ */
+
+const FAMILY_CORPUS = join(HERE, "fixtures", "trial-cases.json");
+
+test("D01: every checked-in family case validates and generates", () => {
+    // Arrange: the complete checked-in corpus, including D01's
+    // paths-free help-discovery gate.
+    const root = newRoot("d01-corpus-generates");
+    const fake = writeFakeOpencode(root);
+    const ids = readJson(FAMILY_CORPUS).map(
+        (entry: { id: string }) => entry.id,
+    ) as string[];
+    assert.ok(ids.includes("D01"), "the family corpus must carry D01");
+    const paths = layout(root);
+    // Act: generate every family case from the checked-in file itself.
+    const run = runHarness(root, fake, [
+        "generate",
+        ...ids,
+        "--fixture",
+        FAMILY_CORPUS,
+        "--prompts",
+        paths.prompts,
+        "--fixtures",
+        paths.fixtures,
+        "--rubrics",
+        paths.rubrics,
+        "--results",
+        paths.results,
+    ]);
+    // Assert: the previously schema-blocked corpus now generates cleanly.
+    assert.equal(run.status, 0, run.stderr);
+    for (const id of ids) {
+        assert.ok(
+            existsSync(join(paths.fixtures, id, "generation.json")),
+            `${id} must have a generation record`,
+        );
+    }
+    rmRoot(root);
+});
+
+test("D01: a help-discovery gate is satisfied by a successful native help call", () => {
+    // Arrange: the gate as trial-cases D01 declares it — one verified
+    // help operation, no paths.
+    const root = newRoot("d01-help-success");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [
+        docGateCase("T01", null, {
+            docsCriterion: { minVerifiedCalls: 1, verbs: ["help"] },
+            mutationPolicy: { allowed: ["lakes/kb/**"], minWrites: 0 },
+        }),
+    ]);
+    // Act: run a trail whose help call completed and delivered the lake
+    // inventory, then judge.
+    const { judge, verdict } = runGateTrails(
+        root,
+        fake,
+        paths,
+        "T01",
+        "s1",
+        TOOL_JSONL(
+            "docs",
+            "call-1",
+            "completed",
+            { search: "help" },
+            "- docs (Repository [repo]): this repository's knowledge\n" +
+                "- doclake (Personal [machine]): personal setup\n",
+        ) + ANSWER_JSONL(),
+    );
+    // Assert: the gate passes and the semantic judge decides on merits.
+    assert.equal(judge.status, 0, judge.stderr);
+    assert.equal(verdict.verdict, "pass");
+    rmRoot(root);
+});
+
+test("D01: a help-discovery gate refuses a completed blank help call", () => {
+    // Arrange: the same gate.
+    const root = newRoot("d01-help-blank");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [
+        docGateCase("T01", null, {
+            docsCriterion: { minVerifiedCalls: 1, verbs: ["help"] },
+            mutationPolicy: { allowed: ["lakes/kb/**"], minWrites: 0 },
+        }),
+    ]);
+    // Act: run a trail whose help call completed but delivered nothing,
+    // then judge.
+    const { verdict } = runGateTrails(
+        root,
+        fake,
+        paths,
+        "T01",
+        "s1",
+        TOOL_JSONL("docs", "call-1", "completed", { search: "help" }, "") +
+            ANSWER_JSONL(),
+    );
+    // Assert: a completed empty inventory is not a success.
+    assert.equal(verdict.verdict, "invalid");
+    assert.match(verdict.reason, /0 successful docs op\(s\)/);
+    rmRoot(root);
+});
+
+test("D01: a path criterion still refuses verbs beside read", () => {
+    // Arrange: regression for the #38 invariant — a read-verification
+    // with paths may not demand other verbs.
+    const root = newRoot("d01-paths-refuses-other-verbs");
+    const fake = writeFakeOpencode(root);
+    const { result } = generate(root, fake, [
+        docGateCase("T01", null, {
+            docsCriterion: {
+                minVerifiedCalls: 1,
+                verbs: ["read", "search"],
+                paths: ["kb/existing.md"],
+            },
+            mutationPolicy: { allowed: ["lakes/kb/**"], minWrites: 0 },
+        }),
+    ]);
+    // Assert: the same refusal message as before the widening.
+    assert.notEqual(result.status, 0);
+    assert.match(
+        result.stderr,
+        /paths gate read targets; verbs must be undefined or \["read"\]/,
+    );
+    rmRoot(root);
+});
+
 test("M04: a floor-only criterion counts successes, never completed failures", () => {
     // Arrange: a gate with a floor and no verb/path requirements.
     const root = newRoot("m04-floor-only");
