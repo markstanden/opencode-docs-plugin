@@ -764,41 +764,18 @@ function loadCases(fixturePath: string, requireFull: boolean): TrialCase[] {
     }
     const cases: TrialCase[] = [];
     for (const entry of parsed) {
-        const validated = validatedCorpusEntry(entry, requireFull);
-        if (validated === null) {
-            usage(
-                `corpus ${fixturePath}: an entry lacks the shape of a ` +
-                    (requireFull ? "full case" : "usable id"),
-            );
+        const validated = validateCorpusEntry(entry, requireFull);
+        if ("case" in validated) {
+            cases.push(validated.case);
+            continue;
         }
-        cases.push(validated);
+        const label = JSON.stringify((entry as { id?: unknown }).id ?? null);
+        usage(
+            `corpus ${fixturePath}: case ${label} is malformed: ` +
+                validated.problems.join("; "),
+        );
     }
     return cases;
-}
-
-/**
- * One validated corpus entry: proven by inspection, narrowed once — the
- * widening is only what the inspection above proves.
- * @param entry An array element of a loaded corpus.
- * @param requireFull Whether claim/destinations must be present.
- * @returns The narrowed case entry, or null when the shape fails.
- */
-function validatedCorpusEntry(
-    entry: unknown,
-    requireFull: boolean,
-): TrialCase | null {
-    if (entry === null || typeof entry !== "object") return null;
-    const record = entry as Record<string, unknown>;
-    const id = record.id;
-    if (typeof id !== "string" || id === "") return null;
-    if (requireFull) {
-        const claim = record.claim;
-        const destinations = record.destinations;
-        if (typeof claim !== "string" || !Array.isArray(destinations)) {
-            return null;
-        }
-    }
-    return record as unknown as TrialCase;
 }
 
 function select(options: CliOptions) {
@@ -820,24 +797,406 @@ const sha256 = (value: string | Buffer) =>
     createHash("sha256").update(value).digest("hex");
 const fileHash = (path: string) => sha256(readFileSync(path));
 
-function readJson(path: string): unknown | undefined {
-    if (!existsSync(path)) return undefined;
+/** What a JSON artefact read returned at the real IO boundary. */
+type JsonAt =
+    | { kind: "absent" }
+    | { kind: "value"; value: unknown }
+    | { kind: "corrupt"; problem: string };
+
+/**
+ * Read one JSON file at the real IO boundary, splitting the outcomes the
+ * callers must not merge: absent (no file — e.g. a legacy record that was
+ * never written), a parsed value, and corrupt (exists but unparsable). A
+ * corrupt artefact is never silently treated as absent.
+ */
+function jsonAt(path: string): JsonAt {
+    if (!existsSync(path)) return { kind: "absent" };
     try {
-        return JSON.parse(readFileSync(path, "utf8"));
-    } catch {
-        return undefined;
+        return {
+            kind: "value",
+            value: JSON.parse(readFileSync(path, "utf8")),
+        };
+    } catch (error: unknown) {
+        return {
+            kind: "corrupt",
+            problem: error instanceof Error ? error.message : String(error),
+        };
     }
 }
 
+/** One strict parse outcome at a recorded-record boundary. */
+type RecordAt<T> =
+    | { kind: "absent" }
+    | { kind: "value"; value: T }
+    | { kind: "malformed"; problems: string[] };
+
 /**
- * Typed record readers: each validates the record-ish object shape at the
- * real IO boundary, stays access-typed downstream, and never asserts a
- * field it has not seen.
+ * Read and validate one JSON record at the real IO boundary. The schema
+ * validator proves every field the harness consumes (types, required
+ * presence, enums and ranges); the value handed downstream carries exactly
+ * that proof — unknown properties stay forward-compatible. Absent and
+ * malformed stay distinguishable: a missing file is an absent record, a
+ * present-but-invalid one is a refusal, never a fallback.
  */
-function readJsonRecord<T>(path: string): T | undefined {
-    const value = readJson(path);
-    if (!isRecord(value)) return undefined;
-    return value as T;
+function recordAt<T>(
+    path: string,
+    validate: (value: unknown) => string[],
+): RecordAt<T> {
+    const json = jsonAt(path);
+    if (json.kind === "absent") return { kind: "absent" };
+    if (json.kind === "corrupt") {
+        return {
+            kind: "malformed",
+            problems: [`unparsable JSON (${json.problem})`],
+        };
+    }
+    const problems = validate(json.value);
+    return problems.length === 0
+        ? { kind: "value", value: json.value as T }
+        : { kind: "malformed", problems };
+}
+
+/* ------------------------------------------------------------------ *
+ * Field-shape helpers shared by the per-schema validators
+ * ------------------------------------------------------------------ */
+
+/** A problems list for one record's consumed fields; empty means valid. */
+type FieldProblems = string[];
+
+const isStringArray = (value: unknown): value is string[] =>
+    Array.isArray(value) && value.every((item) => typeof item === "string");
+
+const nonnegativeInt = (value: unknown): boolean =>
+    typeof value === "number" && Number.isInteger(value) && value >= 0;
+
+const isLiteral = (value: unknown, choices: readonly string[]): boolean => {
+    return (
+        typeof value === "string" &&
+        (choices as readonly string[]).includes(value)
+    );
+};
+
+/** Validate one optional-or-required field's shape into `out`. */
+function fieldProblems(
+    out: FieldProblems,
+    record: Record<string, unknown>,
+    field: string,
+    what: string,
+    test: (value: unknown) => boolean,
+    required: boolean,
+): void {
+    if (!(field in record)) {
+        if (required) out.push(`${field} is required`);
+        return;
+    }
+    if (!test(record[field])) out.push(`${field} ${what}`);
+}
+
+/* ------------------------------------------------------------------ *
+ * Per-schema validators (the fields the harness consumed get proven)
+ * ------------------------------------------------------------------ */
+
+/**
+ * A meta record requires the terminal-state and answer-identity fields the
+ * gates consume (`exit`, `writes`, `policyViolations`, `answerHash`,
+ * `answerValid`); the remaining consumed fields are proven by type when
+ * present.
+ * @returns The problems with one parsed meta.json.
+ */
+function metaShape(value: unknown): string[] {
+    if (!isRecord(value)) return ["meta.json must be a JSON object"];
+    const out: FieldProblems = [];
+    fieldProblems(
+        out,
+        value,
+        "exit",
+        "must be a nonnegative integer or null",
+        (v) => v === null || nonnegativeInt(v),
+        true,
+    );
+    fieldProblems(
+        out,
+        value,
+        "writes",
+        "must be a nonnegative integer",
+        nonnegativeInt,
+        true,
+    );
+    fieldProblems(
+        out,
+        value,
+        "policyViolations",
+        "must be a string array",
+        isStringArray,
+        true,
+    );
+    fieldProblems(
+        out,
+        value,
+        "answerHash",
+        "must be a string",
+        (v) => typeof v === "string",
+        true,
+    );
+    fieldProblems(
+        out,
+        value,
+        "answerValid",
+        "must be a boolean",
+        (v) => typeof v === "boolean",
+        true,
+    );
+    fieldProblems(
+        out,
+        value,
+        "timedOut",
+        "must be a boolean",
+        (v) => typeof v === "boolean",
+        false,
+    );
+    fieldProblems(
+        out,
+        value,
+        "killEscalated",
+        "must be a boolean",
+        (v) => typeof v === "boolean",
+        false,
+    );
+    fieldProblems(
+        out,
+        value,
+        "outputOverflow",
+        "must be a boolean",
+        (v) => typeof v === "boolean",
+        false,
+    );
+    fieldProblems(
+        out,
+        value,
+        "signal",
+        "must be a string or null",
+        (v) => v === null || typeof v === "string",
+        false,
+    );
+    fieldProblems(
+        out,
+        value,
+        "finalStateDigest",
+        "must be a string",
+        (v) => typeof v === "string",
+        false,
+    );
+    fieldProblems(
+        out,
+        value,
+        "invalidReason",
+        "must be a string",
+        (v) => typeof v === "string",
+        false,
+    );
+    fieldProblems(
+        out,
+        value,
+        "model",
+        "must be a string",
+        (v) => typeof v === "string",
+        false,
+    );
+    fieldProblems(
+        out,
+        value,
+        "startedAt",
+        "must be a string",
+        (v) => typeof v === "string",
+        false,
+    );
+    fieldProblems(
+        out,
+        value,
+        "writeKinds",
+        "must be a JSON object or null",
+        (v) => v === null || isRecord(v),
+        false,
+    );
+    return out;
+}
+
+/** The problems with one tree-walk entry (a generation record's certification). */
+function treeEntryProblems(entry: unknown): string[] {
+    if (!isRecord(entry)) return ["each tree entry must be a JSON object"];
+    if (isLiteral(entry.kind, ["file"])) {
+        return typeof entry.hash === "string"
+            ? []
+            : ["a file tree entry needs a hash string"];
+    }
+    if (isLiteral(entry.kind, ["dir"])) return [];
+    if (isLiteral(entry.kind, ["symlink"])) {
+        return typeof entry.target === "string"
+            ? []
+            : ["a symlink tree entry needs a target string"];
+    }
+    if (isLiteral(entry.kind, ["other", "dir-unreadable"])) return [];
+    return [`unknown tree entry kind ${JSON.stringify(entry.kind)}`];
+}
+
+/** The problems with one generation record's certification tree. */
+function generationShape(value: unknown): string[] {
+    if (!isRecord(value)) return ["generation.json must be a JSON object"];
+    const out: FieldProblems = [];
+    fieldProblems(
+        out,
+        value,
+        "schemaVersion",
+        "must be a nonnegative integer",
+        nonnegativeInt,
+        false,
+    );
+    fieldProblems(
+        out,
+        value,
+        "id",
+        "must be a string",
+        (v) => typeof v === "string",
+        false,
+    );
+    fieldProblems(
+        out,
+        value,
+        "inputsHash",
+        "must be a string",
+        (v) => typeof v === "string",
+        true,
+    );
+    fieldProblems(
+        out,
+        value,
+        "generationVersion",
+        "must be a nonnegative integer",
+        nonnegativeInt,
+        false,
+    );
+    fieldProblems(
+        out,
+        value,
+        "pluginHash",
+        "must be a string",
+        (v) => typeof v === "string",
+        false,
+    );
+    if (isRecord(value.files)) {
+        for (const field of ["promptHash", "configHash", "rubricHash"]) {
+            if (field in value.files && typeof value.files[field] !== "string")
+                out.push(`files.${field} must be a string`);
+        }
+    } else if (value.files !== undefined) {
+        out.push("files must be a JSON object");
+    }
+    if (value.tree === undefined) return out;
+    if (!isRecord(value.tree)) {
+        out.push("tree must be a JSON object");
+        return out;
+    }
+    for (const [path, entry] of Object.entries(value.tree)) {
+        const problems = treeEntryProblems(entry);
+        out.push(...problems.map((problem) => `tree["${path}"] ${problem}`));
+    }
+    return out;
+}
+
+/** The consumed record shape of run.json's own body. */
+function runDescriptionShape(value: unknown): string[] {
+    if (!isRecord(value)) return ["run.json must be a JSON object"];
+    const out: FieldProblems = [];
+    const version = value.schemaVersion;
+    if (typeof version !== "number" || !nonnegativeInt(version)) {
+        out.push("schemaVersion must be a nonnegative integer");
+        return out;
+    }
+    // Legacy v1 stamps carried fewer fields: validate only its consumed set.
+    if (version < RUN_SCHEMA_VERSION) return out;
+    fieldProblems(
+        out,
+        value,
+        "createdAt",
+        "must be a string",
+        (v) => typeof v === "string",
+        true,
+    );
+    fieldProblems(
+        out,
+        value,
+        "stamp",
+        "must be a string",
+        (v) => typeof v === "string",
+        true,
+    );
+    fieldProblems(
+        out,
+        value,
+        "model",
+        "must be a string",
+        (v) => typeof v === "string",
+        true,
+    );
+    fieldProblems(
+        out,
+        value,
+        "variant",
+        'must be "destinations" or "discovery"',
+        (v) => isLiteral(v, ["destinations", "discovery"]),
+        true,
+    );
+    fieldProblems(
+        out,
+        value,
+        "timeoutMs",
+        "must be a nonnegative integer",
+        nonnegativeInt,
+        true,
+    );
+    fieldProblems(
+        out,
+        value,
+        "allowWrites",
+        "must be a boolean",
+        (v) => typeof v === "boolean",
+        true,
+    );
+    fieldProblems(
+        out,
+        value,
+        "caseIds",
+        "must be a string array",
+        isStringArray,
+        true,
+    );
+    if (value.cases === undefined) {
+        out.push("cases is required for a v2 run description");
+        return out;
+    }
+    if (!Array.isArray(value.cases)) {
+        out.push("cases must be an array");
+        return out;
+    }
+    return [...out, ...runCasesShape(value.cases)];
+}
+
+/** The problems with one frozen description's per-case slices. */
+function runCasesShape(cases: unknown[]): string[] {
+    const out: string[] = [];
+    for (const [index, entry] of cases.entries()) {
+        if (!isRecord(entry)) {
+            out.push(`cases[${index}] must be a JSON object`);
+            continue;
+        }
+        if (typeof entry.id !== "string" || entry.id === "") {
+            out.push(`cases[${index}].id must be a nonempty string`);
+        }
+        if (entry.definition !== undefined && !isRecord(entry.definition)) {
+            out.push(`cases[${index}].definition must be a JSON object`);
+        }
+    }
+    return out;
 }
 
 /** One frozen.json freeze receipt the wrapper stages for a container. */
@@ -857,28 +1216,411 @@ interface JudgeAttemptRecord {
     judgeStatus: string;
 }
 
-function readMetaRecord(path: string): MetaRecord | undefined {
-    return readJsonRecord<MetaRecord>(path);
+/* ------------------------------------------------------------------ *
+ * Per-record reader bindings (validated at the boundary; never broadened)
+ * ------------------------------------------------------------------ */
+
+/** The gates' terminal-state and answer-identity record. */
+function metaRecordAt(path: string): RecordAt<MetaRecord> {
+    return recordAt<MetaRecord>(path, metaShape);
 }
 
-function readVerdictRecord(path: string): VerdictRecord | undefined {
-    return readJsonRecord<VerdictRecord>(path);
+/** A recorded semantic verdict (result level or judge attempt level). */
+function verdictShape(value: unknown): string[] {
+    if (!isRecord(value)) return ["verdict.json must be a JSON object"];
+    const out: FieldProblems = [];
+    fieldProblems(
+        out,
+        value,
+        "verdict",
+        "must be a string",
+        (v) => typeof v === "string",
+        true,
+    );
+    for (const field of [
+        "destination",
+        "reason",
+        "judgeModel",
+        "attempt",
+        "resumedFrom",
+    ]) {
+        fieldProblems(
+            out,
+            value,
+            field,
+            "must be a string",
+            (v) => typeof v === "string",
+            false,
+        );
+    }
+    return out;
 }
 
-function readGenerationRecord(path: string): GenerationRecord | undefined {
-    return readJsonRecord<GenerationRecord>(path);
+function verdictRecordAt(path: string): RecordAt<VerdictRecord> {
+    return recordAt<VerdictRecord>(path, verdictShape);
 }
 
-function readRunJson(path: string): RunDescription | undefined {
-    return readJsonRecord<RunDescription>(path);
+/** A prepared fixture's generation certification (schema v2). */
+function generationRecordAt(path: string): RecordAt<GenerationRecord> {
+    return recordAt<GenerationRecord>(path, generationShape);
 }
 
-function readJudgeAttemptMeta(path: string): JudgeAttemptRecord | undefined {
-    return readJsonRecord<JudgeAttemptRecord>(path);
+/** The frozen description of one experiment (run.json, both schemas). */
+function runDescriptionAt(path: string): RecordAt<RunDescription> {
+    return recordAt<RunDescription>(path, runDescriptionShape);
 }
 
-function readFreezeReceipt(path: string): FreezeReceipt | undefined {
-    return readJsonRecord<FreezeReceipt>(path);
+/** A prior judge attempt's resume-matching record. */
+function judgeAttemptShape(value: unknown): string[] {
+    if (!isRecord(value))
+        return ["a judge attempt meta.json must be a JSON object"];
+    const out: FieldProblems = [];
+    fieldProblems(
+        out,
+        value,
+        "judgeKey",
+        "must be a string",
+        (v) => typeof v === "string",
+        true,
+    );
+    fieldProblems(
+        out,
+        value,
+        "judgeStatus",
+        "must be a string",
+        (v) => typeof v === "string",
+        true,
+    );
+    return out;
+}
+
+function judgeAttemptMetaAt(path: string): RecordAt<JudgeAttemptRecord> {
+    return recordAt<JudgeAttemptRecord>(path, judgeAttemptShape);
+}
+
+/** The wrapper's host-freeze receipt. */
+function freezeReceiptShape(value: unknown): string[] {
+    if (!isRecord(value)) return ["frozen.json must be a JSON object"];
+    const out: FieldProblems = [];
+    fieldProblems(
+        out,
+        value,
+        "kind",
+        "must be a string",
+        (v) => typeof v === "string",
+        true,
+    );
+    fieldProblems(
+        out,
+        value,
+        "schemaVersion",
+        "must be a nonnegative integer",
+        nonnegativeInt,
+        true,
+    );
+    fieldProblems(
+        out,
+        value,
+        "stamp",
+        "must be a string",
+        (v) => typeof v === "string",
+        true,
+    );
+    fieldProblems(
+        out,
+        value,
+        "caseId",
+        "must be a nonempty string",
+        (v) => typeof v === "string" && v !== "",
+        true,
+    );
+    fieldProblems(
+        out,
+        value,
+        "runJsonSha256",
+        "must be a string",
+        (v) => typeof v === "string",
+        false,
+    );
+    return out;
+}
+
+function freezeReceiptAt(path: string): RecordAt<FreezeReceipt> {
+    return recordAt<FreezeReceipt>(path, freezeReceiptShape);
+}
+
+/* ------------------------------------------------------------------ *
+ * Corpus case shapes (full versus redacted, validated separately)
+ * ------------------------------------------------------------------ */
+
+/** The problems with one case's mutation policy, or when absent. */
+function mutationPolicyShape(value: unknown): string[] {
+    if (value === null || value === undefined) return [];
+    if (!isRecord(value)) return ["mutationPolicy must be an object or null"];
+    const out: FieldProblems = [];
+    fieldProblems(
+        out,
+        value,
+        "allowed",
+        "must be a string array",
+        isStringArray,
+        true,
+    );
+    fieldProblems(
+        out,
+        value,
+        "runtimeAllow",
+        "must be a string array",
+        isStringArray,
+        false,
+    );
+    fieldProblems(
+        out,
+        value,
+        "minWrites",
+        "must be a nonnegative integer",
+        nonnegativeInt,
+        false,
+    );
+    return out;
+}
+
+/** The two criterion forms:
+ *  verified requires exactly that field; legacy requires its own. */
+function docsCriterionShape(value: unknown): string[] {
+    if (value === null || value === undefined) return [];
+    if (!isRecord(value)) return ["docsCriterion must be an object or null"];
+    const verified = "minVerifiedCalls" in value;
+    const legacy = "minDocsCalls" in value;
+    if (verified === legacy) {
+        return [
+            "docsCriterion needs exactly one of minVerifiedCalls or minDocsCalls",
+        ];
+    }
+    const out: FieldProblems = [];
+    const floor = verified ? "minVerifiedCalls" : "minDocsCalls";
+    fieldProblems(
+        out,
+        value,
+        floor,
+        "must be a nonnegative integer",
+        nonnegativeInt,
+        true,
+    );
+    fieldProblems(
+        out,
+        value,
+        "verbs",
+        "must be a docs-verb array",
+        (v) =>
+            isStringArray(v) &&
+            v.every((verb) =>
+                isLiteral(verb, ["search", "read", "add", "check", "help"]),
+            ),
+        false,
+    );
+    if (verified) {
+        fieldProblems(
+            out,
+            value,
+            "paths",
+            "must be a string array",
+            isStringArray,
+            false,
+        );
+    } else if ("paths" in value) {
+        out.push("paths belongs to the minVerifiedCalls criterion");
+    }
+    return out;
+}
+
+/** The problems with one case's artefact expectation, or when absent. */
+function expectedDocsShape(value: unknown): string[] {
+    if (value === null || value === undefined) return [];
+    if (!isRecord(value)) return ["expectedDocs must be an object or null"];
+    const out: FieldProblems = [];
+    fieldProblems(
+        out,
+        value,
+        "kind",
+        'must be "create" or "replace"',
+        (v) => isLiteral(v, ["create", "replace"]),
+        true,
+    );
+    for (const field of ["target", "link"]) {
+        fieldProblems(
+            out,
+            value,
+            field,
+            "must be a string",
+            (v) => typeof v === "string",
+            false,
+        );
+    }
+    for (const field of ["retains", "omits", "preserve"]) {
+        fieldProblems(
+            out,
+            value,
+            field,
+            "must be a string array",
+            isStringArray,
+            false,
+        );
+    }
+    return out;
+}
+
+/** The problems with one case's seeds, or when absent. */
+function seedsShape(value: unknown): string[] {
+    if (value === undefined) return [];
+    if (!Array.isArray(value)) return ["seeds must be an array"];
+    return value.flatMap((entry, index) => {
+        if (!isRecord(entry)) return [`seeds[${index}] must be a JSON object`];
+        const out: FieldProblems = [];
+        fieldProblems(
+            out,
+            entry,
+            "surface",
+            "must be a string",
+            (v) => typeof v === "string",
+            true,
+        );
+        fieldProblems(
+            out,
+            entry,
+            "path",
+            "must be a string",
+            (v) => typeof v === "string",
+            true,
+        );
+        fieldProblems(
+            out,
+            entry,
+            "contents",
+            "must be a string",
+            (v) => typeof v === "string",
+            false,
+        );
+        fieldProblems(
+            out,
+            entry,
+            "target",
+            "must be a string",
+            (v) => typeof v === "string",
+            false,
+        );
+        return out.map((problem) => `seeds[${index}].${problem}`);
+    });
+}
+
+/** The problems with one full case's destination list. */
+function destinationsShape(value: unknown, required: boolean): string[] {
+    if (!required && value === undefined) return [];
+    if (!Array.isArray(value) || value.length === 0)
+        return ["destinations must be a nonempty array"];
+    return value.flatMap((entry, index) => {
+        if (!isRecord(entry))
+            return [`destinations[${index}] must be a JSON object`];
+        const out: FieldProblems = [];
+        fieldProblems(
+            out,
+            entry,
+            "name",
+            "must be a string",
+            (v) => typeof v === "string",
+            true,
+        );
+        fieldProblems(
+            out,
+            entry,
+            "class",
+            "must be a string",
+            (v) => typeof v === "string",
+            true,
+        );
+        fieldProblems(
+            out,
+            entry,
+            "description",
+            "must be a string",
+            (v) => typeof v === "string",
+            true,
+        );
+        return out.map((problem) => `destinations[${index}].${problem}`);
+    });
+}
+
+/**
+ * One corpus entry, proven field by field at the real IO boundary. A
+ * full case (host generation and judging) requires the claim/evidence/
+ * destinations/expected/accepts/temptingWrong a prompt renders from; a
+ * redacted container list may carry only the id and any instrumentation
+ * fields it happens to hold. Unknown properties stay forward-compatible;
+ * invalid consumed ones do not.
+ * @returns The validated entry, or the concrete problems.
+ */
+function validateCorpusEntry(
+    entry: unknown,
+    requireFull: boolean,
+): { case: TrialCase } | { problems: string[] } {
+    if (!isRecord(entry))
+        return { problems: ["an entry must be a JSON object"] };
+    if (typeof entry.id !== "string" || entry.id === "")
+        return { problems: ["id must be a nonempty string"] };
+    const problems: string[] = [];
+    for (const field of [
+        "family",
+        "claim",
+        "evidence",
+        "expected",
+        "promptKind",
+    ]) {
+        fieldProblems(
+            problems,
+            entry,
+            field,
+            "must be a string",
+            (v) => typeof v === "string",
+            false,
+        );
+    }
+    for (const field of ["accepts", "temptingWrong"]) {
+        fieldProblems(
+            problems,
+            entry,
+            field,
+            "must be a string array",
+            isStringArray,
+            false,
+        );
+    }
+    problems.push(...destinationsShape(entry.destinations, requireFull));
+    problems.push(...seedsShape(entry.seeds));
+    problems.push(...mutationPolicyShape(entry.mutationPolicy));
+    problems.push(...docsCriterionShape(entry.docsCriterion));
+    problems.push(...expectedDocsShape(entry.expectedDocs));
+    fieldProblems(
+        problems,
+        entry,
+        "generationInputsHash",
+        "must be a string or null",
+        (v) => typeof v === "string" || v === null,
+        false,
+    );
+    if (requireFull) {
+        for (const field of ["claim", "evidence", "expected"]) {
+            fieldProblems(
+                problems,
+                entry,
+                field,
+                "is required",
+                (v) => typeof v === "string",
+                true,
+            );
+        }
+    }
+    if (problems.length > 0) return { problems };
+    return { case: entry as unknown as TrialCase };
 }
 
 /**
@@ -1117,10 +1859,7 @@ function docsOpSuccessful(entry: ToolCall): boolean {
     if (kind === null || kind === "code-mode" || entry.status !== "completed")
         return false;
     const output = typeof entry.output === "string" ? entry.output : "";
-    if (
-        output.startsWith("Rejected:") ||
-        output.startsWith("No doc at ")
-    )
+    if (output.startsWith("Rejected:") || output.startsWith("No doc at "))
         return false;
     const verb = docsEntryVerb(kind, entry);
     return verb === "read"
@@ -1134,8 +1873,7 @@ function docsOutcomeLabel(entry: ToolCall): string {
     const output = typeof entry.output === "string" ? entry.output : "";
     if (output.startsWith("Rejected:")) return "refusal";
     if (output.startsWith("No doc at ")) return "not found";
-    return output.trim() !== "" &&
-        docsOpSuccessful(entry)
+    return output.trim() !== "" && docsOpSuccessful(entry)
         ? "successful"
         : "no retrieval evidence recorded";
 }
@@ -1150,13 +1888,16 @@ function typedPathHit(
     entry: ToolCall,
     fragment: string,
 ): boolean {
-    const input = isRecord(entry.input ?? null) ? entry.input : undefined;
+    const raw = entry.input ?? null;
+    const input = isRecord(raw) ? raw : undefined;
     if (input === undefined) return false;
     const verb = docsEntryVerb(kind, entry);
     if (verb === "read")
         return typeof input.read === "string" && input.read.includes(fragment);
     if (verb === "add")
-        return isRecord(input.add) && JSON.stringify(input.add).includes(fragment);
+        return (
+            isRecord(input.add) && JSON.stringify(input.add).includes(fragment)
+        );
     return false;
 }
 
@@ -1414,10 +2155,20 @@ function fixtureHashOf(options: CliOptions): string {
         return process.env.PLACEMENT_FIXTURE_HASH;
     }
     if (existsSync(options.fixture)) return fileHash(options.fixture);
-    const manifest = readJsonRecord<{ fixtureHash?: string }>(
+    const manifestAt = recordAt<{ fixtureHash?: string }>(
         join(options.fixtures, "manifest.json"),
+        (value) => {
+            if (!isRecord(value))
+                return ["manifest.json must be a JSON object"];
+            return typeof value.fixtureHash === "string" ||
+                value.fixtureHash === undefined
+                ? []
+                : ["fixtureHash must be a string"];
+        },
     );
-    return manifest?.fixtureHash ?? "unknown";
+    return manifestAt.kind === "value"
+        ? (manifestAt.value.fixtureHash ?? "unknown")
+        : "unknown";
 }
 
 /** The plugin files whose bytes make a trial's guidance identity. */
@@ -1944,7 +2695,16 @@ function generateCase(
     };
 
     const fingerprint = generationInputsHash(testCase, options);
-    const stored = readGenerationRecord(fixture.generationPath);
+    const storedAt = generationRecordAt(fixture.generationPath);
+    const stored = storedAt.kind === "value" ? storedAt.value : undefined;
+    if (storedAt.kind === "malformed") {
+        return {
+            status: "stale" as const,
+            detail:
+                `prepared generation record is malformed ` +
+                `(${storedAt.problems.join("; ")}); rerun generate --force`,
+        };
+    }
     if (!options.force) {
         const refusal = reusedFixtureRefusal(
             testCase,
@@ -2153,13 +2913,23 @@ function validateGeneration(
     corpusComplete: boolean,
 ) {
     const caseFixture = join(options.fixtures, testCase.id);
-    const stored = readGenerationRecord(join(caseFixture, "generation.json"));
-    if (stored === undefined) {
+    const storedAt = generationRecordAt(join(caseFixture, "generation.json"));
+    if (storedAt.kind === "malformed") {
+        return {
+            problems: [
+                `prepared generation record is malformed ` +
+                    `(${storedAt.problems.join("; ")}); rerun generate --force`,
+            ],
+            generation: undefined,
+        };
+    }
+    if (storedAt.kind === "absent") {
         return {
             problems: ["no generation fingerprint; run generate first"],
             generation: undefined,
         };
     }
+    const stored = storedAt.value;
     const problems = [
         ...generationOutputProblems(stored, testCase, options),
         ...generationInputProblems(testCase, options, corpusComplete, stored),
@@ -2739,10 +3509,7 @@ function policyLakeRoots(evidence: MutationEvidence, definition: TrialCase) {
  * would over-reject here.)
  * @returns The refusal detail, or null when the doc is collectable.
  */
-function uncollectableDocReason(
-    path: string,
-    roots: string[],
-): string | null {
+function uncollectableDocReason(path: string, roots: string[]): string | null {
     for (const root of roots) {
         if (path !== root && !path.startsWith(`${root}/`)) continue;
         const segments = path.slice(root.length + 1).split("/");
@@ -2777,9 +3544,7 @@ function necessaryAncestorDirs(
     return evidence.diff.added.filter(
         (path) =>
             evidence.snapshot.entries.get(path)?.kind === "dir" &&
-            expectedPaths.some((expected) =>
-                expected.startsWith(`${path}/`),
-            ),
+            expectedPaths.some((expected) => expected.startsWith(`${path}/`)),
     );
 }
 
@@ -2788,7 +3553,10 @@ function unrelatedSurfaceChangeProblem(
     evidence: MutationEvidence,
     expectedPaths: string[],
 ): string | null {
-    const permitted = [...expectedPaths, ...necessaryAncestorDirs(evidence, expectedPaths)];
+    const permitted = [
+        ...expectedPaths,
+        ...necessaryAncestorDirs(evidence, expectedPaths),
+    ];
     const others = evidence.surfaceTouched.filter(
         ([path]) => !permitted.includes(path),
     );
@@ -3127,6 +3895,41 @@ function runDescriptionConflicts(
  * absent freeze is refused everywhere: a filesystem permission error is
  * not evidence that another process recorded the description correctly.
  */
+
+/**
+ * Verify a container flow's per-case host-freeze receipts: every selected
+ * case must hold a frozen.json naming this stamp and case. A missing or
+ * malformed receipt stays unverified — never assumed evidence of a freeze.
+ */
+function containerFreezesVerified(
+    options: CliOptions,
+    stamp: string,
+    selected: TrialCase[],
+): boolean {
+    const unverified = selected.filter((testCase) => {
+        const receiptAt = freezeReceiptAt(
+            join(options.fixtures, testCase.id, "frozen.json"),
+        );
+        const receipt =
+            receiptAt.kind === "value" ? receiptAt.value : undefined;
+        return (
+            !receipt ||
+            receipt.kind !== "placement-freeze-receipt" ||
+            receipt.stamp !== stamp ||
+            receipt.caseId !== testCase.id
+        );
+    });
+    if (unverified.length > 0) {
+        console.error(
+            `no verified host freeze for ${unverified.map((testCase) => testCase.id).join(", ")} — ` +
+                "the per-case 'frozen.json' receipt is absent or does not " +
+                `name stamp ${stamp}; freeze host-side ('describe') before running`,
+        );
+        return false;
+    }
+    return true;
+}
+
 function ensureRunDescription(
     options: CliOptions,
     stamp: string,
@@ -3134,7 +3937,16 @@ function ensureRunDescription(
     command: string,
 ) {
     const path = join(options.results, stamp, "run.json");
-    const existing = readRunJson(path);
+    const existingAt = runDescriptionAt(path);
+    if (existingAt.kind === "malformed") {
+        console.error(
+            `run.json at ${path} exists but is malformed ` +
+                `(${existingAt.problems.join("; ")}); a frozen experiment ` +
+                "cannot be rewritten this way — use a new --stamp",
+        );
+        return false;
+    }
+    const existing = existingAt.kind === "value" ? existingAt.value : undefined;
     const containerFlow =
         !selectedAreFullDefinitions(selected) ||
         boundaryOf().containerised === true;
@@ -3158,28 +3970,8 @@ function ensureRunDescription(
         // Inside a trial container this stamp's run description is neither
         // visible nor writable: the freeze must have happened host-side, and
         // this case must carry a receipt proving it (the wrapper stages one
-        // after 'describe'). An unwritable root, or a missing/mismatched
-        // receipt, is a refusal — never assumed evidence of a freeze.
-        const unverified = selected.filter((testCase) => {
-            const receipt = readFreezeReceipt(
-                join(options.fixtures, testCase.id, "frozen.json"),
-            );
-            return (
-                !receipt ||
-                receipt.kind !== "placement-freeze-receipt" ||
-                receipt.stamp !== stamp ||
-                receipt.caseId !== testCase.id
-            );
-        });
-        if (unverified.length > 0) {
-            console.error(
-                `no verified host freeze for ${unverified.map((testCase) => testCase.id).join(", ")} — ` +
-                    "the per-case 'frozen.json' receipt is absent or does not " +
-                    `name stamp ${stamp}; freeze host-side ('describe') before running`,
-            );
-            return false;
-        }
-        return true;
+        // after 'describe')
+        return containerFreezesVerified(options, stamp, selected);
     }
     try {
         writeJsonAtomic(path, JSON.stringify(description, null, 2) + "\n");
@@ -3192,9 +3984,11 @@ function ensureRunDescription(
     return true;
 }
 
-/** The saved run description, or null for a legacy stamp. */
+/** How a stamp's run.json reads: a value, an absent legacy record, or the
+ * problems that make it unusable. */
 function loadRunDescription(options: CliOptions, stamp: string) {
-    return readRunJson(join(options.results, stamp, "run.json")) ?? null;
+    const runPath = join(options.results, stamp, "run.json");
+    return { path: runPath, ...runDescriptionAt(runPath) };
 }
 
 /* ------------------------------------------------------------------ *
@@ -3513,8 +4307,17 @@ function copyCaseEvidence(
 function answerInvalidReason(resultDir: string) {
     const finalPath = join(resultDir, "final.md");
     if (!existsSync(finalPath)) return "no final.md recorded";
-    const meta = readMetaRecord(join(resultDir, "meta.json"));
-    if (meta?.answerValid === false) {
+    const metaAt = metaRecordAt(join(resultDir, "meta.json"));
+    if (metaAt.kind === "malformed") {
+        return (
+            `recorded meta.json is malformed and unusable ` +
+            `(${metaAt.problems.join("; ")}) — the answer's validity ` +
+            "cannot be established"
+        );
+    }
+    if (metaAt.kind === "absent") return null;
+    const meta = metaAt.value;
+    if (meta.answerValid === false) {
         return meta.invalidReason ?? "answer failed validity checks";
     }
     if (typeof meta?.answerHash === "string" && meta.answerHash !== "") {
@@ -3580,9 +4383,7 @@ function requiredPathProblems(
             );
         });
         if (relevant.length === 0) {
-            unmet.push(
-                `no completed docs operation references ${fragment}`,
-            );
+            unmet.push(`no completed docs operation references ${fragment}`);
             continue;
         }
         if (relevant.some(docsOpSuccessful)) continue;
@@ -4189,8 +4990,15 @@ function runInvalidReason(
 ) {
     const answer = answerInvalidReason(resultDir);
     if (answer !== null) return answer;
-    const meta = readMetaRecord(join(resultDir, "meta.json"));
-    if (!meta) return "no meta.json recorded";
+    const metaAt = metaRecordAt(join(resultDir, "meta.json"));
+    if (metaAt.kind === "malformed") {
+        return (
+            `recorded meta.json is malformed and unusable ` +
+            `(${metaAt.problems.join("; ")})`
+        );
+    }
+    if (metaAt.kind === "absent") return "no meta.json recorded";
+    const meta = metaAt.value;
     if (meta.exit !== 0) return `trial did not complete (exit ${meta.exit})`;
     // A policy-bearing case is answered by the policy alone; only the
     // legacy decision-only baseline consults --allow-writes.
@@ -4443,13 +5251,21 @@ function resumePriorAttempt(
 ) {
     for (const entry of readdirSync(judgeRoot, { withFileTypes: true })) {
         if (!entry.isDirectory() || !/^attempt-\d+$/.test(entry.name)) continue;
-        const prior = readJudgeAttemptMeta(
+        const priorAt = judgeAttemptMetaAt(
             join(judgeRoot, entry.name, "meta.json"),
         );
-        if (prior?.judgeKey === key && prior?.judgeStatus === "judged") {
-            const verdict = readVerdictRecord(
+        // A broken attempt meta is evidence, not a resume source: it is
+        // skipped and a fresh attempt records everything anew.
+        if (priorAt.kind !== "value") continue;
+        const prior = priorAt.value;
+        if (prior.judgeKey === key && prior.judgeStatus === "judged") {
+            const verdictAt = verdictRecordAt(
                 join(judgeRoot, entry.name, "verdict.json"),
             );
+            // Same for its verdict pointer: without a valid prior verdict
+            // there is nothing to resume, so run a fresh attempt instead.
+            if (verdictAt.kind !== "value") continue;
+            const verdict = verdictAt.value;
             write(
                 join(resultDir, "verdict.json"),
                 JSON.stringify(
@@ -4482,22 +5298,36 @@ function resumePriorAttempt(
  * @param stamp The resolved stamp.
  * @returns The case definitions to judge.
  */
-function judgeSelection(options: CliOptions, stamp: string): FullTrialCase[] {
-    const run = loadRunDescription(options, stamp);
-    if (run === null) {
-        console.error(
-            "judging a legacy stamp: no frozen run description exists, so " +
-                "criteria come from the current corpus (limitation, not a pass)",
+/**
+ * A legacy stamp's judge definitions: the current corpus, full definitions
+ * only, with the limitation stated in the report it feeds.
+ */
+function legacyJudgeSelection(options: CliOptions): FullTrialCase[] {
+    console.error(
+        "judging a legacy stamp: no frozen run description exists, so " +
+            "criteria come from the current corpus (limitation, not a pass)",
+    );
+    const legacyCases = select(options).filter(isFullCase);
+    if (legacyCases.length === 0) {
+        usage(
+            "the current corpus carries no full definitions to judge a " +
+                "legacy stamp with",
         );
-        const legacyCases = select(options).filter(isFullCase);
-        if (legacyCases.length === 0) {
-            usage(
-                "the current corpus carries no full definitions to judge a " +
-                    "legacy stamp with",
-            );
-        }
-        return legacyCases;
     }
+    return legacyCases;
+}
+
+function judgeSelection(options: CliOptions, stamp: string): FullTrialCase[] {
+    const runAt = loadRunDescription(options, stamp);
+    if (runAt.kind === "malformed") {
+        usage(
+            `frozen run description at ${runAt.path} is malformed ` +
+                `(${runAt.problems.join("; ")}); a corrupt experiment ` +
+                "cannot be relabelled, re-frozen or judged",
+        );
+    }
+    if (runAt.kind === "absent") return legacyJudgeSelection(options);
+    const run = runAt.value as RunDescription;
     const full: FullTrialCase[] =
         (run.cases ?? [])
             .map((entry: RunCase) => entry.definition ?? entry)
@@ -4541,7 +5371,9 @@ function judgeGateReason(
     if (criterionProblem !== null) {
         return { reason: criterionProblem, artifacts: [] };
     }
-    const meta = readMetaRecord(join(resultDir, "meta.json")) ?? {};
+    // runInvalidReason just approved this run, so its meta reads as valid.
+    const metaAt = metaRecordAt(join(resultDir, "meta.json"));
+    const meta = metaAt.kind === "value" ? metaAt.value : {};
     const expectation = expectedDocsGate(resultDir, meta, testCase);
     if (expectation.problem !== null) {
         return { reason: expectation.problem, artifacts: [] };
@@ -4705,7 +5537,8 @@ function summaryRow(
     caseInfo: RunCase | undefined,
     resultDir: string,
 ) {
-    const verdict = readVerdictRecord(join(resultDir, "verdict.json"));
+    const verdictAt = verdictRecordAt(join(resultDir, "verdict.json"));
+    const verdict = verdictAt.kind === "value" ? verdictAt.value : undefined;
     const report = existsSync(join(resultDir, "writes.txt"))
         ? readFileSync(join(resultDir, "writes.txt"), "utf8").trim()
         : "";
@@ -4714,11 +5547,15 @@ function summaryRow(
         trail === null
             ? null
             : docsTelemetry(trail.entries, trail.parseFailures);
-    const meta = readMetaRecord(join(resultDir, "meta.json")) ?? {};
+    const metaAt = metaRecordAt(join(resultDir, "meta.json"));
+    const meta = metaAt.kind === "value" ? metaAt.value : {};
     return {
         id: caseInfo?.id ?? "?",
         expected: summaryExpected(caseInfo, runDescription),
-        verdict: summaryVerdict(verdict, resultDir),
+        verdict:
+            verdictAt.kind === "malformed"
+                ? "malformed verdict.json"
+                : summaryVerdict(verdict, resultDir),
         destination: verdict?.destination ?? "",
         writes: writesColumn(meta, report),
         docs: docsLabel(telemetry),
@@ -4827,7 +5664,14 @@ function summaryTallies(rows: SummaryRow[]) {
 
 function renderSummary(options: CliOptions, stamp: string) {
     const stampDir = join(options.results, stamp);
-    const run = loadRunDescription(options, stamp);
+    const runAt = loadRunDescription(options, stamp);
+    if (runAt.kind === "malformed") {
+        usage(
+            `${stamp}: run.json at ${runAt.path} is malformed ` +
+                `(${runAt.problems.join("; ")}); the run cannot be reported`,
+        );
+    }
+    const run = runAt.kind === "absent" ? null : runAt.value;
     const caseList = run?.cases ?? [];
     const rows = stampedCaseIds(run, stampDir).map((id) =>
         summaryRow(
@@ -4880,7 +5724,10 @@ function trailFor(resultDir: string) {
 }
 
 function verdictFor(resultDir: string) {
-    const verdict = readVerdictRecord(join(resultDir, "verdict.json"));
+    const verdictAt = verdictRecordAt(join(resultDir, "verdict.json"));
+    if (verdictAt.kind === "malformed")
+        return `malformed verdict.json (${verdictAt.problems.join("; ")})`;
+    const verdict = verdictAt.kind === "value" ? verdictAt.value : null;
     if (!verdict) return "not judged locally";
     const destination = verdict.destination
         ? ` — destination: ${verdict.destination}`
@@ -4933,7 +5780,8 @@ function caseMetaLine(meta: MetaRecord) {
 
 /** The dossier section for one case: rubric, prompt, answer, trail, verdict. */
 function caseSection(caseInfo: RunCase | undefined, resultDir: string) {
-    const meta = readMetaRecord(join(resultDir, "meta.json")) ?? {};
+    const metaAt = metaRecordAt(join(resultDir, "meta.json"));
+    const meta = metaAt.kind === "value" ? metaAt.value : {};
     const id = caseInfo?.id ?? "?";
     const expected = caseInfo?.expected ?? "(unknown — legacy run)";
     return [
@@ -5065,7 +5913,14 @@ function dossierHeader(
 function exportDossier(options: CliOptions, stamp: string) {
     const stampDir = join(options.results, stamp);
     if (!existsSync(stampDir)) usage(`no results at ${stampDir}`);
-    const run = loadRunDescription(options, stamp);
+    const runAt = loadRunDescription(options, stamp);
+    if (runAt.kind === "malformed") {
+        usage(
+            `${stamp}: run.json at ${runAt.path} is malformed ` +
+                `(${runAt.problems.join("; ")}); the run cannot be exported`,
+        );
+    }
+    const run = runAt.kind === "absent" ? null : runAt.value;
     const parts = dossierHeader(options, stamp, run);
     let cases = 0;
     const ids =
@@ -5190,8 +6045,10 @@ function resolveExistingStamp(options: CliOptions) {
     if (candidates.length === 0)
         usage(`no result stamps under ${options.results}`);
     const createdAt = (name: string): number => {
-        const run = readRunJson(join(options.results, name, "run.json"));
-        if (run?.createdAt) return Date.parse(run.createdAt);
+        const at = runDescriptionAt(join(options.results, name, "run.json"));
+        const run = at.kind === "value" ? at.value : null;
+        if (typeof run?.createdAt === "string")
+            return Date.parse(run.createdAt);
         try {
             return lstatSync(join(options.results, name)).mtimeMs;
         } catch {

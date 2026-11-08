@@ -2983,7 +2983,9 @@ const SUCCESSFUL_READ_OUTPUT =
     "---\nArea: kb\nKeywords: node, test, runner, commands\n" +
     "Summary: How this repo is tested and typechecked.\n---\n\n" +
     "# Running the suite\n\n### Facts\n\n- npm test runs everything.\n" +
-    "\n\ndocs: revision " + "a".repeat(64) + " — these bytes; " +
+    "\n\ndocs: revision " +
+    "a".repeat(64) +
+    " — these bytes; " +
     "cite it as expectedRevision when replacing (a stale token refuses).";
 
 /** Generate once and run R01 against a given trail; returns the verdict. */
@@ -3079,7 +3081,10 @@ test("C02: a completed refusal is not retrieval evidence", () => {
     );
     assert.notEqual(judge.status, 0);
     assert.equal(verdict.verdict, "invalid");
-    assert.match(verdict.reason, /no successful retrieval of kb\/test-commands\.md — refusal/);
+    assert.match(
+        verdict.reason,
+        /no successful retrieval of kb\/test-commands\.md — refusal/,
+    );
     assert.equal(readFileSync(marker, "utf8"), "");
     rmRoot(root);
 });
@@ -3093,10 +3098,7 @@ test("C02: a successful unrelated read plus a separate mention of the target can
         fake,
         paths,
         "s1",
-        R01_TRAIL(
-            { read: "kb/other.md" },
-            SUCCESSFUL_READ_OUTPUT,
-        ) +
+        R01_TRAIL({ read: "kb/other.md" }, SUCCESSFUL_READ_OUTPUT) +
             R01_SEARCH_MENTION +
             ANSWER_JSONL(),
     );
@@ -3142,14 +3144,259 @@ test("C02: a genuine successful retrieval satisfies the gate and reaches the sem
         fake,
         paths,
         "s1",
-        R01_TRAIL(
-            { read: "kb/test-commands.md" },
-            SUCCESSFUL_READ_OUTPUT,
-        ),
+        R01_TRAIL({ read: "kb/test-commands.md" }, SUCCESSFUL_READ_OUTPUT),
     );
     assert.equal(judge.status, 0, judge.stderr);
     assert.equal(verdict.verdict, "pass");
     assert.equal(readFileSync(marker, "utf8"), "invoked\n");
+    rmRoot(root);
+});
+
+/* ------------------------------------------------------------------ *
+ * C03 — runtime validation at the typed IO boundaries
+ * ------------------------------------------------------------------ */
+
+test("C03: a corrupt frozen run description refuses judging and reporting, never a legacy relabel", () => {
+    const root = newRoot("c03-corrupt-run");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [baselineCase("T01")]);
+    const stampDir = join(paths.results, "s1");
+    mkdirSync(stampDir, { recursive: true });
+    writeFileSync(
+        join(stampDir, "run.json"),
+        '{"schemaVersion":2,"cases": [trunc',
+    );
+    const judge = runHarness(root, fake, [
+        "judge",
+        "T01",
+        "--stamp",
+        "s1",
+        ...commandArgs(paths),
+    ]);
+    assert.notEqual(judge.status, 0);
+    assert.match(judge.stderr, /malformed/);
+    assert.match(judge.stderr, /corrupt experiment cannot be/);
+    const summary = runHarness(root, fake, [
+        "summary",
+        "--stamp",
+        "s1",
+        ...commandArgs(paths),
+    ]);
+    assert.notEqual(summary.status, 0);
+    assert.match(summary.stderr, /malformed/);
+    rmRoot(root);
+});
+
+test("C03: a run refuses to rewrite over a corrupt frozen description", () => {
+    const root = newRoot("c03-rewrite-corrupt");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [baselineCase("T01")]);
+    const stampDir = join(paths.results, "s1");
+    mkdirSync(stampDir, { recursive: true });
+    const corrupt = JSON.stringify({ schemaVersion: 2, what: "wrong" }) + "\n";
+    writeFileSync(join(stampDir, "run.json"), corrupt);
+    const run = runHarness(
+        root,
+        fake,
+        ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()) },
+    );
+    assert.notEqual(run.status, 0);
+    assert.match(run.stderr, /malformed/);
+    assert.match(run.stderr, /use a new --stamp/);
+    assert.equal(
+        readFileSync(join(stampDir, "run.json"), "utf8"),
+        corrupt,
+        "the corrupt frozen evidence must not be overwritten",
+    );
+    rmRoot(root);
+});
+
+test("C03: a corrupt meta.json refuses judging instead of being guessed at", () => {
+    const root = newRoot("c03-corrupt-meta");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [baselineCase("T01")]);
+    const trial = { FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()) };
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "empty", ...commandArgs(paths)],
+            trial,
+        ).status,
+        0,
+    );
+    writeFileSync(join(paths.results, "empty", "T01", "meta.json"), "{}\n");
+    const empty = runHarness(root, fake, [
+        "judge",
+        "T01",
+        "--stamp",
+        "empty",
+        ...commandArgs(paths),
+    ]);
+    assert.notEqual(empty.status, 0);
+    const emptyVerdict = readJson(
+        join(paths.results, "empty", "T01", "verdict.json"),
+    );
+    assert.match(emptyVerdict.reason, /malformed/);
+    assert.match(emptyVerdict.reason, /exit is required/);
+
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "typed", ...commandArgs(paths)],
+            trial,
+        ).status,
+        0,
+    );
+    writeFileSync(
+        join(paths.results, "typed", "T01", "meta.json"),
+        JSON.stringify({ exit: "zero" }) + "\n",
+    );
+    const typed = runHarness(root, fake, [
+        "judge",
+        "T01",
+        "--stamp",
+        "typed",
+        ...commandArgs(paths),
+    ]);
+    assert.notEqual(typed.status, 0);
+    const typedVerdict = readJson(
+        join(paths.results, "typed", "T01", "verdict.json"),
+    );
+    assert.match(typedVerdict.reason, /exit must be a nonnegative integer/);
+
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "unparsable", ...commandArgs(paths)],
+            trial,
+        ).status,
+        0,
+    );
+    writeFileSync(
+        join(paths.results, "unparsable", "T01", "meta.json"),
+        "{oops",
+    );
+    const unparsable = runHarness(root, fake, [
+        "judge",
+        "T01",
+        "--stamp",
+        "unparsable",
+        ...commandArgs(paths),
+    ]);
+    assert.notEqual(unparsable.status, 0);
+    const unparsableVerdict = readJson(
+        join(paths.results, "unparsable", "T01", "verdict.json"),
+    );
+    assert.match(unparsableVerdict.reason, /unparsable JSON/);
+    rmRoot(root);
+});
+
+test("C03: a malformed prepared generation record refuses a run and a reuse", () => {
+    const root = newRoot("c03-corrupt-generation");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [baselineCase("T01")]);
+    const generationPath = join(paths.fixtures, "T01", "generation.json");
+    const broken =
+        JSON.stringify({ id: "T01", files: { promptHash: 4 } }) + "\n";
+    writeFileSync(generationPath, broken);
+    const run = runHarness(
+        root,
+        fake,
+        ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()) },
+    );
+    assert.notEqual(run.status, 0);
+    assert.match(run.stderr, /malformed/);
+    assert.match(run.stderr, /inputsHash is required/);
+    assert.equal(
+        readFileSync(generationPath, "utf8"),
+        broken,
+        "generate must not overwrite the broken record",
+    );
+    const regen = runHarness(root, fake, [
+        "generate",
+        "T01",
+        "--fixture",
+        paths.corpus,
+        "--prompts",
+        paths.prompts,
+        "--fixtures",
+        paths.fixtures,
+        "--rubrics",
+        paths.rubrics,
+        "--results",
+        paths.results,
+    ]);
+    assert.notEqual(regen.status, 0);
+    assert.match(
+        regen.stdout,
+        /stale — prepared generation record is malformed/,
+    );
+    rmRoot(root);
+});
+
+const GOOD_DESTINATIONS = baselineCase("X01").destinations;
+
+test("C03: a malformed corpus entry is refused with its concrete field problems", () => {
+    const root = newRoot("c03-corpus-shapes");
+    const fake = writeFakeOpencode(root);
+
+    // A destination shape fails per field, with its index named.
+    const destinations = generate(root, fake, [
+        {
+            id: "X01",
+            claim: "x",
+            destinations: [{ name: "docs" }],
+        },
+    ]);
+    assert.notEqual(destinations.result.status, 0);
+    assert.match(destinations.result.stderr, /case "X01" is malformed/);
+    assert.match(
+        destinations.result.stderr,
+        /destinations\[0\]\.class is required/,
+    );
+
+    // A criterion verb outside the docs verbs is a value problem, and so is
+    // an invalid policy minimum.
+    const criterion = generate(root, fake, [
+        {
+            id: "Y01",
+            claim: "y",
+            destinations: GOOD_DESTINATIONS,
+            docsCriterion: { minVerifiedCalls: 1, verbs: ["sniff"] },
+            mutationPolicy: { allowed: "lakes/**", minWrites: 1 },
+        },
+    ]);
+    assert.notEqual(criterion.result.status, 0);
+    assert.match(criterion.result.stderr, /case "Y01" is malformed/);
+    assert.match(criterion.result.stderr, /must be a docs-verb array/);
+    assert.match(criterion.result.stderr, /allowed must be a string array/);
+
+    // A criterion value type is proven too.
+    const floor = generate(root, fake, [
+        {
+            id: "Z01",
+            claim: "z",
+            destinations: GOOD_DESTINATIONS,
+            docsCriterion: { minVerifiedCalls: "many" },
+        },
+    ]);
+    assert.notEqual(floor.result.status, 0);
+    assert.match(
+        floor.result.stderr,
+        /minVerifiedCalls must be a nonnegative integer/,
+    );
+
+    // Valid shapes keep loading: a full case records normally (the id-only
+    // redacted list is covered by the F12 container-corpus regressions).
+    const full = generate(root, fake, [baselineCase("V01")], {
+        corpusName: "good.json",
+    });
+    assert.equal(full.result.status, 0);
     rmRoot(root);
 });
 
@@ -3618,9 +3865,9 @@ test("M05: mutation evidence edited after the run is refused, not graded", () =>
 
 /** The actual corpus case, so the regressions exercise the shipped shapes. */
 const corpusCaseById = (id: string): Record<string, unknown> => {
-    const cases = readJson(
-        join(HERE, "fixtures", "trial-cases.json"),
-    ) as Array<Record<string, unknown>>;
+    const cases = readJson(join(HERE, "fixtures", "trial-cases.json")) as Array<
+        Record<string, unknown>
+    >;
     const found = cases.find((entry) => entry.id === id);
     if (found === undefined) throw new Error(`no corpus case ${id}`);
     return found;
