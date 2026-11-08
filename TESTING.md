@@ -109,7 +109,11 @@ harness version. Re-invoking `run` on an existing stamp verifies the whole
 identity — corpus edits, a different plugin or changed settings refuse
 instead of relabelling; inside a staged container the per-case `frozen.json`
 freeze receipt proves the host freeze (the description itself is never
-mounted into a case).
+mounted into a case). The record is validated at its boundary: each frozen
+v2 case definition must be a complete full case (same validator as corpus
+input), each nested consumed field must be well-formed, and a legacy v1
+record is validated for what is present without v2-only demands — a v1
+record without usable definitions refuses judging explicitly.
 
 `summary` and `export` render ONLY from that saved description and the
 per-case artefacts: run a reporting command today against yesterday's stamp
@@ -132,6 +136,13 @@ case ids must belong to the experiment. Legacy stamps without run.json warn
 openly and use the current corpus (a documented limitation, not a pass).
 
 ### Generation fingerprints
+
+`generate` (and `describe`) validate the corpus in FULL mode at their
+command boundary: an entry missing the claim/evidence/destinations/
+accepts/temptingWrong a prompt renders from is refused with its case name
+and the missing field, instead of being silently filtered into an
+incomplete selected set. The redacted container staging list keeps its
+own validated shared shape.
 
 `generate` records a `generation.json` fingerprint per case — a hash over
 the case definition, the model, the plugin identity, the variant flags
@@ -201,14 +212,20 @@ attempted)`); dead code mentioning the tool proves nothing.
 Docs criteria are deterministic and answer to two pinned semantics, keyed
 by which field the SAVED definition uses:
 
-- `minVerifiedCalls` (current): only observable docs operations that
-  COMPLETED count — a failed or denied call and a code-mode attempt are
-  attempts. Required verbs must have been completed; `paths` narrows the
-  gate to relevant documents (an unrelated read does not stand in for the
-  seeded doc). Code-mode-only attempts render the case INCONCLUSIVE at the
-  gate — recorded as `invalid` with the reason (the nested operation is
-  unobservable; the case needs either native/twin usage or an honest
-  unknown), never a pass, never silently dropped.
+- `minVerifiedCalls` (current): a floor on SUCCESSFUL observable docs
+  operations. A read proves success through the plugin's own result
+  envelope (`metadata.read` — the retrieved document's address; wiki
+  reads carry it without a revision token) or, in older trails without
+  the envelope, trailing revision text in the complete pre-truncation
+  output; a completed refusal, not-found, blank or failed call counts as
+  an attempt only, as does a code-mode attempt. Required verbs must have
+  one successful operation; `paths` narrows to read targets — only a
+  typed read of the required fragment that successfully retrieved it
+  counts. An unmet floor reports every unmet path alongside it rather
+  than hiding the detail. Code-mode-only attempts render the case
+  INCONCLUSIVE at the gate — recorded as `invalid` with the reason (the
+  nested operation is unobservable; the case needs either native/twin
+  usage or an honest unknown), never a pass, never silently dropped.
 - `minDocsCalls` (legacy, for stamps recorded before this change): the
   historical attempted-operations semantics, applied to the frozen
   definition as recorded, with `(legacy attempted-operations)` visibly

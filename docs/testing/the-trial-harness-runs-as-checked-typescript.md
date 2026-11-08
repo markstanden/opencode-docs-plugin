@@ -20,10 +20,15 @@ Summary: The trial harness ships as checked TypeScript (.mts) under Node's type-
   per-schema validator's consumed-field proofs), and `value` (the
   validated record). The validators prove the fields each consumer
   touches — types, required presence, enum and numeric ranges, and the
-  relevant nested structures (certification tree entries, criteria,
-  mutation policies, expected docs, destinations, seeds) — so the single
-  `as T` at the validated boundary carries exactly that proof, never an
-  inspection-by-inspection widening.
+  relevant nested structures (certification tree entries, the
+  write-diff arrays and label map inside `writeKinds`, criteria,
+  mutation policies, expected docs, destinations, seeds, and full
+  frozen v2 case definitions through the same authoritative case
+  validator as corpus input) — so the single `as T` at the validated
+  boundary carries exactly that proof, never an inspection-by-inspection
+  widening. Legacy v1 run records are validated for what is present — a
+  consumed field that exists must be well-formed, but no v2-only field
+  is demanded — and a v1 record alone never supplies a judgeable case.
 - Absent and malformed must stay distinguishable: a corrupt frozen run
   description refuses judging and reporting instead of silently becoming
   a legacy stamp whose criteria come from the current corpus, and a run
@@ -45,15 +50,19 @@ Summary: The trial harness ships as checked TypeScript (.mts) under Node's type-
 ### Tested
 
 - `tests/harness.test.ts` drives the actual `.mts` CLI black-box
-  (590 suite-wide tests), `npm run typecheck` includes the file
+  (634 suite-wide tests), `npm run typecheck` includes the file
   (proved via tsc's file list), and a real podman container smoke ran
   `node /harness/harness.mts` inside the trial image end to end (freeze,
   receipt, trial, judge) — the container's Node LTS strips the types the
   same way.
-- The C03 counterexamples (corrupt run.json refusing judge/summary, a
-  corrupt run.json surviving a rewrite attempt, corrupt meta, a
-  malformed generation record, and per-field corpus problems) all fail
-  against the pre-fix harness: read, never guessed at.
+- The C03 counterexamples (corrupt run.json refusing judge/summary/
+  export, a corrupt run.json surviving a rewrite attempt, corrupt meta
+  rows including a JSON array, a malformed generation record, malformed
+  certification tree entries naming the offending path, malformed frozen
+  case definitions, a damaged `writeKinds` beneath an earlier semantic
+  pass, per-field corpus problems, and legacy v1 records validated only
+  for what is present) all fail against the pre-fix harness: read, never
+  guessed at.
 
 ### Inferred (failed approaches)
 

@@ -15,7 +15,13 @@ Summary: The trial's artefact gate permits the newly created ancestor directorie
   chain only: an extra empty directory, a symlinked directory, a mode
   change or an extra file beside the expected write still counts as an
   unrelated change, and a directory-only write still cannot satisfy a
-  required knowledge write.
+  required knowledge write. The refusal names each unrelated change with
+  its recorded kind — a symlinked ancestor is reported as
+  `added ... (symlink)`, never tolerated as a necessary plain directory.
+  Recorded mutation evidence carries those kinds: `meta.json`'s
+  `writeKinds.kinds` is written in object form (a bare `Map` serialised
+  to `{}` — every recorded change label used to be lost) and restored to
+  a Map before the gate reduces over it.
 - A created document the plugin would never collect is refused before
   any semantic judging. The gate mirrors the plugin's
   `uncollectedSegment` rule (`uncollectableDocReason`): a dot directory
@@ -35,6 +41,11 @@ Summary: The trial's artefact gate permits the newly created ancestor directorie
 - `tests/harness.test.ts` C01 group on the real W01 corpus case: a valid
   creation in a new subdirectory (rejected as "unrelated change" before
   the fix), a valid creation in the existing area, an extra unrelated
-  directory beside a valid creation, a hidden `.hidden.md` target
-  (admitted and semantically judged before the fix), and a doc under an
-  excluded area. The M05 counterexamples keep their recorded reasons.
+  directory beside a valid creation, a symlinked ancestor whose kind is
+  reported in the refusal (tolerated as a plain ancestor before the
+  fix), a hidden `.hidden.md` target (admitted and semantically judged
+  before the fix), a `node_modules`-nested doc, a deeper `kb/plans/`
+  creation that stays collectable (the exclusion is lake-root only),
+  and a doc under an excluded area. The M05 counterexamples — including
+  two valid creations refusing as "several docs" — keep their recorded
+  reasons.
