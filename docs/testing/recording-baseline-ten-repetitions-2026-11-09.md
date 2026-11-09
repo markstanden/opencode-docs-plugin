@@ -1,7 +1,7 @@
 ---
 Area: Testing
 Keywords: recording, w01, w02, deepseek, crouton, controls, zero-write, baseline, placement-trials
-Summary: Ten-repetition recording baseline on merged 4e66fc5: DeepSeek completed 14 of 20 trials, all six zero-write outcomes were proposal-only, and Crouton's natural batch was paused after its help control failed.
+Summary: Ten-repetition recording baseline on merged 4e66fc5: DeepSeek completed 14 of 20 trials, all six zero-write outcomes were proposal-only, and Crouton's natural batch was paused after its help control failed the criterion.
 ---
 
 # Recording baseline: ten repetitions on the merged harness, 2026-11-09
@@ -46,15 +46,16 @@ natural trials. It was not retried.
 
 ### Natural trials
 
-Crouton's natural batch was not started. Its table is therefore 0/10 for each
-task, and its behaviour is not described by this campaign.
+Crouton's natural batch was not run, so its combined results are reported as
+not run / N/A rather than as measured rates. Its behaviour is not described by
+this campaign.
 
 | Model | Task | Planned | Attempted | Completed | Usable | Mutations satisfied | Gate passed | Gate blocked     | Semantic P / F / JE / NJ | Combined (planned) | Combined (usable) |
 | ----- | ---- | ------- | --------- | --------- | ------ | ------------------- | ----------- | ---------------- | ------------------------ | ------------------ | ----------------- |
 | dv4f  | W01  | 10      | 10        | 10        | 10     | 6                   | 6           | 4 (zero-write 4) | 6 / 0 / 0 / 4            | **6/10**           | 6/10              |
 | dv4f  | W02  | 10      | 10        | 10        | 10     | 8                   | 8           | 2 (zero-write 2) | 8 / 0 / 0 / 2            | **8/10**           | 8/10              |
-| crut  | W01  | 10      | 0         | 0         | 0      | 0                   | 0           | 0                | 0 / 0 / 0 / 0            | 0/10               | 0/0               |
-| crut  | W02  | 10      | 0         | 0         | 0      | 0                   | 0           | 0                | 0 / 0 / 0 / 0            | 0/10               | 0/0               |
+| crut  | W01  | 10      | 0         | 0         | 0      | 0                   | 0           | 0                | 0 / 0 / 0 / 0            | not run            | N/A               |
+| crut  | W02  | 10      | 0         | 0         | 0      | 0                   | 0           | 0                | 0 / 0 / 0 / 0            | not run            | N/A               |
 
 All 20 sessions completed without timeout, cancellation, invalid session or
 tool-unavailability. Every gate block was the required-mutation policy
@@ -194,8 +195,8 @@ offered only optional clarification while still not writing.
   The closing checklist (“State … any clarification needed before proceeding”)
   is a plausible prompt-level cause, not a measured one.
 - Crouton's natural recording behaviour is unmeasured here. Its read access is
-  proven, but its required help control was not performed, so the campaign
-  cannot say whether it would have written.
+  proven, but its help control did not satisfy the criterion even though the
+  session ran, so the campaign cannot say whether it would have written.
 - The lake-name confusion (`repo`/`kb` instead of `docs`) is a recoverable
   operation error, not a policy breach; the model retried successfully in
   every observed case.
@@ -233,8 +234,10 @@ instruction to perform the recording and then report the destination and
 reason. Keep the claim, evidence, destinations, authorisation and rubric
 byte-identical. The evidence for this candidate is the 6/20 zero-write set:
 every one proposed an action, and several explicitly waited for confirmation
-despite the existing write authorisation. Rerun the same 20 sessions against
-this frozen baseline.
+despite the existing write authorisation. Test it with fresh, interleaved
+original/revised trials: equal numbers of each arm for both tasks, alternating
+the arm within each block, fresh stamps and sessions throughout. Retain this
+historical baseline for context; do not pool it with the new arm.
 
 ## Resume commands
 
