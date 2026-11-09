@@ -9,6 +9,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { createHmac } from "node:crypto";
 import {
     chmodSync,
     existsSync,
@@ -6034,6 +6035,32 @@ const CODE_MODE_HELP_INPUT = {
     code: 'return await tools.docs.docs_search({ search: "help" });',
 };
 
+/**
+ * Sign journal lines with the run's saved key, exactly as the plugin does.
+ * An unsigned or wrongly signed line is what a forged capture looks like.
+ */
+const signJournalText = (text: string, key: string): string =>
+    text
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => {
+            const record = JSON.parse(line) as Record<string, unknown>;
+            const body = Object.fromEntries(
+                Object.entries(record).filter(([field]) => field !== "mac"),
+            );
+            const mac = createHmac("sha256", key)
+                .update(JSON.stringify(body))
+                .digest("hex");
+            return JSON.stringify({ ...body, mac });
+        })
+        .join("\n") + "\n";
+
+/** The signing key the harness saved for one case, when present. */
+const journalKeyOf = (resultDir: string): string | null => {
+    const path = join(resultDir, "docs-operations.key");
+    return existsSync(path) ? readFileSync(path, "utf8").trim() : null;
+};
+
 /** Run one diagnostic case, optionally drop in a definitions capture, render summary. */
 function runDiagnostic(
     root: string,
@@ -6042,7 +6069,7 @@ function runDiagnostic(
     id: string,
     stamp: string,
     trail: string,
-    options: { stderr?: string; capture?: unknown } = {},
+    options: { stderr?: string; capture?: unknown; journal?: string } = {},
 ) {
     const env: Env = {
         FAKE_TRIAL_OUT: file(root, `diag-trail-${id}-${stamp}.jsonl`, trail),
@@ -6066,6 +6093,16 @@ function runDiagnostic(
             resultDir,
             "tool-definitions.json",
             JSON.stringify(options.capture, null, 2) + "\n",
+        );
+    }
+    if (options.journal !== undefined) {
+        const key = journalKeyOf(resultDir);
+        file(
+            resultDir,
+            "docs-operations.jsonl",
+            key === null
+                ? options.journal
+                : signJournalText(options.journal, key),
         );
     }
     const summary = runHarness(root, fake, [
@@ -6778,4 +6815,898 @@ test("NAMING: condition codes render as phrases, never as letters", () => {
     );
     assert.equal(conditionLabel("C01"), undefined);
     assert.equal(conditionLabel("A01"), undefined);
+});
+
+/* ------------------------------------------------------------------ *
+ * N01 — protected, attributed nested (Code Mode) operation evidence
+ * ------------------------------------------------------------------ */
+
+/**
+ * One CLI tool event carrying the run's session/message identity, as the
+ * real CLI stream does. The harness uses those ids to attribute journal
+ * records to this run.
+ */
+const NESTED_TOOL_JSONL = (
+    tool: string,
+    id: string,
+    status: string,
+    input: unknown,
+    output?: string,
+    metadata?: unknown,
+    session = "ses_trial",
+    message = "msg_trial",
+): string =>
+    JSON.stringify({
+        sessionID: session,
+        part: {
+            type: "tool",
+            id,
+            tool,
+            sessionID: session,
+            messageID: message,
+            state: { status, input, output, metadata },
+        },
+    }) + "\n";
+
+/** One nested docs dispatch as the host records it in execute metadata. */
+const NESTED_DISPATCH = (status: string, input: unknown) => ({
+    tool: "docs.docs_search",
+    status,
+    input,
+});
+
+/** An execute wrapper whose result metadata records its nested dispatches. */
+const NESTED_WRAPPER = (
+    dispatches: unknown[],
+    code = "return await tools.docs.docs_search({read:'kb/existing.md'});",
+    output = "ok",
+    id = "call-outer",
+): string =>
+    NESTED_TOOL_JSONL("execute", id, "completed", { code }, output, {
+        metadata: { toolCalls: dispatches },
+    });
+
+/**
+ * One record the docs plugin writes to its journal for a served
+ * Code Mode twin call. The default call id is the outer execute id, exactly
+ * as the plugin's ToolContext reports it for a nested call.
+ */
+const JOURNAL_LINE = (overrides: Record<string, unknown> = {}): string =>
+    JSON.stringify({
+        schemaVersion: 1,
+        tool: "docs_search",
+        surface: "codemode-twin",
+        status: "completed",
+        sessionID: "ses_trial",
+        messageID: "msg_trial",
+        callID: "call-outer",
+        ...overrides,
+    }) + "\n";
+
+/** A read result envelope as the plugin really serves one. */
+const READ_RESULT = (path: string, output = SUCCESSFUL_READ_OUTPUT) => ({
+    content: output,
+    metadata: { read: path, path, revision: "a".repeat(64) },
+});
+
+/** The criterion-bearing case the nested-evidence regressions reuse. */
+const NESTED_READ_CASE = () =>
+    docGateCase("T01", null, {
+        docsCriterion: {
+            minVerifiedCalls: 1,
+            verbs: ["read"],
+            paths: ["kb/existing.md"],
+        },
+        mutationPolicy: { allowed: ["lakes/kb/**"], minWrites: 0 },
+    });
+
+/** The Code Mode wrapper trail: a dispatched nested read, never itself proof. */
+const NESTED_WRAPPER_TRAIL = () =>
+    NESTED_WRAPPER([NESTED_DISPATCH("completed", { read: "kb/existing.md" })]) +
+    ANSWER_JSONL();
+
+/** A trial hook that signs and appends a prepared journal, as the plugin does. */
+const journalHook = (root: string, name: string): string => {
+    file(
+        root,
+        "sign-journal.mjs",
+        [
+            'import fs from "node:fs";',
+            'import { createHmac } from "node:crypto";',
+            'const key = process.env.DOCS_OPERATION_JOURNAL_KEY ?? "";',
+            'const out = process.env.DOCS_OPERATION_JOURNAL ?? "";',
+            'const input = process.env.FAKE_JOURNAL ?? "";',
+            'for (const line of fs.readFileSync(input, "utf8").split("\\n").filter(Boolean)) {',
+            "    const record = JSON.parse(line);",
+            '    const body = Object.fromEntries(Object.entries(record).filter(([k]) => k !== "mac"));',
+            '    const mac = createHmac("sha256", key).update(JSON.stringify(body)).digest("hex");',
+            '    fs.appendFileSync(out, JSON.stringify({ ...body, mac }) + "\\n");',
+            "}",
+        ].join("\n") + "\n",
+    );
+    return file(
+        root,
+        name,
+        '#!/bin/sh\nnode "$(dirname "$0")/sign-journal.mjs"\n',
+    );
+};
+
+/** Run one case, plant a journal file, then judge; returns the verdict. */
+function runGateWithJournal(
+    root: string,
+    fake: string,
+    paths: ReturnType<typeof layout>,
+    caseId: string,
+    stamp: string,
+    trail: string,
+    journal: string,
+    journalCase = caseId,
+) {
+    const out = file(root, `trail-${caseId}-${stamp}.jsonl`, trail);
+    const run = runHarness(
+        root,
+        fake,
+        ["run", caseId, "--stamp", stamp, ...commandArgs(paths)],
+        { FAKE_TRIAL_OUT: out },
+    );
+    assert.equal(run.status, 0, run.stderr);
+    if (journal !== "") {
+        const dir = join(paths.results, stamp, journalCase);
+        mkdirSync(dir, { recursive: true });
+        const key = journalKeyOf(dir);
+        writeFileSync(
+            join(dir, "docs-operations.jsonl"),
+            key === null ? journal : signJournalText(journal, key),
+        );
+    }
+    const judge = runHarness(
+        root,
+        fake,
+        ["judge", caseId, "--stamp", stamp, ...commandArgs(paths)],
+        { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+    );
+    return {
+        judge,
+        verdict: readJson(join(paths.results, stamp, caseId, "verdict.json")),
+    };
+}
+
+test("N01: an observed successful nested read satisfies the same verb/path criterion as a native read", () => {
+    // Arrange: a read criterion whose only call is a served Code Mode twin.
+    const root = newRoot("n01-nested-pass");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [NESTED_READ_CASE()]);
+    const journal = JOURNAL_LINE({
+        input: { read: "kb/existing.md" },
+        result: READ_RESULT("kb/existing.md"),
+    });
+    // Act: the wrapper trail plus the plugin's attributed journal record.
+    const { judge, verdict } = runGateWithJournal(
+        root,
+        fake,
+        paths,
+        "T01",
+        "s1",
+        NESTED_WRAPPER_TRAIL(),
+        journal,
+    );
+    // Assert: the nested operation is verified, and the semantic judge decides.
+    assert.equal(judge.status, 0, judge.stderr);
+    assert.equal(verdict.verdict, "pass");
+    rmRoot(root);
+});
+
+test("N01: a nested error is an attempt, never a successful read", () => {
+    // Arrange: the same criterion, but the nested call threw.
+    const root = newRoot("n01-nested-error");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [NESTED_READ_CASE()]);
+    const journal = JOURNAL_LINE({
+        tool: "docs",
+        input: { read: "kb/existing.md" },
+        status: "error",
+        error: "Error: lake unreadable",
+        result: undefined,
+    });
+    const trail =
+        NESTED_WRAPPER([NESTED_DISPATCH("error", { read: "kb/existing.md" })]) +
+        ANSWER_JSONL();
+    // Act
+    const { judge, verdict } = runGateWithJournal(
+        root,
+        fake,
+        paths,
+        "T01",
+        "s1",
+        trail,
+        journal,
+    );
+    // Assert
+    assert.notEqual(judge.status, 0);
+    assert.equal(verdict.verdict, "invalid");
+    assert.match(verdict.reason, /docs criterion unmet/);
+    rmRoot(root);
+});
+
+test("N01: a nested refusal is not a successful retrieval", () => {
+    // Arrange: the nested read completed but the plugin refused it.
+    const root = newRoot("n01-nested-refusal");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [NESTED_READ_CASE()]);
+    const journal = JOURNAL_LINE({
+        input: { read: "kb/existing.md" },
+        result: {
+            content: "Rejected: the lake is read-only.",
+            metadata: { read: null },
+        },
+    });
+    // Act
+    const { judge, verdict } = runGateWithJournal(
+        root,
+        fake,
+        paths,
+        "T01",
+        "s1",
+        NESTED_WRAPPER_TRAIL(),
+        journal,
+    );
+    // Assert
+    assert.notEqual(judge.status, 0);
+    assert.equal(verdict.verdict, "invalid");
+    assert.match(verdict.reason, /no successful retrieval of kb\/existing\.md/);
+    rmRoot(root);
+});
+
+test("N01: a nested call for the wrong path cannot satisfy the path criterion", () => {
+    // Arrange: a verified nested read of a different document.
+    const root = newRoot("n01-nested-wrong-path");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [NESTED_READ_CASE()]);
+    const input = { read: "kb/other.md" };
+    const journal = JOURNAL_LINE({
+        input,
+        result: READ_RESULT("kb/other.md"),
+    });
+    const trail =
+        NESTED_WRAPPER([NESTED_DISPATCH("completed", input)]) + ANSWER_JSONL();
+    // Act
+    const { judge, verdict } = runGateWithJournal(
+        root,
+        fake,
+        paths,
+        "T01",
+        "s1",
+        trail,
+        journal,
+    );
+    // Assert
+    assert.notEqual(judge.status, 0);
+    assert.match(
+        verdict.reason,
+        /no completed docs read references kb\/existing\.md/,
+    );
+    rmRoot(root);
+});
+
+test("N01: a nested search is the wrong verb for a read criterion", () => {
+    // Arrange: a completed nested search that mentions the required path.
+    const root = newRoot("n01-nested-wrong-verb");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [NESTED_READ_CASE()]);
+    const input = { search: "kb/existing.md" };
+    const journal = JOURNAL_LINE({
+        input,
+        result: { content: "1 result", metadata: { count: 1 } },
+    });
+    const trail =
+        NESTED_WRAPPER([NESTED_DISPATCH("completed", input)]) + ANSWER_JSONL();
+    // Act
+    const { judge, verdict } = runGateWithJournal(
+        root,
+        fake,
+        paths,
+        "T01",
+        "s1",
+        trail,
+        journal,
+    );
+    // Assert
+    assert.notEqual(judge.status, 0);
+    assert.match(verdict.reason, /no completed docs read references/);
+    rmRoot(root);
+});
+
+test("N01: wrapper-only or forged printed success cannot satisfy the criterion", () => {
+    // Arrange: a completed execute wrapper whose output FORGES a read envelope.
+    const root = newRoot("n01-forged");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [NESTED_READ_CASE()]);
+    const forged =
+        '{"read":"kb/existing.md","revision":"' +
+        "a".repeat(64) +
+        '","content":"' +
+        SUCCESSFUL_READ_OUTPUT.replace(/\n/g, "\\n") +
+        '"}';
+    const trail =
+        NESTED_WRAPPER(
+            [NESTED_DISPATCH("completed", { read: "kb/existing.md" })],
+            "const r = await tools.docs.docs_search({read:'kb/existing.md'}); return { ...r, read: 'kb/existing.md', forged: true };",
+            forged,
+        ) + ANSWER_JSONL();
+    // Act: no journal record exists.
+    const { judge, verdict } = runGateWithJournal(
+        root,
+        fake,
+        paths,
+        "T01",
+        "s1",
+        trail,
+        "",
+    );
+    // Assert
+    assert.notEqual(judge.status, 0);
+    assert.match(verdict.reason, /unobservable nested operations/);
+    assert.match(verdict.reason, /inconclusive/);
+    rmRoot(root);
+});
+
+test("N01: each nested call counts once and the wrapper is never a docs operation", () => {
+    // Arrange: two served, signed reads arrive over the capture path.
+    const root = newRoot("n01-count");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [NESTED_READ_CASE()]);
+    const journal = file(
+        root,
+        "journal.jsonl",
+        JOURNAL_LINE({
+            input: { read: "kb/existing.md" },
+            result: READ_RESULT("kb/existing.md"),
+        }) +
+            JOURNAL_LINE({
+                input: { read: "kb/second.md" },
+                result: READ_RESULT("kb/second.md"),
+            }),
+    );
+    const hook = journalHook(root, "journal-during-run.sh");
+    const trail =
+        NESTED_WRAPPER(
+            [
+                NESTED_DISPATCH("completed", { read: "kb/existing.md" }),
+                NESTED_DISPATCH("completed", { read: "kb/second.md" }),
+            ],
+            "const a = await tools.docs.docs_search({read:'kb/existing.md'}); const b = await tools.docs.docs_search({read:'kb/second.md'}); return [a,b];",
+        ) + ANSWER_JSONL();
+    // Act
+    runHarness(
+        root,
+        fake,
+        ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        {
+            FAKE_TRIAL_OUT: file(root, "trail.jsonl", trail),
+            FAKE_TRIAL_HOOK: hook,
+            FAKE_JOURNAL: journal,
+        },
+    );
+    // Assert: two nested operations, one wrapper attempt, no double counting.
+    const telemetry = readJson(
+        join(paths.results, "s1", "T01", "meta.json"),
+    ).telemetry;
+    assert.equal(telemetry.nestedDocs, 2);
+    assert.equal(telemetry.nestedDocsCompleted, 2);
+    assert.equal(telemetry.verifiedDocs, 2);
+    assert.equal(telemetry.codeModeAttempted, 1);
+    assert.equal(telemetry.nativeDocs, 0);
+    assert.equal(telemetry.twinDocs, 0);
+    const summary = runHarness(root, fake, [
+        "summary",
+        "--stamp",
+        "s1",
+        ...commandArgs(paths),
+    ]);
+    assert.match(summary.stdout, /2 nested\+1 code-mode/);
+    rmRoot(root);
+});
+
+test("N01: identical arguments do not collapse a successful nested read beside a direct refusal", () => {
+    // Arrange: a direct twin read refuses; a later nested read of the SAME
+    // document succeeds. Argument-based dedup would discard the success.
+    const root = newRoot("n01-identity-dedupe");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [NESTED_READ_CASE()]);
+    const input = { read: "kb/existing.md" };
+    const trail =
+        NESTED_TOOL_JSONL(
+            "docs_search",
+            "call-direct",
+            "completed",
+            input,
+            "Rejected: the lake is read-only.",
+            { read: null },
+        ) +
+        NESTED_WRAPPER([NESTED_DISPATCH("completed", input)]) +
+        ANSWER_JSONL();
+    const journal = file(
+        root,
+        "journal.jsonl",
+        JOURNAL_LINE({
+            input,
+            result: READ_RESULT("kb/existing.md"),
+        }),
+    );
+    const hook = journalHook(root, "journal-identity.sh");
+    // Act: capture during the run, so telemetry and the gate see both calls.
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+            {
+                FAKE_TRIAL_OUT: file(root, "trail.jsonl", trail),
+                FAKE_TRIAL_HOOK: hook,
+                FAKE_JOURNAL: journal,
+            },
+        ).status,
+        0,
+    );
+    const telemetry = readJson(
+        join(paths.results, "s1", "T01", "meta.json"),
+    ).telemetry;
+    // Assert: both calls survive; the nested one is the success.
+    assert.equal(telemetry.twinDocs, 1, "the direct refusal stays a call");
+    assert.equal(telemetry.nestedDocs, 1, "the identical nested read survives");
+    assert.equal(telemetry.verifiedDocs, 1, "only the nested read succeeded");
+    const judge = runHarness(
+        root,
+        fake,
+        ["judge", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+    );
+    assert.equal(judge.status, 0, judge.stderr);
+    rmRoot(root);
+});
+
+test("N01: a direct twin call is deduplicated by call id, not arguments", () => {
+    // Arrange: the same direct call is already observable and journaled.
+    const root = newRoot("n01-dedupe");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [baselineCase("T01")]);
+    const trail =
+        NESTED_TOOL_JSONL(
+            "docs_search",
+            "call-direct",
+            "completed",
+            { read: "kb/existing.md" },
+            SUCCESSFUL_READ_OUTPUT,
+            { read: "kb/existing.md", path: "kb/existing.md" },
+        ) + ANSWER_JSONL();
+    const journal = JOURNAL_LINE({
+        callID: "call-direct",
+        input: { read: "kb/existing.md" },
+        result: READ_RESULT("kb/existing.md"),
+    });
+    // Act
+    runGateWithJournal(root, fake, paths, "T01", "s1", trail, journal);
+    // Assert
+    const telemetry = readJson(
+        join(paths.results, "s1", "T01", "meta.json"),
+    ).telemetry;
+    assert.equal(telemetry.twinDocs, 1, "the direct call stays one operation");
+    assert.equal(telemetry.nestedDocs, 0, "its journal copy is not a second");
+    assert.equal(telemetry.verifiedDocs, 1);
+    rmRoot(root);
+});
+
+test("N01: evidence recorded for another case cannot satisfy this case", () => {
+    // Arrange: the current run has no journal; a valid record sits elsewhere.
+    const root = newRoot("n01-other-case");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [NESTED_READ_CASE()]);
+    const elsewhere = JOURNAL_LINE({
+        input: { read: "kb/existing.md" },
+        result: READ_RESULT("kb/existing.md"),
+    });
+    // Act
+    const { judge, verdict } = runGateWithJournal(
+        root,
+        fake,
+        paths,
+        "T01",
+        "s1",
+        NESTED_WRAPPER_TRAIL(),
+        elsewhere,
+        "T02",
+    );
+    // Assert
+    assert.notEqual(judge.status, 0);
+    assert.match(verdict.reason, /unobservable nested operations/);
+    rmRoot(root);
+});
+
+test("N01: a forged journal file written by a trial tool is overwritten by capture", () => {
+    // Arrange: the hook writes a perfectly shaped success record straight
+    // into the writable result directory, alongside the trial's files.
+    const root = newRoot("n01-tamper-file");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [NESTED_READ_CASE()]);
+    const forged = JSON.stringify({
+        schemaVersion: 1,
+        tool: "docs_search",
+        surface: "codemode-twin",
+        status: "completed",
+        input: { read: "kb/existing.md" },
+        result: READ_RESULT("kb/existing.md"),
+        sessionID: "ses_trial",
+        messageID: "msg_trial",
+        callID: "call-outer",
+    });
+    const hook = file(
+        root,
+        "forged-file.sh",
+        "#!/bin/sh\nprintf '%s\\n' '" +
+            forged +
+            "' > ../../docs-operations.jsonl\n",
+    );
+    // Act
+    const { judge, verdict } = (() => {
+        const out = file(root, "trail-file.jsonl", NESTED_WRAPPER_TRAIL());
+        const run = runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+            { FAKE_TRIAL_OUT: out, FAKE_TRIAL_HOOK: hook },
+        );
+        assert.equal(run.status, 0, run.stderr);
+        const judge = runHarness(
+            root,
+            fake,
+            ["judge", "T01", "--stamp", "s1", ...commandArgs(paths)],
+            { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+        );
+        return {
+            judge,
+            verdict: readJson(join(paths.results, "s1", "T01", "verdict.json")),
+        };
+    })();
+    // Assert: the harness overwrote the file with its own (empty) capture.
+    const telemetry = readJson(
+        join(paths.results, "s1", "T01", "meta.json"),
+    ).telemetry;
+    assert.equal(telemetry.nestedDocs, 0);
+    assert.equal(telemetry.verifiedDocs, 0);
+    assert.notEqual(judge.status, 0);
+    assert.match(verdict.reason, /unobservable nested operations/);
+    rmRoot(root);
+});
+
+test("N01: a forged line written to the capture path lacks a valid signature", () => {
+    // Arrange: the trial writes a correctly attributed record straight into
+    // the journal path, but it cannot sign it with this run's key.
+    const root = newRoot("n01-tamper-path");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [NESTED_READ_CASE()]);
+    const forged = JSON.stringify({
+        schemaVersion: 1,
+        tool: "docs_search",
+        surface: "codemode-twin",
+        status: "completed",
+        input: { read: "kb/existing.md" },
+        result: READ_RESULT("kb/existing.md"),
+        sessionID: "ses_trial",
+        messageID: "msg_trial",
+        callID: "call-outer",
+    });
+    const hook = file(
+        root,
+        "forged-path.sh",
+        "#!/bin/sh\nprintf '%s\\n' '" +
+            forged +
+            '\' >> "$DOCS_OPERATION_JOURNAL"\n',
+    );
+    const out = file(root, "trail-path.jsonl", NESTED_WRAPPER_TRAIL());
+    const run = runHarness(
+        root,
+        fake,
+        ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        { FAKE_TRIAL_OUT: out, FAKE_TRIAL_HOOK: hook },
+    );
+    // Assert: the forged line is preserved as capture but never credited.
+    assert.equal(run.status, 0, run.stderr);
+    const telemetry = readJson(
+        join(paths.results, "s1", "T01", "meta.json"),
+    ).telemetry;
+    assert.equal(telemetry.nestedDocs, 0);
+    assert.equal(telemetry.verifiedDocs, 0);
+    rmRoot(root);
+});
+
+/* ------------------------------------------------------------------ *
+ * L01 — plugin housekeeping is not an unrelated document mutation
+ * ------------------------------------------------------------------ */
+
+/** Run one W01-shaped recording case with a shell hook, then judge. */
+function runRecordingWithHook(
+    root: string,
+    fake: string,
+    paths: ReturnType<typeof layout>,
+    caseId: string,
+    stamp: string,
+    hook: string,
+) {
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", caseId, "--stamp", stamp, ...commandArgs(paths)],
+            {
+                FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()),
+                FAKE_TRIAL_HOOK: hook,
+            },
+            20_000,
+        ).status,
+        0,
+    );
+    const judge = runHarness(
+        root,
+        fake,
+        ["judge", caseId, "--stamp", stamp, ...commandArgs(paths)],
+        { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+    );
+    return {
+        judge,
+        verdict: readJson(join(paths.results, stamp, caseId, "verdict.json")),
+    };
+}
+
+test("L01: an empty plugin lock directory beside a valid creation is housekeeping", () => {
+    // Arrange: the W01 recording case; the plugin left its released lock dir.
+    const root = newRoot("l01-lock-pass");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [corpusCaseById("W01")]);
+    const hook = file(
+        root,
+        "record-with-lock.sh",
+        "#!/bin/sh\nmkdir -p ../lakes/docs/.docs-lock\ncat > ../lakes/docs/record.md <<'EOD'\n" +
+            VALID_RECORD_DOC +
+            "EOD\n",
+    );
+    // Act
+    const { judge, verdict } = runRecordingWithHook(
+        root,
+        fake,
+        paths,
+        "W01",
+        "s1",
+        hook,
+    );
+    // Assert
+    assert.equal(judge.status, 0, judge.stderr);
+    assert.equal(verdict.verdict, "pass");
+    rmRoot(root);
+});
+
+test("L01: a lock directory holding a stale lock file still fails", () => {
+    // Arrange: the released directory is not empty — an interrupted write.
+    const root = newRoot("l01-lock-stale");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [corpusCaseById("W01")]);
+    const hook = file(
+        root,
+        "record-with-stale-lock.sh",
+        "#!/bin/sh\nmkdir -p ../lakes/docs/.docs-lock\n: > ../lakes/docs/.docs-lock/stale.lock\ncat > ../lakes/docs/record.md <<'EOD'\n" +
+            VALID_RECORD_DOC +
+            "EOD\n",
+    );
+    // Act
+    const { judge, verdict } = runRecordingWithHook(
+        root,
+        fake,
+        paths,
+        "W01",
+        "s1",
+        hook,
+    );
+    // Assert
+    assert.notEqual(judge.status, 0);
+    assert.match(verdict.reason, /unrelated change/);
+    assert.match(verdict.reason, /\.docs-lock\/stale\.lock/);
+    rmRoot(root);
+});
+
+test("L01: a symlinked lock directory is foreign, never housekeeping", () => {
+    // Arrange: `.docs-lock` is a symlink, not the plugin's plain directory.
+    const root = newRoot("l01-lock-symlink");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [corpusCaseById("W01")]);
+    const outside = file(root, "outside", "not a lock directory\n");
+    const hook = file(
+        root,
+        "record-with-symlink-lock.sh",
+        "#!/bin/sh\nln -s " +
+            outside +
+            " ../lakes/docs/.docs-lock\ncat > ../lakes/docs/record.md <<'EOD'\n" +
+            VALID_RECORD_DOC +
+            "EOD\n",
+    );
+    // Act
+    const { judge, verdict } = runRecordingWithHook(
+        root,
+        fake,
+        paths,
+        "W01",
+        "s1",
+        hook,
+    );
+    // Assert
+    assert.notEqual(judge.status, 0);
+    assert.match(verdict.reason, /unrelated change/);
+    assert.match(verdict.reason, /symlink/);
+    rmRoot(root);
+});
+
+test("L01: a lock directory away from the expected document is not housekeeping", () => {
+    // Arrange: a `.docs-lock` beside an unrelated directory.
+    const root = newRoot("l01-lock-elsewhere");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [corpusCaseById("W01")]);
+    const hook = file(
+        root,
+        "record-with-elsewhere-lock.sh",
+        "#!/bin/sh\nmkdir -p ../lakes/docs/unrelated/.docs-lock\ncat > ../lakes/docs/record.md <<'EOD'\n" +
+            VALID_RECORD_DOC +
+            "EOD\n",
+    );
+    // Act
+    const { judge, verdict } = runRecordingWithHook(
+        root,
+        fake,
+        paths,
+        "W01",
+        "s1",
+        hook,
+    );
+    // Assert
+    assert.notEqual(judge.status, 0);
+    assert.match(verdict.reason, /unrelated change/);
+    assert.match(verdict.reason, /\.docs-lock/);
+    rmRoot(root);
+});
+
+test("L01: an empty lock directory beside a valid replacement is housekeeping", () => {
+    // Arrange: a replace case; the lock sits in the target's own directory.
+    const root = newRoot("l01-lock-replace");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [
+        docGateCase("T01", {
+            kind: "replace",
+            target: "lakes/kb/existing.md",
+            retains: ["Retained open question line."],
+            omits: ["Stale outdated claim"],
+        }),
+    ]);
+    const hook = file(
+        root,
+        "replace-with-lock.sh",
+        "#!/bin/sh\nmkdir -p ../lakes/kb/.docs-lock\ncat > ../lakes/kb/existing.md <<'EOD'\n" +
+            "---\nArea: kb\nKeywords: existing, seed\nSummary: The seeded knowledge doc.\n---\n\n# Existing\n\n### Facts\n\n- prior knowledge\n- Retained open question line.\nEOD\n",
+    );
+    // Act
+    const { judge, verdict } = runRecordingWithHook(
+        root,
+        fake,
+        paths,
+        "T01",
+        "s1",
+        hook,
+    );
+    // Assert
+    assert.equal(judge.status, 0, judge.stderr);
+    assert.equal(verdict.verdict, "pass");
+    rmRoot(root);
+});
+
+test("L01: a lock directory alone is still no write", () => {
+    // Arrange: the plugin directory appears, but no knowledge doc is created.
+    const root = newRoot("l01-lock-no-write");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [corpusCaseById("W01")]);
+    const hook = file(
+        root,
+        "only-lock.sh",
+        "#!/bin/sh\nmkdir -p ../lakes/docs/.docs-lock\n",
+    );
+    // Act
+    const { judge, verdict } = runRecordingWithHook(
+        root,
+        fake,
+        paths,
+        "W01",
+        "s1",
+        hook,
+    );
+    // Assert
+    assert.notEqual(judge.status, 0);
+    assert.match(verdict.reason, /no created knowledge doc/);
+    rmRoot(root);
+});
+
+test("A01: a plugin-journaled nested help call is operation-level, not wrapper-only", () => {
+    // Arrange: the model dispatches help through Code Mode; only the plugin's
+    // journal proves the nested call and its returned inventory.
+    const root = newRoot("a01-nested-journal");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [diagnosticCase("A01")]);
+    const journal = JOURNAL_LINE({
+        tool: "docs_search",
+        input: { search: "help" },
+        result: {
+            content:
+                "Configured lakes:\n- docs (Repository [repo], writable)\n",
+            metadata: { count: 0, omitted: 0 },
+        },
+    });
+    // Act: the wrapper alone is unverified; the attributed journal record is
+    // the event.
+    const { text } = runDiagnostic(
+        root,
+        fake,
+        paths,
+        "A01",
+        "s1",
+        NESTED_WRAPPER(
+            [NESTED_DISPATCH("completed", { search: "help" })],
+            CODE_MODE_HELP_INPUT.code,
+            "Configured lakes:\n- docs (Repository [repo], writable)\n",
+            "call-outer",
+        ) + ANSWER_JSONL("Code Mode help returned the inventory."),
+        { stderr: DIAGNOSTIC_LOG, journal },
+    );
+    // Assert
+    assert.match(text, /Dispatch \(Code Mode docs\): \*\*succeeded\*\*/);
+    assert.match(text, /Help: \*\*inventory returned\*\*/);
+    assert.match(text, /Observability: \*\*operation-level\*\*/);
+    assert.match(text, /plugin-journaled nested operation/);
+    assert.match(text, /Positive: \*\*yes\*\*/);
+    assert.doesNotMatch(text, /Observability: \*\*wrapper-only\*\*/);
+    rmRoot(root);
+});
+
+test("A01: journaled nested calls never establish native advertisement or dispatch", () => {
+    // Arrange: a Code Mode-only session; the journal proves the nested help
+    // call, but no native docs call was ever made.
+    const root = newRoot("a01-nested-not-native");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [diagnosticCase("A01")]);
+    const journal = JOURNAL_LINE({
+        input: { search: "help" },
+        result: {
+            content:
+                "Configured lakes:\n- docs (Repository [repo], writable)\n",
+            metadata: { count: 0, omitted: 0 },
+        },
+    });
+    // Act
+    const { text } = runDiagnostic(
+        root,
+        fake,
+        paths,
+        "A01",
+        "s1",
+        NESTED_WRAPPER(
+            [NESTED_DISPATCH("completed", { search: "help" })],
+            CODE_MODE_HELP_INPUT.code,
+            "Configured lakes:\n- docs (Repository [repo], writable)\n",
+        ) + ANSWER_JSONL("Code Mode help returned the inventory."),
+        { stderr: DIAGNOSTIC_LOG, journal },
+    );
+    // Assert: nested evidence belongs to Code Mode, never to the native tool.
+    assert.match(text, /Advertisement \(native docs\): \*\*unknown\*\*/);
+    assert.match(text, /Dispatch \(native docs\): \*\*not attempted\*\*/);
+    assert.match(
+        text,
+        /Advertisement \(Code Mode docs method\): \*\*present\*\*/,
+    );
+    assert.match(text, /Dispatch \(Code Mode docs\): \*\*succeeded\*\*/);
+    assert.match(text, /Observability: \*\*operation-level\*\*/);
+    assert.match(text, /Positive: \*\*yes\*\*/);
+    rmRoot(root);
 });
