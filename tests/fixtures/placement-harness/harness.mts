@@ -34,6 +34,7 @@ import {
     existsSync,
     lstatSync,
     mkdirSync,
+    mkdtempSync,
     readFileSync,
     readdirSync,
     readlinkSync,
@@ -43,8 +44,13 @@ import {
     writeFileSync,
 } from "node:fs";
 import type { Dirent } from "node:fs";
-import { createHash } from "node:crypto";
-import { homedir } from "node:os";
+import {
+    createHash,
+    createHmac,
+    randomBytes,
+    timingSafeEqual,
+} from "node:crypto";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -237,10 +243,12 @@ interface ToolCall {
     outcome?: OutcomeFacts;
     /**
      * True for an operation the plugin journal recorded but the CLI trail did
-     * not emit — a Code Mode nested call. It is authenticated plugin evidence,
+     * not emit — a Code Mode nested call. It is validated plugin evidence,
      * not a wrapper claim, and never a second copy of a direct call.
      */
     nested?: boolean;
+    /** The tool call id recorded by the plugin's context, when known. */
+    callID?: string | undefined;
 }
 
 /** Success facts proven from one call's complete output at capture time. */
@@ -2140,10 +2148,39 @@ function foldToolPart(
     );
 }
 
+/** The session and message identities observed in one run's CLI events. */
+interface TrailIdentity {
+    sessions: Set<string>;
+    messages: Set<string>;
+}
+
+/** Fold one CLI event's session/message ids into the run identity. */
+function recordIdentity(event: unknown, identity: TrailIdentity): void {
+    if (!isRecord(event)) return;
+    if (typeof event.sessionID === "string") {
+        identity.sessions.add(event.sessionID);
+    }
+    if (typeof event.messageID === "string") {
+        identity.messages.add(event.messageID);
+    }
+    const part = isRecord(event.part) ? event.part : undefined;
+    if (part === undefined) return;
+    if (typeof part.sessionID === "string") {
+        identity.sessions.add(part.sessionID);
+    }
+    if (typeof part.messageID === "string") {
+        identity.messages.add(part.messageID);
+    }
+}
+
 function extract(stdout: string) {
     const texts: string[] = [];
     const calls = new Map<string, ToolCall>();
     const unkeyed = { count: 0 };
+    const identity: TrailIdentity = {
+        sessions: new Set(),
+        messages: new Set(),
+    };
     let events = 0;
     let parseFailures = 0;
     let lastPartKind = null;
@@ -2155,6 +2192,7 @@ function extract(stdout: string) {
             continue;
         }
         events += 1;
+        recordIdentity(event, identity);
         const kind = extractEvent(event, texts, calls, unkeyed);
         if (kind !== null) {
             lastPartKind = kind;
@@ -2170,6 +2208,7 @@ function extract(stdout: string) {
         events,
         parseFailures,
         toolCalls: tools,
+        identity,
         textParts,
         lastPartKind,
     };
@@ -2552,12 +2591,13 @@ function exposureFor(resultDir: string): string[] {
 }
 
 /**
- * The opt-in operation journal the plugin appends to, one JSON object per
- * served docs call. It lives beside the case's `tools.jsonl` (the trial
- * surfaces are snapshot separately, so this evidence cannot contaminate the
- * mutation gate).
+ * The opt-in operation journal, copied into evidence after the run. The
+ * plugin writes a per-run temp path; this file is harness output, never the
+ * capture path a trial could pre-seed during the run.
  */
 const OPERATION_JOURNAL_FILE = "docs-operations.jsonl";
+/** The per-run signing key saved beside the journal after the run. */
+const OPERATION_JOURNAL_KEY_FILE = "docs-operations.key";
 
 /** The text of a plugin result's content, flattened for the shared verifier. */
 function journalContentText(content: unknown): string {
@@ -2603,8 +2643,83 @@ function nestedResultOf(record: Record<string, unknown>): {
     };
 }
 
+/** One nested dispatch the host recorded in an execute result's metadata. */
+interface NestedDispatch {
+    tool: string;
+    status: string;
+    input: unknown;
+}
+
+/** The journal's registered tool name for one host dispatch name. */
+function docsDispatchTool(name: unknown): string | null {
+    if (name === "docs.docs_search") return "docs_search";
+    if (name === "docs") return "docs";
+    return null;
+}
+
+/** The docs dispatches one execute entry's result metadata recorded. */
+function recordedDispatches(entry: ToolCall): NestedDispatch[] {
+    if (entry.tool !== "execute" || !isRecord(entry.metadata)) return [];
+    const envelope = isRecord(entry.metadata.metadata)
+        ? entry.metadata.metadata
+        : entry.metadata;
+    const calls = Array.isArray(envelope.toolCalls) ? envelope.toolCalls : [];
+    const dispatches: NestedDispatch[] = [];
+    for (const call of calls) {
+        if (!isRecord(call)) continue;
+        const tool = docsDispatchTool(call.tool);
+        if (tool === null) continue;
+        dispatches.push({
+            tool,
+            status: typeof call.status === "string" ? call.status : "unknown",
+            input: call.input,
+        });
+    }
+    return dispatches;
+}
+
+/**
+ * The nested docs dispatches the host recorded inside execute results. This
+ * is the independent half of journal attribution: a record must correspond
+ * to a dispatch the runtime actually made, not merely to a plausible shape.
+ * @param entries The raw CLI trail entries.
+ * @returns The docs dispatches, in execution order.
+ */
+function nestedDispatches(entries: ToolCall[]): NestedDispatch[] {
+    return entries.flatMap(recordedDispatches);
+}
+
+/** Whether two dispatch inputs are the same recorded arguments. */
+function sameDispatchInput(left: unknown, right: unknown): boolean {
+    return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+}
+
+/** The session/message identities observed in a saved stdout trail. */
+function journalIdentityFromStdout(resultDir: string): TrailIdentity {
+    const identity: TrailIdentity = {
+        sessions: new Set(),
+        messages: new Set(),
+    };
+    const path = join(resultDir, "stdout.jsonl");
+    if (!existsSync(path)) return identity;
+    let text: string;
+    try {
+        text = readFileSync(path, "utf8");
+    } catch {
+        return identity;
+    }
+    for (const line of text.split("\n").filter(Boolean)) {
+        recordIdentity(parseLine(line), identity);
+    }
+    return identity;
+}
+
 /** One validated journal record as a trail-shaped nested operation. */
-function nestedOperationOf(record: unknown, index: number): ToolCall | null {
+function nestedOperationOf(
+    record: unknown,
+    index: number,
+    callID: string,
+): ToolCall | null {
     if (!isRecord(record)) return null;
     if (!isServedTwinRecord(record)) return null;
     const result = nestedResultOf(record);
@@ -2618,70 +2733,219 @@ function nestedOperationOf(record: unknown, index: number): ToolCall | null {
         metadata: result.metadata,
         outcome: outcomeFactsOf(result.output),
         nested: true,
+        callID,
     };
 }
 
 /**
- * Read the case's plugin operation journal, if the run wrote one. Unreadable
- * or malformed records are dropped (never guessed): an absent journal is the
- * pre-instrumentation status quo, not zero use. Entries are keyed by their
- * position in this case's own file, so evidence cannot arrive from another
- * case or session.
- * @param resultDir The case's result directory.
- * @returns The validated nested operations, oldest first.
+ * Whether a journal record carries this run's observed identity and names an
+ * execute call present in its trail.
  */
-function readOperationJournal(resultDir: string): ToolCall[] {
-    const path = join(resultDir, OPERATION_JOURNAL_FILE);
-    if (!existsSync(path)) return [];
-    let lines: string[];
-    try {
-        lines = readFileSync(path, "utf8").split("\n").filter(Boolean);
-    } catch {
-        return [];
+function journalRecordAttributed(
+    record: Record<string, unknown>,
+    identity: TrailIdentity,
+    executeIds: Set<string>,
+): boolean {
+    if (
+        typeof record.sessionID !== "string" ||
+        !identity.sessions.has(record.sessionID)
+    ) {
+        return false;
     }
-    const entries: ToolCall[] = [];
-    for (const [index, line] of lines.entries()) {
-        const parsed = parseLine(line);
-        const entry = nestedOperationOf(parsed, index);
-        if (entry !== null) entries.push(entry);
+    if (
+        typeof record.messageID !== "string" ||
+        !identity.messages.has(record.messageID)
+    ) {
+        return false;
     }
-    return entries;
+    return typeof record.callID === "string" && executeIds.has(record.callID);
 }
 
-/** A stable identity for deduplicating an observable direct call. */
-function directCallKey(entry: ToolCall): string {
-    return `${entry.tool ?? ""}|${entry.status ?? ""}|${JSON.stringify(
-        entry.input ?? null,
-    )}`;
+/** Whether a journal record's MAC matches this run's saved key. */
+function journalMacValid(
+    record: Record<string, unknown>,
+    key: string,
+): boolean {
+    const mac = record.mac;
+    if (typeof mac !== "string") return false;
+    const body = Object.fromEntries(
+        Object.entries(record).filter(([field]) => field !== "mac"),
+    );
+    const expected = createHmac("sha256", key)
+        .update(JSON.stringify(body), "utf8")
+        .digest("hex");
+    const left = Buffer.from(expected, "hex");
+    const right = Buffer.from(mac, "hex");
+    return left.length === right.length && timingSafeEqual(left, right);
+}
+
+/** The saved journal lines and signing key, or null when unusable. */
+function journalEvidenceOf(
+    resultDir: string,
+): { lines: string[]; key: string } | null {
+    const path = join(resultDir, OPERATION_JOURNAL_FILE);
+    if (!existsSync(path)) return null;
+    let key: string;
+    try {
+        key = readFileSync(
+            join(resultDir, OPERATION_JOURNAL_KEY_FILE),
+            "utf8",
+        ).trim();
+    } catch {
+        return null;
+    }
+    if (key === "") return null;
+    try {
+        return {
+            lines: readFileSync(path, "utf8").split("\n").filter(Boolean),
+            key,
+        };
+    } catch {
+        return null;
+    }
+}
+
+/** A signed, attributed journal record, or null when it cannot be credited. */
+function creditedJournalRecord(
+    line: string,
+    key: string,
+    identity: TrailIdentity,
+    executeIds: Set<string>,
+): Record<string, unknown> | null {
+    const record = parseLine(line);
+    if (!isRecord(record) || !isServedTwinRecord(record)) return null;
+    if (!journalMacValid(record, key)) return null;
+    if (!journalRecordAttributed(record, identity, executeIds)) return null;
+    return record;
+}
+
+/** Consume one matching host dispatch; false when none matches. */
+function consumeDispatch(
+    dispatches: NestedDispatch[],
+    record: Record<string, unknown>,
+    status: string,
+): boolean {
+    const match = dispatches.findIndex(
+        (dispatch) =>
+            dispatch.tool === record.tool &&
+            dispatch.status === status &&
+            sameDispatchInput(dispatch.input, record.input),
+    );
+    if (match < 0) return false;
+    dispatches.splice(match, 1);
+    return true;
 }
 
 /**
- * Fold journaled nested operations into the CLI trail. A direct `docs_search`
- * call (if a host ever exposes one natively) is already in the trail, so its
- * journal twin is dropped rather than counted twice; the execute wrapper
- * itself stays an attempt and is never a docs operation. Each nested call is
- * therefore counted once, and only when the plugin actually served it.
+ * Read the harness-written plugin journal and keep only records this run can
+ * account for. A record must carry a valid signature under this run's saved
+ * key, name a session and message observed in the run's CLI events, name an
+ * execute call present in its trail, and match one not-yet-matched nested
+ * docs dispatch that the host recorded in that execute result. Correct shape
+ * alone is never enough; a record written by a trial tool cannot acquire the
+ * signature or those identities. Unmatched or malformed records are dropped
+ * (an absent journal is the pre-instrumentation status quo).
+ * @param resultDir The case's result directory.
+ * @param entries The raw CLI trail entries.
+ * @param identity The run's observed session/message identity.
+ * @returns The validated nested operations, oldest first.
+ */
+function readOperationJournal(
+    resultDir: string,
+    entries: ToolCall[],
+    identity: TrailIdentity,
+): ToolCall[] {
+    const evidence = journalEvidenceOf(resultDir);
+    if (evidence === null) return [];
+    const executeIds = new Set(
+        entries
+            .filter((entry) => entry.tool === "execute")
+            .map((entry) => entry.id)
+            .filter((id): id is string => typeof id === "string"),
+    );
+    const dispatches = nestedDispatches(entries);
+    const nested: ToolCall[] = [];
+    for (const [index, line] of evidence.lines.entries()) {
+        const record = creditedJournalRecord(
+            line,
+            evidence.key,
+            identity,
+            executeIds,
+        );
+        if (record === null) continue;
+        const result = nestedResultOf(record);
+        if (result === null) continue;
+        if (!consumeDispatch(dispatches, record, result.status)) continue;
+        const entry = nestedOperationOf(record, index, record.callID as string);
+        if (entry !== null) nested.push(entry);
+    }
+    return nested;
+}
+
+/**
+ * Fold journaled nested operations into the CLI trail. Deduplication is by
+ * call identity, never by arguments: two distinct reads with identical input
+ * are two calls, and a later successful nested read survives beside an
+ * earlier observable refusal. Only a direct twin call the trail already
+ * carries under the same call id is dropped. The execute wrapper stays an
+ * attempt and is never a docs operation.
  * @param entries The deduplicated CLI trail.
  * @param nested The validated journal operations.
- * @returns The trail plus every unmatched nested operation.
+ * @returns The trail plus every nested operation not already observable.
  */
 function mergeNestedOperations(
     entries: ToolCall[],
     nested: ToolCall[],
 ): ToolCall[] {
-    const seen = new Map<string, number>();
-    for (const entry of entries) {
-        const key = directCallKey(entry);
-        seen.set(key, (seen.get(key) ?? 0) + 1);
-    }
-    const extra = nested.filter((entry) => {
-        const key = directCallKey(entry);
-        const count = seen.get(key) ?? 0;
-        if (count === 0) return true;
-        seen.set(key, count - 1);
-        return false;
-    });
+    const directIds = new Set(
+        entries
+            .filter(
+                (entry) =>
+                    typeof entry.id === "string" &&
+                    (entry.tool === "docs" || entry.tool === "docs_search"),
+            )
+            .map((entry) => `${entry.tool}|${entry.id}`),
+    );
+    const extra = nested.filter(
+        (entry) =>
+            typeof entry.callID !== "string" ||
+            !directIds.has(`${entry.tool}|${entry.callID}`),
+    );
     return [...entries, ...extra];
+}
+
+/** Write the captured journal and its key as evidence, after the run. */
+function copyCapturedJournal(
+    resultDir: string,
+    journalPath: string,
+    key: string,
+): void {
+    let text = "";
+    try {
+        text = readFileSync(journalPath, "utf8");
+    } catch {
+        // No write is a real empty capture, not an error.
+    }
+    write(join(resultDir, OPERATION_JOURNAL_FILE), text);
+    writeFileSync(join(resultDir, OPERATION_JOURNAL_KEY_FILE), `${key}\n`, {
+        mode: 0o600,
+    });
+}
+
+/** The docs telemetry for one run, with attributed nested calls folded in. */
+function capturedDocsTelemetry(
+    resultDir: string,
+    toolCalls: ToolCall[],
+    identity: TrailIdentity,
+    parseFailures: number,
+): Telemetry {
+    return docsTelemetry(
+        mergeNestedOperations(
+            toolCalls,
+            readOperationJournal(resultDir, toolCalls, identity),
+        ),
+        parseFailures,
+    );
 }
 
 /** Read one result's deduplicated trail, or null when absent/unreadable. */
@@ -2698,7 +2962,11 @@ function readTrail(resultDir: string): ToolTrail | null {
     return {
         entries: mergeNestedOperations(
             entries,
-            readOperationJournal(resultDir),
+            readOperationJournal(
+                resultDir,
+                entries,
+                journalIdentityFromStdout(resultDir),
+            ),
         ),
         parseFailures,
     };
@@ -3364,7 +3632,9 @@ function diagnosticToolCalls(resultDir: string) {
     return {
         entries,
         nativeCalls: entries.filter(
-            (entry) => entry.tool === "docs" || entry.tool === "docs_search",
+            (entry) =>
+                (entry.tool === "docs" || entry.tool === "docs_search") &&
+                docsEntryKind(entry) !== "nested",
         ),
         codeCalls: entries.filter(
             (entry) =>
@@ -3550,12 +3820,14 @@ function resultIsDiagnostic(resultDir: string): boolean {
  * cwd this spawn uses.
  * @param configHome The isolated XDG config directory.
  * @param cwd The absolute working directory passed to `spawn`.
- * @param journalPath The case's opt-in docs operation journal, if any.
+ * @param journalPath The per-run journal path, inside the container temp fs.
+ * @param journalKey The per-run signing key for that journal.
  */
 function childEnv(
     configHome: string,
     cwd: string,
     journalPath?: string,
+    journalKey?: string,
 ): NodeJS.ProcessEnv {
     const env = { ...process.env };
     for (const key of [
@@ -3568,14 +3840,17 @@ function childEnv(
     }
     env.XDG_CONFIG_HOME = configHome;
     env.PWD = cwd;
-    // The docs plugin's opt-in instrumentation env var. Per case, beside its
-    // trail: the model cannot write it, and another case cannot satisfy this
-    // case's evidence.
-    if (journalPath !== undefined) {
+    // Opt-in docs instrumentation: a per-run temp path and signing key. The
+    // harness copies the journal into evidence after the run and saves the
+    // key then, so a trial-time file write cannot pass as capture.
+    if (journalPath !== undefined && journalKey !== undefined) {
         env.DOCS_OPERATION_JOURNAL = journalPath;
+        env.DOCS_OPERATION_JOURNAL_KEY = journalKey;
     } else {
         delete env.DOCS_OPERATION_JOURNAL;
+        delete env.DOCS_OPERATION_JOURNAL_KEY;
     }
+    delete env.DOCS_OPERATION_JOURNAL_FD;
     return env;
 }
 
@@ -5660,11 +5935,7 @@ function opencodeArgs(args: CallArgs): string[] {
 function opencodeCall(args: CallArgs): Promise<SpawnResult> {
     const { cwd, env, opencode, timeoutMs } = args;
     return new Promise((resolve: (value: SpawnResult) => void) => {
-        let child: import("child_process").ChildProcessByStdio<
-            null,
-            import("stream").Readable,
-            import("stream").Readable
-        >;
+        let child: import("child_process").ChildProcess;
         try {
             child = spawn(opencode, opencodeArgs(args), {
                 cwd,
@@ -5709,8 +5980,8 @@ function opencodeCall(args: CallArgs): Promise<SpawnResult> {
             }
             state.chunks.push(String(chunk));
         };
-        child.stdout.on("data", (chunk) => appendChunk("stdout", chunk));
-        child.stderr.on("data", (chunk) => appendChunk("stderr", chunk));
+        child.stdout?.on("data", (chunk) => appendChunk("stdout", chunk));
+        child.stderr?.on("data", (chunk) => appendChunk("stderr", chunk));
 
         let killed = false;
         let escalated = false;
@@ -6356,12 +6627,19 @@ async function runOne(
     const before = snapshotLive(live);
     const modelStart = Date.now();
     const diagnostic = isDiagnosticCase(testCase);
+    // The plugin writes its journal to a per-run temp path; the harness
+    // copies it into evidence (with the signing key) only after the child
+    // exits, so a trial-time file cannot pre-seed that evidence.
+    const journalDir = mkdtempSync(join(tmpdir(), "docs-journal-"));
+    const journalPath = join(journalDir, "operations.jsonl");
+    const journalKey = randomBytes(32).toString("hex");
     const callArgs: CallArgs = {
         cwd: join(live, "work"),
         env: childEnv(
             join(live, "config-home"),
             join(live, "work"),
-            join(resultDir, OPERATION_JOURNAL_FILE),
+            journalPath,
+            journalKey,
         ),
         model: options.model,
         title: `placement-${testCase.id}`,
@@ -6372,6 +6650,8 @@ async function runOne(
     };
     const result = await opencodeCall(callArgs);
     timings.modelMs = Date.now() - modelStart;
+    copyCapturedJournal(resultDir, journalPath, journalKey);
+    rmSync(journalDir, { recursive: true, force: true });
 
     const snapshotStart = Date.now();
     const afterSnapshot = snapshotLive(live);
@@ -6385,14 +6665,14 @@ async function runOne(
         events,
         parseFailures,
         toolCalls,
+        identity,
         textParts,
         lastPartKind,
     } = extract(result.stdout ?? "");
+    // The journal is captured to a temp path and copied here, after the run:
+    // a trial tool cannot pre-seed or edit this evidence.
     const telemetry = {
-        ...docsTelemetry(
-            mergeNestedOperations(toolCalls, readOperationJournal(resultDir)),
-            parseFailures,
-        ),
+        ...capturedDocsTelemetry(resultDir, toolCalls, identity, parseFailures),
         events,
         parseFailures,
     };

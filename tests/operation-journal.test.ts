@@ -1,15 +1,22 @@
 /**
- * The docs plugin's opt-in operation journal: the only authenticated record
- * of a Code Mode nested call, which emits no CLI trail event of its own.
+ * The docs plugin's opt-in operation journal: the only record of a Code Mode
+ * nested call, signed per run and written to a harness-owned path.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createDocsTool, OPERATION_JOURNAL_ENV } from "../src/index.ts";
+import {
+    createDocsTool,
+    OPERATION_JOURNAL_ENV,
+    OPERATION_JOURNAL_KEY_ENV,
+} from "../src/index.ts";
 
-/** A fresh journal path in the system temp root. */
+const KEY = "test-only-journal-key";
+
+/** A temp directory plus path for the journal file. */
 function journalPath(): { path: string; cleanup: () => void } {
     const directory = mkdtempSync(join(tmpdir(), "docs-journal-"));
     return {
@@ -18,19 +25,31 @@ function journalPath(): { path: string; cleanup: () => void } {
     };
 }
 
-/** Run one tool call with the journal variable set, restoring it after. */
+/** Run one tool call with the journal path and key set, restoring them after. */
 async function withJournal<T>(
     path: string | undefined,
     action: () => Promise<T>,
 ): Promise<T> {
-    const previous = process.env[OPERATION_JOURNAL_ENV];
-    if (path === undefined) delete process.env[OPERATION_JOURNAL_ENV];
-    else process.env[OPERATION_JOURNAL_ENV] = path;
+    const previousPath = process.env[OPERATION_JOURNAL_ENV];
+    const previousKey = process.env[OPERATION_JOURNAL_KEY_ENV];
+    if (path === undefined) {
+        delete process.env[OPERATION_JOURNAL_ENV];
+        delete process.env[OPERATION_JOURNAL_KEY_ENV];
+    } else {
+        process.env[OPERATION_JOURNAL_ENV] = path;
+        process.env[OPERATION_JOURNAL_KEY_ENV] = KEY;
+    }
     try {
         return await action();
     } finally {
-        if (previous === undefined) delete process.env[OPERATION_JOURNAL_ENV];
-        else process.env[OPERATION_JOURNAL_ENV] = previous;
+        if (previousPath === undefined)
+            delete process.env[OPERATION_JOURNAL_ENV];
+        else process.env[OPERATION_JOURNAL_ENV] = previousPath;
+        if (previousKey === undefined) {
+            delete process.env[OPERATION_JOURNAL_KEY_ENV];
+        } else {
+            process.env[OPERATION_JOURNAL_KEY_ENV] = previousKey;
+        }
     }
 }
 
@@ -47,7 +66,7 @@ test("journal: unset means silence, not an empty file", async () => {
     journal.cleanup();
 });
 
-test("journal: a served Code Mode twin call records tool, input and result", async () => {
+test("journal: a served Code Mode twin call records signed tool, input and result", async () => {
     // Arrange
     const journal = journalPath();
     const twin = createDocsTool(
@@ -78,6 +97,12 @@ test("journal: a served Code Mode twin call records tool, input and result", asy
     assert.equal(record.callID, "call_1");
     assert.equal(record.result.metadata.count, 0);
     assert.equal(record.result.content, result.content);
+    const { mac, ...body } = record;
+    assert.equal(
+        mac,
+        createHmac("sha256", KEY).update(JSON.stringify(body)).digest("hex"),
+        "the record carries a valid per-run signature",
+    );
     journal.cleanup();
 });
 

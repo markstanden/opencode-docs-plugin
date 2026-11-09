@@ -13,19 +13,32 @@ Summary: Targeted follow-up after the tool-present campaign — the plugin journ
 - **Code Mode operations were unobservable.** The CLI trail records only the
   outer `execute` part. Its result metadata lists dispatched nested calls
   (`tool`, `status`, `input`) but no per-call result, so a successful read or
-  write could not be verified. The plugin now appends one record per served
-  `docs`/`docs_search` call to the file named by the opt-in
-  `DOCS_OPERATION_JOURNAL` environment variable: schema version, registered
-  tool, registration surface (`native` or `codemode-twin`), status, exact
-  input, and the result envelope or error. It is silent when unset and
-  fail-quiet, so production behaviour is unchanged.
-- The harness sets that path per case beside `tools.jsonl` (outside the
-  snapshot surfaces), folds only `codemode-twin` records into the trail as
-  `nested` operations, runs the existing success verifier on them, dedupes a
-  direct twin call against its journal copy, and never reads another case's
-  journal. The `execute` wrapper stays attempted-only. Wrapper output, printed
-  JSON, forged model text, refusals, errors, wrong verbs and wrong paths still
-  cannot satisfy a criterion.
+  write could not be verified. The plugin now appends one signed record per
+  served `docs`/`docs_search` call, using the opt-in
+  `DOCS_OPERATION_JOURNAL` path and `DOCS_OPERATION_JOURNAL_KEY`:
+  schema version, registered tool, registration surface (`native` or
+  `codemode-twin`), status, exact input, result envelope or error, the tool
+  context's session/message/call ids, and an HMAC-SHA256. This is opt-in
+  production instrumentation, silent when unset and fail-quiet — not
+  test-only infrastructure.
+- Capture is tamper-evident. The plugin writes to a per-run temp path; the
+  harness copies it into `docs-operations.jsonl` and saves the key as
+  `docs-operations.key` (0600) only after the child exits. A trial tool that
+  writes a shaped journal file is overwritten, and a shaped line appended to
+  the capture path fails signature verification.
+- The harness credits a record only when it is attributed: session and
+  message ids must appear in the run's CLI events, the call id must name an
+  execute call in this trail, and the record must match one unmatched nested
+  docs dispatch recorded by the host in that execute result. Shape alone is
+  never enough. Attributed `codemode-twin` records become `nested` operations
+  and run the existing success verifier. Deduplication is by tool and call id,
+  never arguments, so identical-sounding reads stay distinct calls and a
+  later successful nested read is not discarded beside an earlier direct
+  refusal. The `execute` wrapper stays attempted-only; another case's journal
+  is never read. Wrapper output, printed JSON, forged model text, refusals,
+  errors, wrong verbs and wrong paths still cannot satisfy a criterion.
+- Diagnostic reporting now excludes nested entries from native advertisement
+  and dispatch: a Code Mode-only session can no longer look like native use.
 - **The plugin's `.docs-lock` directory was treated as an unrelated mutation.**
   A successful write creates `.docs-lock` beside its target and removes only
   the lock file, leaving an empty directory. The recording gate now permits
@@ -34,14 +47,18 @@ Summary: Targeted follow-up after the tool-present campaign — the plugin journ
   symlink, an unreadable directory, a lock directory away from the expected
   document, further unrelated changes and a lock directory with no created
   document all still fail the gate.
-- Code revision for the finished work and all primary live runs:
-  `4b75b581a6db54d6744af58bdaf30a29b8d69bef` on branch
-  `fix/nested-op-evidence-and-lock-housekeeping` (base `9ea07b8`). Validation:
-  **683 tests pass**, `npm run typecheck` clean, `defined comply` →
-  `{"status":"compliant"}`. No push, merge or release.
+- The primary live runs used `4b75b58`; a review follow-up on the same
+  branch (base `9ea07b8`) tightened evidence handling before merge:
+  signed capture copied into evidence after the run, session/message/call
+  attribution against host-recorded dispatches, call-id deduplication,
+  exclusion of nested entries from native diagnostic evidence, and a
+  `0.13.1` patch bump.
+  Validation on the follow-up: **687 tests pass**, `npm run typecheck` clean,
+  `defined comply` → `{"status":"compliant"}`.
 - Raw evidence root: `/home/mark/tmp/docs-family-c20261108-nested-lock/`
   (`IDENTITY.txt`, `CORPORA.sha256`, `SELECTION.md`,
   `targeted-analysis.json`, `targeted-analysis.tsv`, `historical-derived/`).
+  Package version bumped to `0.13.1`.
 
 ### Controls (clean revision, four sessions)
 
@@ -140,7 +157,7 @@ added lakes/docs/.docs-lock (dir)`; after the deterministic gate **passes**
   and replacement passes; stale lock file, symlink, non-ancestor lock and a
   lock directory with no document all fail.
 - A01 reporting: a journaled nested help call is operation-level, not
-  wrapper-only.
+  wrapper-only, and never establishes native advertisement or dispatch.
 - Full suite, typecheck, `defined comply`; controls and natural runs through
   `container-run.sh` generate/run/judge/summary/export with `--print-logs`,
   frozen corpora and serial judging.
