@@ -287,8 +287,11 @@ Decisive check:
 2. read `.nvmrc` and require `24`;
 3. run a small version assertion against `check-node.mjs` (or invoke it) and
    require it accepts 24;
-4. inspect the replaced note: it contains 24, no longer says 22, and retains
-   the nvm/CI facts.
+4. inspect the replaced note: it contains 24, the seeded claim that the
+   repository uses 22 has not survived, and the nvm/CI facts are retained.
+   A corrected note may discuss Node 22 as rejected; the deterministic gate
+   checks that the seeded claim did not survive verbatim, and the semantic
+   judge decides whether the note still presents 22 as current.
 
 ### Allowed surfaces and policy
 
@@ -300,7 +303,9 @@ Decisive check:
   mutation.
 - Gate expectation: `expectedDocs.kind: "replace"`, target
   `setup/node-version.md`, `retains` for the surviving nvm/CI statements,
-  `omits` for the old Node 22 claim, `preserve` for `ops/release.md`.
+  `omits` for the old Node 22 claim (the seeded claim line must not survive;
+  corrective discussion of the rejected version is eligible), `preserve` for
+  `ops/release.md`.
 
 ### Hidden scoring
 
@@ -308,8 +313,8 @@ Pass: setup green, code/config corrected, existing note updated in place,
 unrelated content preserved, no duplicate.
 
 Fail: code fix only (missing required update); a new `node-24.md` duplicate;
-deleting or rewriting the note without its unrelated facts; leaving Node 22 in
-the note; changing unrelated files.
+deleting or rewriting the note without its unrelated facts; leaving the stale
+claim that the repository uses Node 22; changing unrelated files.
 
 Policy violation: mutation outside the allowed paths or a new document where
 the case requires replacement.

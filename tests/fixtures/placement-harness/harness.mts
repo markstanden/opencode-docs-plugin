@@ -5472,18 +5472,65 @@ function recordedMutationEvidence(
 }
 
 /**
+ * Whether a stale marker survives as the seeded claim it superseded. A
+ * replacement may legitimately discuss the old value (for example "setup
+ * rejects Node 22"), so literal presence alone is not evidence that the
+ * stale assertion remains. The seed defines the claim: the gate fails only
+ * when a non-empty seed line containing the marker survives verbatim. A
+ * seed without such a line keeps the literal-absence rule; semantic
+ * correctness stays with the judge.
+ * @param text The replaced document bytes.
+ * @param seedText The seeded predecessor bytes, or null when there is none.
+ * @param stale The `omits` marker.
+ */
+function staleMarkerSurvives(
+    text: string,
+    seedText: string | null,
+    stale: string,
+): boolean {
+    if (seedText === null) return text.includes(stale);
+    const claimLines = seedText
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line !== "" && line.includes(stale));
+    if (claimLines.length === 0) return text.includes(stale);
+    const present = new Set(text.split("\n").map((line) => line.trim()));
+    return claimLines.some((line) => present.has(line));
+}
+
+/**
+ * The seeded predecessor bytes for a replace target, or null when the case
+ * carries none (for example a created document).
+ * @param definition The case definition holding the seeds.
+ * @param target The surface-qualified replace target.
+ */
+function seededPredecessor(
+    definition: TrialCase,
+    target: string,
+): string | null {
+    for (const seed of definition.seeds ?? []) {
+        if (`${seed.surface}/${seed.path}` !== target) continue;
+        return typeof seed.contents === "string" ? seed.contents : null;
+    }
+    return null;
+}
+
+/**
  * The gate's content checks for one expectation-fulfilling document:
- * structural validity, required and absent content, link references.
+ * structural validity, required content, superseded seeded claims and link
+ * references.
  * @param path The document's surface-relative path.
  * @param text The recorded document bytes.
  * @param expectation The case's `expectedDocs` object.
  * @param what What the document did (created / replaced), for messages.
+ * @param seedText The seeded predecessor bytes for a replace target, or null.
  */
 function docContentProblem(
     path: string,
     text: string,
     expectation: ExpectedDocs,
     what: string,
+    seedText: string | null,
 ): string | null {
     const structural = invalidKnowledgeDocReason(text);
     if (structural !== null) {
@@ -5495,7 +5542,7 @@ function docContentProblem(
         }
     }
     for (const stale of expectation.omits ?? []) {
-        if (text.includes(stale)) {
+        if (staleMarkerSurvives(text, seedText, stale)) {
             return `${what} ${path} still carries superseded content: ${JSON.stringify(stale)}`;
         }
     }
@@ -5646,6 +5693,7 @@ function unrelatedSurfaceChangeProblem(
 function replaceDocVerdict(
     evidence: MutationEvidence,
     expectation: ExpectedDocs,
+    definition: TrialCase,
 ): GateVerdict {
     const target = expectation.target;
     if (target === undefined) {
@@ -5667,7 +5715,13 @@ function replaceDocVerdict(
             problem: `expected replacement target ${target} is not a readable regular file`,
         };
     }
-    const content = docContentProblem(target, text, expectation, "replaced");
+    const content = docContentProblem(
+        target,
+        text,
+        expectation,
+        "replaced",
+        seededPredecessor(definition, target),
+    );
     if (content !== null) return { problem: content };
     const others = unrelatedSurfaceChangeProblem(evidence, [target]);
     if (others !== null) return { problem: others };
@@ -5756,7 +5810,7 @@ function createDocVerdict(
                 "by a doc the plugin never indexes",
         };
     }
-    const content = docContentProblem(path, text, expectation, "created");
+    const content = docContentProblem(path, text, expectation, "created", null);
     if (content !== null) return { problem: content };
     const others = unrelatedSurfaceChangeProblem(evidence, [path]);
     if (others !== null) return { problem: others };
@@ -5818,7 +5872,7 @@ function expectedDocsGate(
         expectation.kind === "none"
             ? restraintVerdict(evidence, expectation)
             : expectation.kind === "replace"
-              ? replaceDocVerdict(evidence, expectation)
+              ? replaceDocVerdict(evidence, expectation, definition)
               : createDocVerdict(evidence, expectation, definition);
     return { ...verdict, artifacts: verdict.artifacts ?? [] };
 }

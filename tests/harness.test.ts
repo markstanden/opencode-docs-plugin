@@ -7288,6 +7288,149 @@ test("NOTETAKING: update requires in-place correction, retained facts and no dup
     rmRoot(root);
 });
 
+test("NOTETAKING: replacement eligibility accepts a corrective mention of the superseded value", () => {
+    // Arrange: a seeded note that asserts Node 22 as the current version.
+    const root = newRoot("autonote-corrective-omits");
+    const fake = writeFakeOpencode(root);
+    const seed = seededDoc(
+        "This repository uses Node 22; setup enforces it.",
+        "- Use nvm.\n- This repository uses Node 22.\n- CI reads `.nvmrc`.",
+    );
+    const update = taskCase("T01", {
+        seeds: [
+            {
+                surface: "lakes",
+                path: "docs/setup/node-version.md",
+                contents: seed,
+            },
+            {
+                surface: "lakes",
+                path: "docs/ops/release.md",
+                contents: seededDoc("Release steps.", "- Tag then publish."),
+            },
+        ],
+        expectedDocs: {
+            kind: "replace",
+            target: "lakes/docs/setup/node-version.md",
+            retains: ["nvm", "CI"],
+            omits: ["Node 22"],
+            preserve: ["lakes/docs/ops/release.md"],
+        },
+    });
+    const { paths } = generate(root, fake, [update]);
+    const answer = file(root, "trial.jsonl", ANSWER_JSONL());
+
+    const runAndJudge = (
+        stamp: string,
+        lines: string[],
+        judged: string = VERDICT_JSONL(),
+    ) => {
+        assert.equal(
+            runHarness(
+                root,
+                fake,
+                ["run", "T01", "--stamp", stamp, ...commandArgs(paths)],
+                {
+                    FAKE_TRIAL_OUT: answer,
+                    FAKE_TRIAL_HOOK: hook(root, `${stamp}.sh`, lines),
+                },
+            ).status,
+            0,
+        );
+        const judge = runHarness(
+            root,
+            fake,
+            ["judge", "T01", "--stamp", stamp, ...commandArgs(paths)],
+            { FAKE_JUDGE_OUT: file(root, "judge.jsonl", judged) },
+        );
+        return {
+            judge,
+            verdict: readJson(
+                join(paths.results, stamp, "T01", "verdict.json"),
+            ),
+        };
+    };
+
+    const note = (summary: string, facts: string) =>
+        "---\nArea: Setup\nKeywords: node, version, nvm\nSummary: " +
+        summary +
+        "\n---\n\n# Node version\n\n### Facts\n\n" +
+        facts +
+        "\n";
+    const writeTarget = (body: string) =>
+        "printf '%s\\n' '" +
+        body.replace(/'/g, "'\\''") +
+        "' > ../lakes/docs/setup/node-version.md";
+
+    // Act + assert: the old version discussed as rejected is eligible.
+    const corrective = runAndJudge("corrective", [
+        writeTarget(
+            note(
+                "This repository requires Node 24; setup enforces the minimum.",
+                "- Use nvm.\n" +
+                    "- This repository requires Node 24.\n" +
+                    "- `npm run setup` rejects Node versions older than 24, including Node 22.\n" +
+                    "- CI reads `.nvmrc`.",
+            ),
+        ),
+    ]);
+    assert.equal(corrective.judge.status, 0, corrective.judge.stderr);
+    assert.equal(corrective.verdict.verdict, "pass");
+
+    // A quoted historical statement is a corrected discussion, not a stale
+    // assertion: deterministic eligibility passes and the judge decides.
+    const quoted = runAndJudge("quoted", [
+        writeTarget(
+            note(
+                "This repository requires Node 24.",
+                "- Use nvm.\n" +
+                    "- Previously: This repository uses Node 22.\n" +
+                    "- CI reads `.nvmrc`.",
+            ),
+        ),
+    ]);
+    assert.equal(quoted.judge.status, 0, quoted.judge.stderr);
+    assert.equal(quoted.verdict.verdict, "pass");
+
+    // The seeded stale assertion surviving verbatim still fails.
+    const stale = runAndJudge("stale", [
+        writeTarget(
+            seed.replace(
+                "- CI reads `.nvmrc`.",
+                "- CI reads `.nvmrc`.\n- Latest supported version is 24.",
+            ),
+        ),
+    ]);
+    assert.notEqual(stale.judge.status, 0);
+    assert.equal(stale.verdict.verdict, "invalid");
+    assert.match(stale.verdict.reason, /superseded content/);
+
+    // A reworded stale claim passes determinism and is failed by the judge,
+    // proving eligibility is not semantic acceptance.
+    const reworded = runAndJudge(
+        "reworded",
+        [
+            writeTarget(
+                note(
+                    "This repository uses Node 24.",
+                    "- Use nvm.\n- The repository is on Node 22.\n- CI reads `.nvmrc`.",
+                ),
+            ),
+        ],
+        VERDICT_JSONL({ verdict: "fail" }),
+    );
+    assert.notEqual(reworded.judge.status, 0);
+    assert.equal(reworded.verdict.verdict, "fail");
+
+    // A byte-identical replacement never satisfies a required in-place update.
+    const identical = runAndJudge("identical", [writeTarget(seed)]);
+    assert.notEqual(identical.judge.status, 0);
+    assert.equal(identical.verdict.verdict, "invalid");
+    assert.match(identical.verdict.reason, /did not happen|superseded content/);
+
+    rmRoot(root);
+});
+
 test("NOTETAKING: primary checks distinguish pass, task failure, timeout and runner error", () => {
     // Arrange: four task cases that differ only by their pristine checker.
     const root = newRoot("autonote-primary-outcomes");
