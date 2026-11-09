@@ -7,7 +7,7 @@
  */
 
 /** Version of the display map recorded with new run descriptions. */
-export const NAMING_MAP_VERSION = 1;
+export const NAMING_MAP_VERSION = 2;
 
 /** One scenario's display identity. */
 export interface ScenarioDisplay {
@@ -135,6 +135,22 @@ export const SCENARIO_DISPLAY: Readonly<Record<string, ScenarioDisplay>> = {
     A01: {
         displayId: "CONTROL-02",
         title: "Confirm docs help through the harness launch",
+    },
+    "NOTE-01": {
+        displayId: "NOTE-01",
+        title: "Diagnose the retry boundary",
+    },
+    "NOTE-02": {
+        displayId: "NOTE-02",
+        title: "Correct the stale setup rule",
+    },
+    "NOTE-03": {
+        displayId: "NOTE-03",
+        title: "Handle the interrupted run",
+    },
+    "NOTE-04": {
+        displayId: "NOTE-04",
+        title: "Reuse the replay diagnosis",
     },
 };
 

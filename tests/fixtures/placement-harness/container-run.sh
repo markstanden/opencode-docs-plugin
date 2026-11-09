@@ -21,6 +21,8 @@
 # `--no-judge` runs `all` without the judge stage. `--discovery` runs the
 # discovery variant: prompts carry no destinations, so the lakes are
 # reachable only through `docs help` (measured per case).
+# `--recording-closing original|direct` selects the recording prompt's closing
+# block (default original); it refuses any non-recording selection.
 #
 # One source of truth for the case corpus: --fixture/PLACEMENT_CASES picks
 # the corpus that generation, selection, the redacted run list, the frozen
@@ -251,6 +253,12 @@ prepare_cases_run() {
                 ...(typeof doc.promptKind === "string"
                     ? { promptKind: doc.promptKind }
                     : {}),
+                ...(doc.permissionProfile === "task"
+                    ? { permissionProfile: "task" }
+                    : {}),
+                ...(doc.primaryCheck
+                    ? { primaryCheck: doc.primaryCheck }
+                    : {}),
                 mutationPolicy: doc.mutationPolicy ?? null,
                 docsCriterion: doc.docsCriterion ?? null,
                 generationInputsHash,
@@ -275,7 +283,7 @@ parse_run_args() {
             STAMP="${1#*=}"
             shift
             ;;
-        --model | --judge-model | --opencode | --condition)
+        --model | --judge-model | --opencode | --condition | --recording-closing)
             RUN_ARGS+=("$1" "$2")
             shift 2
             ;;
