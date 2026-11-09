@@ -21,15 +21,16 @@ parentheses. A run saved before the naming map has no display snapshot: report
 its recorded id (and its recorded claim when one exists), never a newly
 assigned historical title.
 
-| Prefix       | Plain meaning                                  | Question                                                                     |
-| ------------ | ---------------------------------------------- | ---------------------------------------------------------------------------- |
-| `PLACE`      | Choose the owner and destination               | Where does this knowledge belong, or must ownership be clarified?            |
-| `DISCOVER`   | Find configured documentation                  | Can the agent discover the available lakes through the tool?                 |
-| `NOTICE`     | Recognise knowledge worth preserving           | Does the agent propose recording a finding without an explicit request?      |
-| `REUSE`      | Consult existing documentation                 | Does the agent read and reuse, update or reference what is already recorded? |
-| `RECORD`     | Create or replace documentation                | Does the agent complete the authorised document change correctly?            |
-| `CONTROL`    | Diagnose the execution environment             | Are tools registered, advertised, callable and observable?                   |
-| `REGRESSION` | Check harness/plugin behaviour with assertions | Does the software enforce its contract?                                      |
+| Prefix       | Plain meaning                                  | Question                                                                                        |
+| ------------ | ---------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `PLACE`      | Choose the owner and destination               | Where does this knowledge belong, or must ownership be clarified?                               |
+| `DISCOVER`   | Find configured documentation                  | Can the agent discover the available lakes through the tool?                                    |
+| `NOTICE`     | Recognise knowledge worth preserving           | Does the agent propose recording a finding without an explicit request?                         |
+| `NOTE`       | Preserve or withhold knowledge during work     | Does the agent complete the right note, or properly withhold one, while doing an ordinary task? |
+| `REUSE`      | Consult existing documentation                 | Does the agent read and reuse, update or reference what is already recorded?                    |
+| `RECORD`     | Create or replace documentation                | Does the agent complete the authorised document change correctly?                               |
+| `CONTROL`    | Diagnose the execution environment             | Are tools registered, advertised, callable and observable?                                      |
+| `REGRESSION` | Check harness/plugin behaviour with assertions | Does the software enforce its contract?                                                         |
 
 Behavioural scenarios (`PLACE`, `DISCOVER`, `NOTICE`, `REUSE`, `RECORD`) are run
 against models. `CONTROL` cases diagnose whether the environment can support
@@ -86,6 +87,21 @@ establish identical prompts or evidence.
 D02 and D03 test whether recording is proposed; they do not establish that a
 document was written. DISCOVER-01 requires a successful observable help
 operation, not a destination inferred from prompt text.
+
+### Automatic notetaking
+
+`NOTE` scenarios measure completed documentation while the agent does an
+ordinary practical task under standing permission. They differ from `NOTICE`:
+`NOTICE` measures a proposal in a decision-only session, `NOTE` measures the
+actual create/update or the restraint outcome. Positive and restraint cases
+are reported separately.
+
+| Historical id | Display id | Title                        |
+| ------------- | ---------- | ---------------------------- |
+| NOTE-01       | NOTE-01    | Diagnose the retry boundary  |
+| NOTE-02       | NOTE-02    | Correct the stale setup rule |
+| NOTE-03       | NOTE-03    | Handle the interrupted run   |
+| NOTE-04       | NOTE-04    | Reuse the replay diagnosis   |
 
 ### Reuse and recording
 
@@ -181,8 +197,8 @@ exact test name and source file as the stable reference.
 
 ## Facts
 
-- The current map covers 30 cases: E01–E18, R04, D01–D03, R01, R02, R05, R06,
-  W01, W02 and A01.
+- The current map covers 34 cases: E01–E18, R04, D01–D03, R01, R02, R05, R06,
+  W01, W02, A01 and NOTE-01–NOTE-04.
 - New run descriptions record `namingMapVersion` and each case's display
   identity; prompts are unchanged.
 - `tests/harness.test.ts` asserts completeness, uniqueness and the rendering

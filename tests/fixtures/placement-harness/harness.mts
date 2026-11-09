@@ -54,6 +54,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import {
     NAMING_MAP_VERSION,
     conditionLabel,
@@ -82,12 +83,24 @@ interface SeedSpec {
 
 /** The per-case artefact expectations a recording gate verifies (M05). */
 interface ExpectedDocs {
-    kind: "create" | "replace";
+    kind: "create" | "replace" | "none";
     target?: string;
     link?: string;
     retains?: string[];
     omits?: string[];
     preserve?: string[];
+}
+
+/**
+ * One independent primary-task check: a pristine checker script under
+ * `primary-checks/`, run by the harness after the workhorse exits. The
+ * checker receives the live work tree and the pristine fixture work tree and
+ * never reads the model's answer or rubric.
+ */
+interface PrimaryCheck {
+    id: string;
+    script: string;
+    timeoutMs?: number;
 }
 
 /**
@@ -136,6 +149,14 @@ interface TrialCase {
     mutationPolicy?: MutationPolicy | null;
     docsCriterion?: DocsCriterion | null;
     expectedDocs?: ExpectedDocs | null;
+    /** The exact ordinary-work prompt for a task-shaped case. */
+    taskPrompt?: string;
+    /** Opt-in practical capability profile; legacy cases keep the denies. */
+    permissionProfile?: "task";
+    /** Explicit documentation surface for gates and preservation checks. */
+    docsSurface?: string[];
+    /** The pristine, harness-run primary-task check. */
+    primaryCheck?: PrimaryCheck | null;
     generationInputsHash?: string | null;
 }
 
@@ -194,6 +215,7 @@ interface CliOptions {
     noJudge: boolean;
     allowWrites: boolean;
     discovery: boolean;
+    recordingClosing: RecordingClosing;
     printLogs: boolean;
     help?: boolean;
     model: string;
@@ -479,6 +501,7 @@ interface RunDescription {
     harnessVersion?: number;
     command?: string;
     variant?: string;
+    recordingClosing?: string;
     model?: string;
     judgeModel?: string | null;
     condition?: string;
@@ -592,6 +615,7 @@ interface AttemptMetaArgs {
 }
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+const PRIMARY_CHECKS_DIR = join(HERE, "primary-checks");
 const DEFAULT_FIXTURE = resolve(HERE, "..", "placement-cases.json");
 const DEFAULT_PLUGIN = resolve(HERE, "..", "..", "..");
 const HOME = homedir();
@@ -610,11 +634,22 @@ const COMMANDS = [
  * or provenance change shape, so fingerprints and provenance never silently
  * mix generations. v4: per-operation success evidence (the result envelope
  * and outcome facts from complete output) drives verified docs counts, and
- * the deduplicated trail carries the outcome facts with the call.
+ * the deduplicated trail carries the outcome facts with the call. v5: the
+ * opt-in recording closing-block variant is part of generation and run
+ * identity. v6: task prompts, the opt-in practical permission profile,
+ * restraint expectations (`kind: "none"`) and independent primary checks.
  */
-const HARNESS_VERSION = 4;
+const HARNESS_VERSION = 6;
 /** Generation fingerprint version — bump when generation inputs/outputs change. */
-const GENERATION_VERSION = 3;
+const GENERATION_VERSION = 4;
+
+/**
+ * The recording prompt's closing block. `original` is the frozen baseline
+ * bytes; `direct` performs the authorised recording before reporting. This is
+ * an opt-in generation variant and affects no other prompt kind.
+ */
+type RecordingClosing = "original" | "direct";
+const RECORDING_CLOSINGS: readonly RecordingClosing[] = ["original", "direct"];
 /** Run-description schema version (`run.json`). */
 const RUN_SCHEMA_VERSION = 2;
 
@@ -643,6 +678,7 @@ interface DefaultedOptions {
     model: string;
     judgeModel: string;
     condition: string;
+    recordingClosing: RecordingClosing;
     opencode: string;
     timeoutMs: number;
     jobs: number;
@@ -659,6 +695,7 @@ const DEFAULTS: DefaultedOptions = {
     model: process.env.TRIAL_MODEL || "opencode-go/deepseek-v4.1-flash",
     judgeModel: process.env.TRIAL_JUDGE_MODEL || "",
     condition: "",
+    recordingClosing: "original",
     opencode:
         process.env.TRIAL_OPENCODE || process.env.OPENCODE_BIN || "opencode",
     fixture: DEFAULT_FIXTURE,
@@ -686,6 +723,7 @@ type StringOptionKey =
     | "model"
     | "judgeModel"
     | "condition"
+    | "recordingClosing"
     | "opencode"
     | "prompts"
     | "fixtures"
@@ -707,6 +745,7 @@ const VALUE_FLAGS: Record<string, FlagValueSpec> = {
     "--model": { flagType: "string", key: "model" },
     "--judge-model": { flagType: "string", key: "judgeModel" },
     "--condition": { flagType: "string", key: "condition" },
+    "--recording-closing": { flagType: "string", key: "recordingClosing" },
     "--stamp": { flagType: "string", key: "stamp" },
     "--opencode": { flagType: "string", key: "opencode" },
     "--jobs": { flagType: "number", key: "jobs" },
@@ -748,6 +787,10 @@ common options:
   --condition NAME         report-only condition phrase for this stamp:
                            A/A2/B/C or a descriptive condition such as
                            explicit-read-control. Never changes a prompt
+  --recording-closing MODE recording prompt closing block: "original" (the
+                           default, unchanged baseline bytes) or "direct"
+                           (perform the authorised recording, then report).
+                           Refused for non-recording or diagnostic cases
   --prompts DIR            prompt output (default ${DEFAULTS.prompts})
   --fixtures DIR           fixture root (default ${DEFAULTS.fixtures})
   --rubrics DIR            rubric/case output, kept out of the run sandbox
@@ -801,6 +844,14 @@ function conditionOption(raw: string, arg: string) {
     return label;
 }
 
+/** Resolve and validate the recording closing-block variant. */
+function recordingClosingOption(raw: string, arg: string): RecordingClosing {
+    if (!isLiteral(raw, RECORDING_CLOSINGS)) {
+        usage(`${arg} must be "original" or "direct"`);
+    }
+    return raw as RecordingClosing;
+}
+
 /** Apply one value-taking flag; false when the argument takes no value. */
 function applyValueFlag(options: CliOptions, arg: string, argv: string[]) {
     const spec = VALUE_FLAGS[arg];
@@ -817,6 +868,10 @@ function applyValueFlag(options: CliOptions, arg: string, argv: string[]) {
         return true;
     }
     const key = spec.key;
+    if (key === "recordingClosing") {
+        options.recordingClosing = recordingClosingOption(raw, arg);
+        return true;
+    }
     options[key] =
         key === "condition"
             ? conditionOption(raw, arg)
@@ -836,6 +891,7 @@ function parseArgs(argv: string[]) {
         noJudge: false,
         allowWrites: false,
         discovery: false,
+        recordingClosing: "original",
         printLogs: false,
         ids: [],
     };
@@ -900,6 +956,44 @@ function select(options: CliOptions, requireFull: boolean = false) {
     return cases.filter((entry) => options.ids.includes(entry.id));
 }
 
+/** The prompt kind a case generates, mirroring the prompt template's default. */
+function promptKindOf(testCase: TrialCase): string {
+    return (
+        testCase.promptKind ??
+        (testCase.mutationPolicy ? "recording" : "baseline")
+    );
+}
+
+/**
+ * The refusal for a recording-closing variant reaching cases it does not
+ * describe. Only recording (non-diagnostic) cases take `direct`; any other
+ * selection refuses instead of silently ignoring the flag.
+ */
+function recordingClosingScopeProblem(
+    selected: TrialCase[],
+    options: CliOptions,
+): string | null {
+    if (options.recordingClosing === "original") return null;
+    const unsupported = selected.filter(
+        (testCase) => promptKindOf(testCase) !== "recording",
+    );
+    if (unsupported.length === 0) return null;
+    return (
+        `--recording-closing ${options.recordingClosing} is only supported ` +
+        "for recording cases; refusing " +
+        unsupported.map((testCase) => testCase.id).join(", ")
+    );
+}
+
+/** Refuse a recording-closing variant that would reach unrelated cases. */
+function assertRecordingClosingScope(
+    selected: TrialCase[],
+    options: CliOptions,
+): void {
+    const problem = recordingClosingScopeProblem(selected, options);
+    if (problem !== null) usage(problem);
+}
+
 const write = (path: string, contents: string): void => {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, contents);
@@ -908,6 +1002,17 @@ const write = (path: string, contents: string): void => {
 const sha256 = (value: string | Buffer) =>
     createHash("sha256").update(value).digest("hex");
 const fileHash = (path: string) => sha256(readFileSync(path));
+
+/** The pristine checker source identity, or `missing` when it cannot be read. */
+function primaryCheckSourceHash(testCase: TrialCase): string {
+    const script = testCase.primaryCheck?.script;
+    if (script === undefined) return "none";
+    try {
+        return fileHash(join(PRIMARY_CHECKS_DIR, script));
+    } catch {
+        return "missing";
+    }
+}
 
 /** What a JSON artefact read returned at the real IO boundary. */
 type JsonAt =
@@ -1305,6 +1410,14 @@ function runDescriptionShape(value: unknown): string[] {
         fieldProblems(
             out,
             value,
+            "recordingClosing",
+            'must be "original" or "direct"',
+            (v) => isLiteral(v, RECORDING_CLOSINGS),
+            false,
+        );
+        fieldProblems(
+            out,
+            value,
             "timeoutMs",
             "must be a nonnegative integer",
             nonnegativeInt,
@@ -1366,6 +1479,14 @@ function runDescriptionShape(value: unknown): string[] {
         'must be "destinations" or "discovery"',
         (v) => isLiteral(v, ["destinations", "discovery"]),
         true,
+    );
+    fieldProblems(
+        out,
+        value,
+        "recordingClosing",
+        'must be "original" or "direct"',
+        (v) => isLiteral(v, RECORDING_CLOSINGS),
+        false,
     );
     fieldProblems(
         out,
@@ -1775,10 +1896,20 @@ function expectedDocsShape(value: unknown): string[] {
         out,
         value,
         "kind",
-        'must be "create" or "replace"',
-        (v) => isLiteral(v, ["create", "replace"]),
+        'must be "create", "replace" or "none"',
+        (v) => isLiteral(v, ["create", "replace", "none"]),
         true,
     );
+    if (value.kind === "none") {
+        for (const field of ["target", "link", "retains", "omits"]) {
+            if (field in value) {
+                out.push(
+                    `${field} is not meaningful for kind "none"; restraint ` +
+                        "is expressed by an unchanged documentation surface",
+                );
+            }
+        }
+    }
     for (const field of ["target", "link"]) {
         fieldProblems(
             out,
@@ -1799,6 +1930,32 @@ function expectedDocsShape(value: unknown): string[] {
             false,
         );
     }
+    return out;
+}
+
+/** The problems with one case's independent primary check, or when absent. */
+function primaryCheckShape(value: unknown): string[] {
+    if (value === null || value === undefined) return [];
+    if (!isRecord(value)) return ["primaryCheck must be an object or null"];
+    const out: FieldProblems = [];
+    for (const field of ["id", "script"]) {
+        fieldProblems(
+            out,
+            value,
+            field,
+            "must be a nonblank string",
+            (v) => typeof v === "string" && v.trim() !== "",
+            true,
+        );
+    }
+    fieldProblems(
+        out,
+        value,
+        "timeoutMs",
+        "must be a positive integer",
+        (v) => typeof v === "number" && Number.isInteger(v) && v > 0,
+        false,
+    );
     return out;
 }
 
@@ -1972,6 +2129,31 @@ function corpusFieldProblems(
     problems.push(...mutationPolicyShape(entry.mutationPolicy));
     problems.push(...docsCriterionShape(entry.docsCriterion));
     problems.push(...expectedDocsShape(entry.expectedDocs));
+    problems.push(...primaryCheckShape(entry.primaryCheck));
+    fieldProblems(
+        problems,
+        entry,
+        "taskPrompt",
+        "must be a nonblank string",
+        (v) => typeof v === "string" && v.trim() !== "",
+        requireFull && entry.promptKind === "task",
+    );
+    fieldProblems(
+        problems,
+        entry,
+        "permissionProfile",
+        'must be "task"',
+        (v) => v === "task",
+        false,
+    );
+    fieldProblems(
+        problems,
+        entry,
+        "docsSurface",
+        "must be a string array",
+        isStringArray,
+        false,
+    );
     fieldProblems(
         problems,
         entry,
@@ -2689,9 +2871,14 @@ function nestedDispatches(entries: ToolCall[]): NestedDispatch[] {
     return entries.flatMap(recordedDispatches);
 }
 
-/** Whether two dispatch inputs are the same recorded arguments. */
+/**
+ * Whether two dispatch inputs are the same recorded arguments. Object member
+ * order is irrelevant, including nested objects; array order, types, values,
+ * membership and missing-versus-null remain significant. Nothing is parsed
+ * or coerced.
+ */
 function sameDispatchInput(left: unknown, right: unknown): boolean {
-    return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+    return isDeepStrictEqual(left, right);
 }
 
 /** The session/message identities observed in a saved stdout trail. */
@@ -4017,16 +4204,23 @@ function boundaryOf(): BoundaryFact {
  * Prompt, rubric and fixture generation (with fingerprints)
  * ------------------------------------------------------------------ */
 
+/**
+ * The authored prompt bytes for kinds that add no destinations or framing,
+ * or null when the case uses a generated template.
+ */
+function authoredPrompt(testCase: FullTrialCase, kind: string): string | null {
+    if (kind === "diagnostic") return testCase.diagnosticPrompt ?? "";
+    if (kind === "task") return testCase.taskPrompt ?? "";
+    return null;
+}
+
 const promptFor = (testCase: FullTrialCase, options: CliOptions) => {
     // Discovery variant: the prompt names no destination and no tool — the
     // lakes are reachable only through the session's normal tool inventory
     // (the docs tool's own description points at `help`).
-    const kind =
-        testCase.promptKind ??
-        (testCase.mutationPolicy ? "recording" : "baseline");
-    // The tool-availability diagnostic is a report-only probe: its authored
-    // bytes are the whole prompt, with no destinations or state block added.
-    if (kind === "diagnostic") return testCase.diagnosticPrompt ?? "";
+    const kind = promptKindOf(testCase);
+    const authored = authoredPrompt(testCase, kind);
+    if (authored !== null) return authored;
     const destinations =
         kind === "natural" || options.discovery
             ? ""
@@ -4059,6 +4253,21 @@ Treat the evidence descriptions as supplied facts for this synthetic trial.
         kind === "recording"
             ? "Use your normal documentation guidance for this finding. For this trial, you are authorised to record documentation; changes are permitted only inside the trial's own documentation surfaces."
             : "Use your normal documentation guidance to decide how to preserve this finding. For this trial, do not change files.";
+    const answerBlock =
+        kind === "recording" && options.recordingClosing === "direct"
+            ? `Perform the authorised recording now within the permitted documentation surfaces.
+Then state:
+- The action taken.
+- The exact destination lake, or other documentation workflow.
+- Whether you created or updated one document or several.
+- A brief reason.
+- Any unresolved issue.`
+            : `State:
+- Your intended action.
+- The exact destination lake, or other documentation workflow.
+- Whether this needs one document or several.
+- A brief reason.
+- Any clarification needed before proceeding.`;
     return `We have established the following finding.
 
 Finding:
@@ -4069,12 +4278,7 @@ ${testCase.evidence}
 
 ${destinations ? `${destinations}\n\n` : ""}${closing}
 
-State:
-- Your intended action.
-- The exact destination lake, or other documentation workflow.
-- Whether this needs one document or several.
-- A brief reason.
-- Any clarification needed before proceeding.
+${answerBlock}
 
 Treat the evidence descriptions as supplied facts for this synthetic trial.
 `;
@@ -4103,6 +4307,35 @@ const SANDBOX_PERMISSIONS = [
     { action: "edit", resource: "*", effect: "deny" },
     { action: "external_directory", resource: "*", effect: "deny" },
 ];
+
+/**
+ * The opt-in practical profile for ordinary-work task cases. The trial
+ * container remains the physical boundary; the mutation policy, not this
+ * tool-capability profile, owns path authority. The allow rules follow the
+ * broad denies because OpenCode uses the last matching rule.
+ */
+const TASK_PERMISSIONS = [
+    ...SANDBOX_PERMISSIONS,
+    { action: "shell", resource: "*", effect: "allow" },
+    { action: "edit", resource: "*", effect: "allow" },
+    { action: "external_directory", resource: "*", effect: "allow" },
+];
+
+/** The permission rules a case's preparation and session carry. */
+function permissionsFor(testCase: TrialCase) {
+    return testCase.permissionProfile === "task"
+        ? TASK_PERMISSIONS
+        : SANDBOX_PERMISSIONS;
+}
+
+/**
+ * The documentation surface a case's gates compare. Legacy recording cases
+ * declared it implicitly through their whole mutation policy; task cases
+ * separate task paths from the documentation lake explicitly.
+ */
+function docsSurfaceFor(testCase: TrialCase): string[] {
+    return testCase.docsSurface ?? testCase.mutationPolicy?.allowed ?? [];
+}
 
 const WORK_FILES_E06 = {
     "package.json":
@@ -4299,7 +4532,11 @@ function generationInputsHash(
             plugin: pluginIdentity(options).contentHash,
             lockHash: pluginIdentity(options).lockHash,
             discovery: options.discovery === true,
-            permissions: SANDBOX_PERMISSIONS,
+            recordingClosing: options.recordingClosing,
+            permissions: permissionsFor(testCase),
+            ...(testCase.primaryCheck
+                ? { primaryCheckHash: primaryCheckSourceHash(testCase) }
+                : {}),
         }),
     );
 }
@@ -4320,7 +4557,7 @@ function generationOutputs(testCase: FullTrialCase, options: CliOptions) {
                         options: { lakes: lakesFor(testCase) },
                     },
                 ],
-                permissions: SANDBOX_PERMISSIONS,
+                permissions: permissionsFor(testCase),
             },
             null,
             2,
@@ -4419,6 +4656,7 @@ function writeGeneratedFixture(
                 id: testCase.id,
                 inputsHash: fingerprint,
                 generationVersion: GENERATION_VERSION,
+                recordingClosing: options.recordingClosing,
                 createdAt: new Date().toISOString(),
                 files: {
                     promptHash: sha256(outputs.promptText),
@@ -4494,6 +4732,7 @@ type GenerateOutcome =
 
 function generateAll(options: CliOptions): number {
     const selected = select(options, true);
+    assertRecordingClosingScope(selected, options);
     const rows: Array<[string, GenerateOutcome]> = [];
     let failures = 0;
     for (const testCase of selected) {
@@ -5207,7 +5446,7 @@ function recordedMutationEvidence(
         };
     }
     const kinds = recordedKinds(diff);
-    const allowed = definition.mutationPolicy?.allowed ?? [];
+    const surface = docsSurfaceFor(definition);
     const touched = [
         ...diff.added.map(
             (path: string) => [path, "added"] as [string, string],
@@ -5220,7 +5459,7 @@ function recordedMutationEvidence(
         ),
     ];
     const onSurface = (path: string): boolean =>
-        allowed.some((pattern) => globMatch(pattern, path));
+        surface.some((pattern) => globMatch(pattern, path));
     const surfaceTouched = touched.filter(([path]) => onSurface(path));
     return {
         problem: null,
@@ -5233,18 +5472,65 @@ function recordedMutationEvidence(
 }
 
 /**
+ * Whether a stale marker survives as the seeded claim it superseded. A
+ * replacement may legitimately discuss the old value (for example "setup
+ * rejects Node 22"), so literal presence alone is not evidence that the
+ * stale assertion remains. The seed defines the claim: the gate fails only
+ * when a non-empty seed line containing the marker survives verbatim. A
+ * seed without such a line keeps the literal-absence rule; semantic
+ * correctness stays with the judge.
+ * @param text The replaced document bytes.
+ * @param seedText The seeded predecessor bytes, or null when there is none.
+ * @param stale The `omits` marker.
+ */
+function staleMarkerSurvives(
+    text: string,
+    seedText: string | null,
+    stale: string,
+): boolean {
+    if (seedText === null) return text.includes(stale);
+    const claimLines = seedText
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line !== "" && line.includes(stale));
+    if (claimLines.length === 0) return text.includes(stale);
+    const present = new Set(text.split("\n").map((line) => line.trim()));
+    return claimLines.some((line) => present.has(line));
+}
+
+/**
+ * The seeded predecessor bytes for a replace target, or null when the case
+ * carries none (for example a created document).
+ * @param definition The case definition holding the seeds.
+ * @param target The surface-qualified replace target.
+ */
+function seededPredecessor(
+    definition: TrialCase,
+    target: string,
+): string | null {
+    for (const seed of definition.seeds ?? []) {
+        if (`${seed.surface}/${seed.path}` !== target) continue;
+        return typeof seed.contents === "string" ? seed.contents : null;
+    }
+    return null;
+}
+
+/**
  * The gate's content checks for one expectation-fulfilling document:
- * structural validity, required and absent content, link references.
+ * structural validity, required content, superseded seeded claims and link
+ * references.
  * @param path The document's surface-relative path.
  * @param text The recorded document bytes.
  * @param expectation The case's `expectedDocs` object.
  * @param what What the document did (created / replaced), for messages.
+ * @param seedText The seeded predecessor bytes for a replace target, or null.
  */
 function docContentProblem(
     path: string,
     text: string,
     expectation: ExpectedDocs,
     what: string,
+    seedText: string | null,
 ): string | null {
     const structural = invalidKnowledgeDocReason(text);
     if (structural !== null) {
@@ -5256,7 +5542,7 @@ function docContentProblem(
         }
     }
     for (const stale of expectation.omits ?? []) {
-        if (text.includes(stale)) {
+        if (staleMarkerSurvives(text, seedText, stale)) {
             return `${what} ${path} still carries superseded content: ${JSON.stringify(stale)}`;
         }
     }
@@ -5285,8 +5571,8 @@ const KNOWLEDGE_EXCLUDED_AREAS = ["plans", "requirements", "wiki"];
  * pattern authorises exactly the tree at `x`, so the collection rule can be
  * applied lake-relative without recomputing the trial's lake config.
  */
-function policyLakeRoots(evidence: MutationEvidence, definition: TrialCase) {
-    return (definition.mutationPolicy?.allowed ?? [])
+function policyLakeRoots(_evidence: MutationEvidence, definition: TrialCase) {
+    return docsSurfaceFor(definition)
         .filter((pattern) => pattern.endsWith("/**"))
         .map((pattern) => pattern.slice(0, -3));
 }
@@ -5407,6 +5693,7 @@ function unrelatedSurfaceChangeProblem(
 function replaceDocVerdict(
     evidence: MutationEvidence,
     expectation: ExpectedDocs,
+    definition: TrialCase,
 ): GateVerdict {
     const target = expectation.target;
     if (target === undefined) {
@@ -5428,7 +5715,13 @@ function replaceDocVerdict(
             problem: `expected replacement target ${target} is not a readable regular file`,
         };
     }
-    const content = docContentProblem(target, text, expectation, "replaced");
+    const content = docContentProblem(
+        target,
+        text,
+        expectation,
+        "replaced",
+        seededPredecessor(definition, target),
+    );
     if (content !== null) return { problem: content };
     const others = unrelatedSurfaceChangeProblem(evidence, [target]);
     if (others !== null) return { problem: others };
@@ -5436,6 +5729,40 @@ function replaceDocVerdict(
         problem: null,
         artifacts: [{ path: target, excerpt: artefactExcerpt(target, text) }],
     };
+}
+
+/**
+ * Restraint expectations: the complete documentation surface must be
+ * identical to its seed. Creations, substantive changes, deletions and
+ * replacements all fail; plugin lock housekeeping is also a failure because
+ * it is evidence a write was attempted. Preserved notes are returned as
+ * judge evidence so the judge sees the actual unchanged state.
+ */
+function restraintVerdict(
+    evidence: MutationEvidence,
+    expectation: ExpectedDocs,
+): GateVerdict {
+    if (evidence.surfaceTouched.length > 0) {
+        return {
+            problem:
+                "restraint failed: the documentation surface changed " +
+                `(${evidence.surfaceTouched
+                    .map(([path, action]) => `${action} ${path}`)
+                    .join(", ")}); a permitted but unnecessary note is a ` +
+                "behavioural restraint failure, not a policy violation",
+        };
+    }
+    const artifacts = (expectation.preserve ?? []).flatMap((path) => {
+        const text = recordedDocBytes(
+            evidence.liveDir,
+            evidence.snapshot,
+            path,
+        );
+        return text === null
+            ? []
+            : [{ path, excerpt: artefactExcerpt(path, text) }];
+    });
+    return { problem: null, artifacts };
 }
 
 /** Create-verb expectations: exactly one valid, collectable knowledge doc. */
@@ -5483,7 +5810,7 @@ function createDocVerdict(
                 "by a doc the plugin never indexes",
         };
     }
-    const content = docContentProblem(path, text, expectation, "created");
+    const content = docContentProblem(path, text, expectation, "created", null);
     if (content !== null) return { problem: content };
     const others = unrelatedSurfaceChangeProblem(evidence, [path]);
     if (others !== null) return { problem: others };
@@ -5542,9 +5869,11 @@ function expectedDocsGate(
     const preserved = preservedPathProblem(evidence, expectation);
     if (preserved !== null) return { problem: preserved, artifacts: [] };
     const verdict =
-        expectation.kind === "replace"
-            ? replaceDocVerdict(evidence, expectation)
-            : createDocVerdict(evidence, expectation, definition);
+        expectation.kind === "none"
+            ? restraintVerdict(evidence, expectation)
+            : expectation.kind === "replace"
+              ? replaceDocVerdict(evidence, expectation, definition)
+              : createDocVerdict(evidence, expectation, definition);
     return { ...verdict, artifacts: verdict.artifacts ?? [] };
 }
 
@@ -5592,6 +5921,7 @@ function runDescription(
         harnessVersion: HARNESS_VERSION,
         command,
         variant: options.discovery ? "discovery" : "destinations",
+        recordingClosing: options.recordingClosing,
         model: options.model,
         judgeModel: options.judgeModel || null,
         ...(options.condition ? { condition: options.condition } : {}),
@@ -5688,6 +6018,30 @@ function definitionConflicts(
     return [];
 }
 
+/**
+ * Conflicts in saved labels that a legacy description may legitimately omit.
+ * A present saved value is part of the experiment identity; an absent one is
+ * never relabelled by a new invocation.
+ */
+function optionalLabelConflicts(
+    existing: RunDescription,
+    description: RunDescription,
+): string[] {
+    const conflicts: string[] = [];
+    for (const field of ["condition", "recordingClosing"] as const) {
+        if (
+            existing[field] !== undefined &&
+            existing[field] !== description[field]
+        ) {
+            conflicts.push(
+                `${field}: ${JSON.stringify(existing[field])} vs ` +
+                    `${JSON.stringify(description[field])}`,
+            );
+        }
+    }
+    return conflicts;
+}
+
 function runDescriptionConflicts(
     existing: RunDescription,
     description: RunDescription,
@@ -5714,17 +6068,7 @@ function runDescriptionConflicts(
                   "orchestration",
               ];
     const conflicts = comparedFieldConflicts(existing, description, compared);
-    // A saved condition is part of the experiment's report identity. Legacy
-    // stamps without one are not relabelled by a new invocation.
-    if (
-        existing.condition !== undefined &&
-        existing.condition !== description.condition
-    ) {
-        conflicts.push(
-            `condition: ${JSON.stringify(existing.condition)} vs ` +
-                `${JSON.stringify(description.condition)}`,
-        );
-    }
+    conflicts.push(...optionalLabelConflicts(existing, description));
     // Full-corpus flows compare the authoritative definitions too, so a
     // corpus edit cannot relabel a frozen experiment.
     if (!containerFlow && !legacy) {
@@ -6501,6 +6845,113 @@ function trialInvalidReason(
     );
 }
 
+/** One independent primary-check outcome, kept distinct from task failure. */
+interface PrimaryCheckRecord {
+    id: string;
+    script: string;
+    sourceHash: string;
+    command: string;
+    args: string[];
+    timeoutMs: number;
+    startedAt: string;
+    durationMs: number;
+    status: "pass" | "fail" | "timeout" | "error";
+    exit: number | null;
+    signal: string | null;
+    reason?: string;
+    stdout: string;
+    stderr: string;
+}
+
+/** Whether a spawned checker passed, failed, timed out or could not run. */
+function primaryStatusOf(
+    result: ReturnType<typeof spawnSync>,
+): PrimaryCheckRecord["status"] {
+    if (result.error !== undefined) {
+        return (result.error as NodeJS.ErrnoException).code === "ETIMEDOUT"
+            ? "timeout"
+            : "error";
+    }
+    return result.status === 0 ? "pass" : "fail";
+}
+
+/**
+ * Run one case's pristine primary check against the completed live work tree.
+ * The checker receives (`live/work`, pristine `fixture/work`) and the
+ * harness never executes commands taken from the model's answer. A missing
+ * checker, a spawn failure and a watchdog timeout are `error`/`timeout`, not
+ * a task `fail`.
+ */
+function runPrimaryCheck(
+    testCase: TrialCase,
+    liveWork: string,
+    pristineWork: string,
+): PrimaryCheckRecord | null {
+    const check = testCase.primaryCheck;
+    if (!check) return null;
+    const timeoutMs = check.timeoutMs ?? 30_000;
+    const scriptPath = join(PRIMARY_CHECKS_DIR, check.script);
+    const startedAt = new Date().toISOString();
+    const start = Date.now();
+    const base: Omit<PrimaryCheckRecord, "status" | "exit" | "signal"> = {
+        id: check.id,
+        script: check.script,
+        sourceHash: primaryCheckSourceHash(testCase),
+        command: process.execPath,
+        args: [scriptPath, liveWork, pristineWork],
+        timeoutMs,
+        startedAt,
+        durationMs: 0,
+        stdout: "",
+        stderr: "",
+    };
+    if (!existsSync(scriptPath)) {
+        return {
+            ...base,
+            status: "error",
+            exit: null,
+            signal: null,
+            reason: `primary checker ${check.script} is missing`,
+        };
+    }
+    const result = spawnSync(
+        process.execPath,
+        [scriptPath, liveWork, pristineWork],
+        {
+            cwd: liveWork,
+            encoding: "utf8",
+            timeout: timeoutMs,
+            maxBuffer: 4 * 1024 * 1024,
+        },
+    );
+    return {
+        ...base,
+        durationMs: Date.now() - start,
+        status: primaryStatusOf(result),
+        exit: result.status,
+        signal: result.signal,
+        ...(result.error === undefined ? {} : { reason: String(result.error) }),
+        stdout: (result.stdout ?? "").slice(0, 16_000),
+        stderr: (result.stderr ?? "").slice(0, 16_000),
+    };
+}
+
+/** Run and persist a case's optional primary-check record. */
+function recordPrimaryCheck(
+    testCase: TrialCase,
+    resultDir: string,
+    liveWork: string,
+    pristineWork: string,
+) {
+    const record = runPrimaryCheck(testCase, liveWork, pristineWork);
+    if (record !== null) {
+        write(
+            join(resultDir, "primary-check.json"),
+            JSON.stringify(record, null, 2) + "\n",
+        );
+    }
+}
+
 /**
  * Persist one run's evidence into its result directory: streams, exit
  * status, writes report, answer, tool trail and the run meta record.
@@ -6726,6 +7177,15 @@ async function runOne(
         afterSnapshot,
         invocation,
     );
+    // The independent primary check runs after the workhorse exits, against
+    // the completed live tree and the pristine fixture copy. Its record is
+    // campaign evidence and judge input, never a model-supplied command.
+    recordPrimaryCheck(
+        testCase,
+        resultDir,
+        join(live, "work"),
+        join(caseFixture, "work"),
+    );
     // The rubric stays out of the sandbox until the answer exists. The same
     // applies to case.json, which carries the rubric's expectations.
     copyCaseEvidence(options, testCase, resultDir);
@@ -6751,7 +7211,32 @@ async function runOne(
  * Judging
  * ------------------------------------------------------------------ */
 
-function judgePrompt(resultDir: string, artifactLines: string[]) {
+/** The independent primary result rendered for the judge, or empty. */
+function primaryCheckEvidence(resultDir: string): string {
+    const path = join(resultDir, "primary-check.json");
+    if (!existsSync(path)) return "";
+    const at = jsonAt(path);
+    if (at.kind !== "value" || !isRecord(at.value)) {
+        return "\n\nIndependent primary check: recorded but unreadable.";
+    }
+    const record = at.value;
+    return (
+        "\n\nIndependent primary check (run by the harness after the session " +
+        "with pristine checker definitions, outside the workhorse's control):\n" +
+        `- checker: ${String(record.id)} (${String(record.script)})\n` +
+        `- sourceHash: ${String(record.sourceHash)}\n` +
+        `- status: ${String(record.status)}\n` +
+        `- exit: ${String(record.exit)}\n` +
+        `- stdout:\n${String(record.stdout ?? "")}\n` +
+        `- stderr:\n${String(record.stderr ?? "")}`
+    );
+}
+
+function judgePrompt(
+    resultDir: string,
+    artifactLines: string[],
+    testCase?: TrialCase,
+) {
     const rubric = readFileSync(join(resultDir, "rubric.md"), "utf8");
     const answer = existsSync(join(resultDir, "final.md"))
         ? readFileSync(join(resultDir, "final.md"), "utf8")
@@ -6759,7 +7244,21 @@ function judgePrompt(resultDir: string, artifactLines: string[]) {
     const writes = existsSync(join(resultDir, "writes.txt"))
         ? readFileSync(join(resultDir, "writes.txt"), "utf8")
         : "(unknown)";
-    return `Score one placement-guidance trial against its rubric. Judge only the stated intended action; a trial is not required to write a file.
+    const taskTrial = testCase?.promptKind === "task";
+    const primary = primaryCheckEvidence(resultDir);
+    const opening = taskTrial
+        ? "Score one automatic-notetaking trial against its rubric. The workhorse " +
+          "was doing ordinary practical work, not answering a documentation request. " +
+          "Judge the completed documentation outcome: a useful required note or " +
+          "correction, or appropriate restraint where no durable finding exists. " +
+          "Primary-task success is measured separately by the independent check; " +
+          "do not treat its failure as a documentation failure, but do not excuse a " +
+          "broken practical task."
+        : "Score one placement-guidance trial against its rubric. Judge only the stated intended action; a trial is not required to write a file.";
+    const artifactLabel = taskTrial
+        ? "Relevant resulting document state (verified; excerpts may be truncated — the recorded live tree is authoritative):"
+        : "Verified recorded artefacts (the deterministic structural gate already passed on these; excerpts may be truncated — the recorded live tree is authoritative):";
+    return `${opening}
 
 Return ONE JSON object and nothing else:
 {"verdict":"pass"|"fail","destination":"...","documents":"one"|"several"|"none","clarification":"yes"|"no","reason":"..."}
@@ -6773,7 +7272,7 @@ Trial answer:
 ${answer}
 
 Files changed during the trial:
-${writes}${artifactLines.length > 0 ? `\n\nVerified recorded artefacts (the deterministic structural gate already passed on these; excerpts may be truncated — the recorded live tree is authoritative):\n${artifactLines.join("\n")}` : ""}`;
+${writes}${primary}${artifactLines.length > 0 ? `\n\n${artifactLabel}\n${artifactLines.join("\n")}` : ""}`;
 }
 
 function copyRubric(options: CliOptions, resultDir: string, caseId: string) {
@@ -7432,6 +7931,7 @@ async function judgeOne(
             (artifact) =>
                 `- **${artifact.path}**\n\n\`\`\`\n${artifact.excerpt}\n\`\`\``,
         ),
+        testCase,
     );
     const judgePromptHash = sha256(prompt);
     const identities = { answerHash, rubricHash, judgePromptHash, judgeModel };
@@ -8027,6 +8527,7 @@ async function runSelected(
     stamp: string,
     selected: TrialCase[],
 ): Promise<number> {
+    assertRecordingClosingScope(selected, options);
     // A run never generates: it validates the prepared generation and
     // refuses stale or missing shared inputs instead (F03 contract).
     const corpusComplete = selectedAreFullDefinitions(selected);
@@ -8143,6 +8644,7 @@ async function main() {
     if (command === "describe") {
         if (!options.stamp) usage("describe requires --stamp NAME");
         const selected = select(options, true);
+        assertRecordingClosingScope(selected, options);
         return ensureRunDescription(
             options,
             options.stamp,

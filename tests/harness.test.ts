@@ -45,6 +45,7 @@ interface GenerateOptions {
     ids?: string[];
     force?: boolean;
     model?: string;
+    recordingClosing?: "original" | "direct";
     env?: Env;
 }
 
@@ -186,6 +187,11 @@ const FAKE_OPENCODE_LINES = [
     "done",
     'case "$title" in',
     "  placement-judge-*)",
+    '    if [ -n "$FAKE_JUDGE_PROMPT_OUT" ]; then',
+    '      last=""',
+    '      for a in "$@"; do last="$a"; done',
+    '      printf "%s" "$last" > "$FAKE_JUDGE_PROMPT_OUT"',
+    "    fi",
     '    [ -n "$FAKE_JUDGE_OUT" ] && cat "$FAKE_JUDGE_OUT"',
     '    [ -n "$FAKE_JUDGE_ERR" ] && cat "$FAKE_JUDGE_ERR" >&2',
     '    [ -n "$FAKE_JUDGE_HOOK" ] && sh "$FAKE_JUDGE_HOOK"',
@@ -310,6 +316,9 @@ function generate(
     ];
     if (options.force === true) argv.push("--force");
     if (options.model) argv.push("--model", options.model);
+    if (options.recordingClosing) {
+        argv.push("--recording-closing", options.recordingClosing);
+    }
     const result = runHarness(root, fake, argv, options.env);
     return { paths, corpusPath, result };
 }
@@ -4499,7 +4508,7 @@ const CORPUS_SHAPE_ROWS: Array<{
                 expectedDocs: { kind: "merge" },
             },
         ],
-        problems: [/kind must be "create" or "replace"/],
+        problems: [/kind must be "create", "replace" or "none"/],
     },
     {
         label: "the unused singleDoc expectation flag",
@@ -5018,6 +5027,233 @@ test("C03: a v1 record with malformed present fields is refused, not bypassed by
     assert.match(
         summary.stderr,
         /variant must be "destinations" or "discovery"/,
+    );
+    rmRoot(root);
+});
+
+/* ------------------------------------------------------------------ *
+ * RECORDING closing-block variant
+ * ------------------------------------------------------------------ */
+
+const TRIAL_CORPUS = join(HERE, "fixtures", "trial-cases.json");
+
+const recordCase = (id: string) => {
+    const cases = readJson(TRIAL_CORPUS) as Array<{ id: string }>;
+    const entry = cases.find((candidate) => candidate.id === id);
+    assert.ok(entry, `the checked-in corpus must carry ${id}`);
+    return entry;
+};
+
+const ORIGINAL_RECORDING_BLOCK = `State:
+- Your intended action.
+- The exact destination lake, or other documentation workflow.
+- Whether this needs one document or several.
+- A brief reason.
+- Any clarification needed before proceeding.`;
+
+const DIRECT_RECORDING_BLOCK = `Perform the authorised recording now within the permitted documentation surfaces.
+Then state:
+- The action taken.
+- The exact destination lake, or other documentation workflow.
+- Whether you created or updated one document or several.
+- A brief reason.
+- Any unresolved issue.`;
+
+test("RECORDING: the default prompt keeps the original closing block byte-for-byte", () => {
+    // Arrange: one default generation and one explicit "original" generation.
+    const defaultRoot = newRoot("recording-default");
+    const explicitRoot = newRoot("recording-explicit-original");
+    const defaultFake = writeFakeOpencode(defaultRoot);
+    const explicitFake = writeFakeOpencode(explicitRoot);
+
+    // Act: generate W01 both ways.
+    const byDefault = generate(defaultRoot, defaultFake, [recordCase("W01")]);
+    const explicit = generate(explicitRoot, explicitFake, [recordCase("W01")], {
+        recordingClosing: "original",
+    });
+
+    // Assert: both are the frozen baseline bytes, with the original block
+    // exactly once and no direct instruction.
+    assert.equal(byDefault.result.status, 0, byDefault.result.stderr);
+    assert.equal(explicit.result.status, 0, explicit.result.stderr);
+    const defaultPrompt = readFileSync(
+        join(byDefault.paths.prompts, "W01.md"),
+        "utf8",
+    );
+    const explicitPrompt = readFileSync(
+        join(explicit.paths.prompts, "W01.md"),
+        "utf8",
+    );
+    assert.equal(explicitPrompt, defaultPrompt);
+    assert.equal(
+        defaultPrompt.split(ORIGINAL_RECORDING_BLOCK).length,
+        2,
+        "the original closing block is present exactly once",
+    );
+    assert.equal(
+        defaultPrompt.includes("Perform the authorised recording now"),
+        false,
+    );
+    rmRoot(defaultRoot);
+    rmRoot(explicitRoot);
+});
+
+test("RECORDING: --recording-closing direct differs by exactly the closing block", () => {
+    for (const id of ["W01", "W02"]) {
+        // Arrange: the same checked-in case generated under both variants.
+        const originalRoot = newRoot(`recording-original-${id}`);
+        const directRoot = newRoot(`recording-direct-${id}`);
+        const originalFake = writeFakeOpencode(originalRoot);
+        const directFake = writeFakeOpencode(directRoot);
+
+        // Act: generate both arms.
+        const original = generate(originalRoot, originalFake, [recordCase(id)]);
+        const direct = generate(directRoot, directFake, [recordCase(id)], {
+            recordingClosing: "direct",
+        });
+
+        // Assert: the direct prompt is the original with exactly that block
+        // replaced; nothing else moved.
+        assert.equal(original.result.status, 0, original.result.stderr);
+        assert.equal(direct.result.status, 0, direct.result.stderr);
+        const originalPrompt = readFileSync(
+            join(original.paths.prompts, `${id}.md`),
+            "utf8",
+        );
+        const directPrompt = readFileSync(
+            join(direct.paths.prompts, `${id}.md`),
+            "utf8",
+        );
+        assert.equal(
+            directPrompt,
+            originalPrompt.replace(
+                ORIGINAL_RECORDING_BLOCK,
+                DIRECT_RECORDING_BLOCK,
+            ),
+        );
+        assert.notEqual(directPrompt, originalPrompt);
+        rmRoot(originalRoot);
+        rmRoot(directRoot);
+    }
+});
+
+test("RECORDING: a generation from the other variant refuses to run", () => {
+    const pairs = [
+        ["original", "direct"],
+        ["direct", "original"],
+    ] as const;
+    for (const [generated, attempted] of pairs) {
+        // Arrange: a fixture generated under one variant.
+        const root = newRoot(`recording-mismatch-${generated}-${attempted}`);
+        const fake = writeFakeOpencode(root);
+        const generatedRun = generate(root, fake, [recordCase("W01")], {
+            recordingClosing: generated,
+        });
+        assert.equal(generatedRun.result.status, 0, generatedRun.result.stderr);
+
+        // Act: run it under the other variant.
+        const run = runHarness(root, fake, [
+            "run",
+            "W01",
+            "--stamp",
+            "s1",
+            `--recording-closing`,
+            attempted,
+            ...commandArgs(generatedRun.paths),
+        ]);
+
+        // Assert: refused as a changed generation, never silently switched.
+        assert.notEqual(run.status, 0);
+        assert.match(
+            run.stderr,
+            /generation inputs changed since this fixture/,
+        );
+        assert.match(run.stderr, /variant/);
+        rmRoot(root);
+    }
+});
+
+test("RECORDING: the frozen run description records and enforces the variant", () => {
+    // Arrange: a direct generation and its frozen description.
+    const root = newRoot("recording-describe-variant");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [recordCase("W01")], {
+        recordingClosing: "direct",
+    });
+    const described = runHarness(root, fake, [
+        "describe",
+        "--stamp",
+        "s1",
+        "--recording-closing",
+        "direct",
+        ...commandArgs(paths),
+    ]);
+    assert.equal(described.status, 0, described.stderr);
+    const runJson = readJson(join(paths.results, "s1", "run.json")) as {
+        recordingClosing?: string;
+        variant?: string;
+    };
+    assert.equal(runJson.recordingClosing, "direct");
+    assert.equal(runJson.variant, "destinations");
+
+    // Act: re-describe the same stamp under the other variant.
+    const conflict = runHarness(root, fake, [
+        "describe",
+        "--stamp",
+        "s1",
+        "--recording-closing",
+        "original",
+        ...commandArgs(paths),
+    ]);
+
+    // Assert: the saved experiment identity refuses the relabel.
+    assert.notEqual(conflict.status, 0);
+    assert.match(conflict.stderr, /recordingClosing: "direct" vs "original"/);
+    rmRoot(root);
+});
+
+test("RECORDING: --recording-closing direct refuses non-recording and diagnostic cases", () => {
+    const cases = [baselineCase("T01"), diagnosticCase("A01")];
+    for (const testCase of cases) {
+        // Arrange: a case whose prompt the variant does not describe.
+        const root = newRoot(`recording-scope-${testCase.id}`);
+        const fake = writeFakeOpencode(root);
+
+        // Act: ask for the recording variant.
+        const run = generate(root, fake, [testCase], {
+            recordingClosing: "direct",
+        });
+
+        // Assert: an explicit refusal naming the case, never a silent ignore.
+        assert.equal(run.result.status, 2, run.result.stderr);
+        assert.match(
+            run.result.stderr,
+            /--recording-closing direct is only supported for recording cases/,
+        );
+        assert.match(run.result.stderr, new RegExp(testCase.id));
+        assert.equal(
+            existsSync(join(run.paths.prompts, `${testCase.id}.md`)),
+            false,
+        );
+        rmRoot(root);
+    }
+});
+
+test("RECORDING: an unknown closing variant refuses", () => {
+    // Arrange: a valid recording case.
+    const root = newRoot("recording-unknown-variant");
+    const fake = writeFakeOpencode(root);
+
+    // Act: ask for an unsupported value.
+    const run = generate(root, fake, [recordCase("W01")], {
+        recordingClosing: "sometimes" as "direct",
+    });
+
+    // Assert: the CLI refuses the value explicitly.
+    assert.equal(run.result.status, 2, run.result.stderr);
+    assert.match(
+        run.result.stderr,
+        /--recording-closing must be "original" or "direct"/,
     );
     rmRoot(root);
 });
@@ -6674,6 +6910,948 @@ test("CONTROL: wrapper-only read evidence never satisfies the declared criterion
 });
 
 /* ------------------------------------------------------------------ *
+ * Automatic notetaking — permissions, restraint, primary checks, evidence
+ * ------------------------------------------------------------------ */
+
+const AUTONOTE_CORPUS = join(HERE, "fixtures", "trial-cases.json");
+
+/** The exact legacy sandbox deny profile, kept for old cases. */
+const LEGACY_SANDBOX_PERMISSIONS = [
+    { action: "shell", resource: "*", effect: "deny" },
+    { action: "edit", resource: "*", effect: "deny" },
+    { action: "external_directory", resource: "*", effect: "deny" },
+];
+
+/** A structurally valid seeded knowledge document. */
+const seededDoc = (summary: string, facts: string) =>
+    "---\nArea: kb\nKeywords: fixture, seeded\nSummary: " +
+    summary +
+    "\n---\n\n# Seeded\n\n### Facts\n\n" +
+    facts +
+    "\n";
+
+/** A task-shaped case sharing the opt-in practical capability profile. */
+function taskCase(id: string, extra: Record<string, unknown> = {}) {
+    return {
+        ...baselineCase(id),
+        destinations: [
+            {
+                name: "docs",
+                class: "repo",
+                description: "This repository's decisions and traps.",
+            },
+        ],
+        promptKind: "task",
+        taskPrompt: "Do the synthetic practical task.",
+        permissionProfile: "task",
+        seeds: [
+            {
+                surface: "lakes",
+                path: "docs/kb/existing.md",
+                contents: seededDoc(
+                    "A seeded fixture document.",
+                    "- prior knowledge that must survive.",
+                ),
+            },
+        ],
+        mutationPolicy: { allowed: ["work/src/**", "lakes/docs/**"] },
+        docsSurface: ["lakes/docs/**"],
+        ...extra,
+    };
+}
+
+const noteCase = (id: string) => {
+    const cases = readJson(AUTONOTE_CORPUS) as Array<Record<string, unknown>>;
+    const found = cases.find((entry) => entry.id === id);
+    assert.ok(found, `the checked-in corpus must carry ${id}`);
+    return found;
+};
+
+const validNote = (summary: string, facts: string) =>
+    "---\nArea: ops\nKeywords: retry, duplicate\nSummary: " +
+    summary +
+    "\n---\n\n# Recorded note\n\n### Facts\n\n" +
+    facts +
+    "\n";
+
+const hook = (root: string, name: string, lines: string[]) =>
+    file(root, name, ["#!/bin/sh", ...lines].join("\n") + "\n");
+
+test("NOTETAKING: legacy cases keep the exact sandbox deny profile", () => {
+    // Arrange: an old baseline case under the current harness.
+    const root = newRoot("autonote-legacy-profile");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [baselineCase("T01")]);
+
+    // Act: read the generated project config.
+    const config = readJson(
+        join(paths.fixtures, "T01", "work", "opencode.json"),
+    );
+
+    // Assert: no capability was added to a legacy case.
+    assert.deepEqual(config.permissions, LEGACY_SANDBOX_PERMISSIONS);
+    rmRoot(root);
+});
+
+test("NOTETAKING: the task profile enables shell/edit but policy still rejects a stray write", () => {
+    // Arrange: one opt-in task case, plus a hook that writes outside policy.
+    const root = newRoot("autonote-task-profile");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [
+        taskCase("T01", {
+            primaryCheck: { id: "pass", script: "probe-pass.mjs" },
+        }),
+    ]);
+    const config = readJson(
+        join(paths.fixtures, "T01", "work", "opencode.json"),
+    );
+
+    // Assert: the needed capabilities are allowed after the legacy denies.
+    assert.deepEqual(
+        config.permissions.slice(0, 3),
+        LEGACY_SANDBOX_PERMISSIONS,
+    );
+    for (const action of ["shell", "edit", "external_directory"]) {
+        assert.ok(
+            config.permissions.some(
+                (rule: Record<string, string>) =>
+                    rule.action === action && rule.effect === "allow",
+            ),
+            `${action} must be allowed for the task profile`,
+        );
+    }
+
+    // Act: a write outside the policy's declared surfaces.
+    const stray = hook(root, "stray.sh", ["echo stray > stray.txt"]);
+    const run = runHarness(
+        root,
+        fake,
+        ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        {
+            FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()),
+            FAKE_TRIAL_HOOK: stray,
+        },
+    );
+
+    // Assert: enabling a tool did not disable the mutation policy.
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(
+        readFileSync(join(paths.results, "s1", "T01", "writes.txt"), "utf8"),
+        /violation: added: work\/stray\.txt/,
+    );
+    rmRoot(root);
+});
+
+test("NOTETAKING: restraint rejects created, modified, removed and housekeeping docs", () => {
+    // Arrange: one restraint case with an unchanged seeded note.
+    const root = newRoot("autonote-restraint");
+    const fake = writeFakeOpencode(root);
+    const restraint = taskCase("T01", {
+        expectedDocs: {
+            kind: "none",
+            preserve: ["lakes/docs/kb/existing.md"],
+        },
+    });
+    const { paths } = generate(root, fake, [restraint]);
+    const answer = file(root, "trial.jsonl", ANSWER_JSONL());
+
+    const runAndJudge = (stamp: string, lines: string[]) => {
+        const run = runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", stamp, ...commandArgs(paths)],
+            {
+                FAKE_TRIAL_OUT: answer,
+                ...(lines.length > 0
+                    ? { FAKE_TRIAL_HOOK: hook(root, `${stamp}.sh`, lines) }
+                    : {}),
+            },
+        );
+        assert.equal(run.status, 0, run.stderr);
+        const judge = runHarness(
+            root,
+            fake,
+            ["judge", "T01", "--stamp", stamp, ...commandArgs(paths)],
+            { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+        );
+        return {
+            judge,
+            verdict: readJson(
+                join(paths.results, stamp, "T01", "verdict.json"),
+            ),
+        };
+    };
+
+    // Act + assert: an unchanged lake passes.
+    const unchanged = runAndJudge("unchanged", []);
+    assert.equal(unchanged.judge.status, 0, unchanged.judge.stderr);
+    assert.equal(unchanged.verdict.verdict, "pass");
+
+    const mutations: Array<[string, string[], RegExp]> = [
+        [
+            "created",
+            [
+                "mkdir -p ../lakes/docs/kb",
+                "printf '%s\\n' '" +
+                    validNote("A new note.", "- a new fact.").replace(
+                        /'/g,
+                        "'\\''",
+                    ) +
+                    "' > ../lakes/docs/kb/new.md",
+            ],
+            /restraint|preserved|documentation mutation/i,
+        ],
+        [
+            "modified",
+            ["echo '- changed' >> ../lakes/docs/kb/existing.md"],
+            /restraint|preserved|documentation mutation/i,
+        ],
+        [
+            "removed",
+            ["rm ../lakes/docs/kb/existing.md"],
+            /restraint|preserved|documentation mutation/i,
+        ],
+        [
+            "housekeeping",
+            ["mkdir -p ../lakes/docs/kb/.docs-lock"],
+            /restraint|preserved|documentation mutation/i,
+        ],
+    ];
+    for (const [stamp, lines, expected] of mutations) {
+        const outcome = runAndJudge(stamp, lines);
+        assert.notEqual(outcome.judge.status, 0, `${stamp} must be blocked`);
+        assert.equal(outcome.verdict.verdict, "invalid");
+        assert.match(outcome.verdict.reason, expected);
+        assert.doesNotMatch(outcome.verdict.reason, /outside its policy/);
+    }
+    rmRoot(root);
+});
+
+test("NOTETAKING: positive create accepts one justified note and rejects duplicates or missing facts", () => {
+    // Arrange: a create case that requires two durable facts.
+    const root = newRoot("autonote-create");
+    const fake = writeFakeOpencode(root);
+    const createCase = taskCase("T01", {
+        expectedDocs: { kind: "create", retains: ["retry", "duplicate"] },
+    });
+    const { paths } = generate(root, fake, [createCase]);
+    const answer = file(root, "trial.jsonl", ANSWER_JSONL());
+
+    const runAndJudge = (stamp: string, lines: string[]) => {
+        assert.equal(
+            runHarness(
+                root,
+                fake,
+                ["run", "T01", "--stamp", stamp, ...commandArgs(paths)],
+                {
+                    FAKE_TRIAL_OUT: answer,
+                    FAKE_TRIAL_HOOK: hook(root, `${stamp}.sh`, lines),
+                },
+            ).status,
+            0,
+        );
+        const judge = runHarness(
+            root,
+            fake,
+            ["judge", "T01", "--stamp", stamp, ...commandArgs(paths)],
+            { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+        );
+        return {
+            judge,
+            verdict: readJson(
+                join(paths.results, stamp, "T01", "verdict.json"),
+            ),
+        };
+    };
+
+    const good = validNote(
+        "The retry boundary and duplicate handling.",
+        "- Three retries; duplicate event ids are ignored.",
+    );
+    const write = (path: string, body: string) =>
+        "mkdir -p ../lakes/docs/kb && printf '%s\\n' '" +
+        body.replace(/'/g, "'\\''") +
+        "' > " +
+        path;
+
+    // Act + assert: one useful note passes.
+    const one = runAndJudge("one", [write("../lakes/docs/kb/retry.md", good)]);
+    assert.equal(one.judge.status, 0, one.judge.stderr);
+    assert.equal(one.verdict.verdict, "pass");
+
+    // A missing required fact fails the deterministic gate.
+    const thin = runAndJudge("thin", [
+        write(
+            "../lakes/docs/kb/retry.md",
+            seededDoc("A note.", "- Three retries."),
+        ),
+    ]);
+    assert.notEqual(thin.judge.status, 0);
+    assert.match(thin.verdict.reason, /lost required content|duplicate/);
+
+    // Two competing notes fail the single-document rule.
+    const duplicate = runAndJudge("duplicate", [
+        write("../lakes/docs/kb/retry.md", good),
+        write("../lakes/docs/kb/retry-copy.md", good),
+    ]);
+    assert.notEqual(duplicate.judge.status, 0);
+    assert.match(duplicate.verdict.reason, /several docs created/);
+    rmRoot(root);
+});
+
+test("NOTETAKING: update requires in-place correction, retained facts and no duplicate", () => {
+    // Arrange: a replacement case with a stale version and a preserved note.
+    const root = newRoot("autonote-replace");
+    const fake = writeFakeOpencode(root);
+    const update = taskCase("T01", {
+        seeds: [
+            {
+                surface: "lakes",
+                path: "docs/setup/node-version.md",
+                contents: seededDoc(
+                    "This repository uses Node 22.",
+                    "- This repository uses Node 22.\n- CI reads .nvmrc.",
+                ),
+            },
+            {
+                surface: "lakes",
+                path: "docs/ops/release.md",
+                contents: seededDoc("Release steps.", "- Tag then publish."),
+            },
+        ],
+        expectedDocs: {
+            kind: "replace",
+            target: "lakes/docs/setup/node-version.md",
+            retains: ["nvm", "CI"],
+            omits: ["Node 22"],
+            preserve: ["lakes/docs/ops/release.md"],
+        },
+    });
+    const { paths } = generate(root, fake, [update]);
+    const answer = file(root, "trial.jsonl", ANSWER_JSONL());
+
+    const runAndJudge = (stamp: string, lines: string[]) => {
+        assert.equal(
+            runHarness(
+                root,
+                fake,
+                ["run", "T01", "--stamp", stamp, ...commandArgs(paths)],
+                {
+                    FAKE_TRIAL_OUT: answer,
+                    FAKE_TRIAL_HOOK: hook(root, `${stamp}.sh`, lines),
+                },
+            ).status,
+            0,
+        );
+        const judge = runHarness(
+            root,
+            fake,
+            ["judge", "T01", "--stamp", stamp, ...commandArgs(paths)],
+            { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+        );
+        return {
+            judge,
+            verdict: readJson(
+                join(paths.results, stamp, "T01", "verdict.json"),
+            ),
+        };
+    };
+
+    const corrected =
+        "---\nArea: Setup\nKeywords: node, version, nvm\nSummary: This repository uses Node 24.\n---\n\n# Node version\n\n### Facts\n\n- Use nvm.\n- This repository uses Node 24.\n- CI reads .nvmrc.\n";
+    const writeTarget = (body: string) =>
+        "printf '%s\\n' '" +
+        body.replace(/'/g, "'\\''") +
+        "' > ../lakes/docs/setup/node-version.md";
+
+    // Act + assert: in-place correction passes.
+    const good = runAndJudge("good", [writeTarget(corrected)]);
+    assert.equal(good.judge.status, 0, good.judge.stderr);
+    assert.equal(good.verdict.verdict, "pass");
+
+    // Leaving the stale version fails.
+    const stale = runAndJudge("stale", [
+        writeTarget(corrected.replace("Node 24", "Node 22")),
+    ]);
+    assert.notEqual(stale.judge.status, 0);
+    assert.match(stale.verdict.reason, /superseded content|Node 22/);
+
+    // A competing new note instead of the update fails.
+    const duplicate = runAndJudge("duplicate", [
+        "mkdir -p ../lakes/docs/setup",
+        "printf '%s\\n' '" +
+            corrected.replace(/'/g, "'\\''") +
+            "' > ../lakes/docs/setup/node-24.md",
+    ]);
+    assert.notEqual(duplicate.judge.status, 0);
+    assert.match(duplicate.verdict.reason, /replacement .* did not happen/);
+    rmRoot(root);
+});
+
+test("NOTETAKING: replacement eligibility accepts a corrective mention of the superseded value", () => {
+    // Arrange: a seeded note that asserts Node 22 as the current version.
+    const root = newRoot("autonote-corrective-omits");
+    const fake = writeFakeOpencode(root);
+    const seed = seededDoc(
+        "This repository uses Node 22; setup enforces it.",
+        "- Use nvm.\n- This repository uses Node 22.\n- CI reads `.nvmrc`.",
+    );
+    const update = taskCase("T01", {
+        seeds: [
+            {
+                surface: "lakes",
+                path: "docs/setup/node-version.md",
+                contents: seed,
+            },
+            {
+                surface: "lakes",
+                path: "docs/ops/release.md",
+                contents: seededDoc("Release steps.", "- Tag then publish."),
+            },
+        ],
+        expectedDocs: {
+            kind: "replace",
+            target: "lakes/docs/setup/node-version.md",
+            retains: ["nvm", "CI"],
+            omits: ["Node 22"],
+            preserve: ["lakes/docs/ops/release.md"],
+        },
+    });
+    const { paths } = generate(root, fake, [update]);
+    const answer = file(root, "trial.jsonl", ANSWER_JSONL());
+
+    const runAndJudge = (
+        stamp: string,
+        lines: string[],
+        judged: string = VERDICT_JSONL(),
+    ) => {
+        assert.equal(
+            runHarness(
+                root,
+                fake,
+                ["run", "T01", "--stamp", stamp, ...commandArgs(paths)],
+                {
+                    FAKE_TRIAL_OUT: answer,
+                    FAKE_TRIAL_HOOK: hook(root, `${stamp}.sh`, lines),
+                },
+            ).status,
+            0,
+        );
+        const judge = runHarness(
+            root,
+            fake,
+            ["judge", "T01", "--stamp", stamp, ...commandArgs(paths)],
+            { FAKE_JUDGE_OUT: file(root, "judge.jsonl", judged) },
+        );
+        return {
+            judge,
+            verdict: readJson(
+                join(paths.results, stamp, "T01", "verdict.json"),
+            ),
+        };
+    };
+
+    const note = (summary: string, facts: string) =>
+        "---\nArea: Setup\nKeywords: node, version, nvm\nSummary: " +
+        summary +
+        "\n---\n\n# Node version\n\n### Facts\n\n" +
+        facts +
+        "\n";
+    const writeTarget = (body: string) =>
+        "printf '%s\\n' '" +
+        body.replace(/'/g, "'\\''") +
+        "' > ../lakes/docs/setup/node-version.md";
+
+    // Act + assert: the old version discussed as rejected is eligible.
+    const corrective = runAndJudge("corrective", [
+        writeTarget(
+            note(
+                "This repository requires Node 24; setup enforces the minimum.",
+                "- Use nvm.\n" +
+                    "- This repository requires Node 24.\n" +
+                    "- `npm run setup` rejects Node versions older than 24, including Node 22.\n" +
+                    "- CI reads `.nvmrc`.",
+            ),
+        ),
+    ]);
+    assert.equal(corrective.judge.status, 0, corrective.judge.stderr);
+    assert.equal(corrective.verdict.verdict, "pass");
+
+    // A quoted historical statement is a corrected discussion, not a stale
+    // assertion: deterministic eligibility passes and the judge decides.
+    const quoted = runAndJudge("quoted", [
+        writeTarget(
+            note(
+                "This repository requires Node 24.",
+                "- Use nvm.\n" +
+                    "- Previously: This repository uses Node 22.\n" +
+                    "- CI reads `.nvmrc`.",
+            ),
+        ),
+    ]);
+    assert.equal(quoted.judge.status, 0, quoted.judge.stderr);
+    assert.equal(quoted.verdict.verdict, "pass");
+
+    // The seeded stale assertion surviving verbatim still fails.
+    const stale = runAndJudge("stale", [
+        writeTarget(
+            seed.replace(
+                "- CI reads `.nvmrc`.",
+                "- CI reads `.nvmrc`.\n- Latest supported version is 24.",
+            ),
+        ),
+    ]);
+    assert.notEqual(stale.judge.status, 0);
+    assert.equal(stale.verdict.verdict, "invalid");
+    assert.match(stale.verdict.reason, /superseded content/);
+
+    // A reworded stale claim passes determinism and is failed by the judge,
+    // proving eligibility is not semantic acceptance.
+    const reworded = runAndJudge(
+        "reworded",
+        [
+            writeTarget(
+                note(
+                    "This repository uses Node 24.",
+                    "- Use nvm.\n- The repository is on Node 22.\n- CI reads `.nvmrc`.",
+                ),
+            ),
+        ],
+        VERDICT_JSONL({ verdict: "fail" }),
+    );
+    assert.notEqual(reworded.judge.status, 0);
+    assert.equal(reworded.verdict.verdict, "fail");
+
+    // A byte-identical replacement never satisfies a required in-place update.
+    const identical = runAndJudge("identical", [writeTarget(seed)]);
+    assert.notEqual(identical.judge.status, 0);
+    assert.equal(identical.verdict.verdict, "invalid");
+    assert.match(identical.verdict.reason, /did not happen|superseded content/);
+
+    rmRoot(root);
+});
+
+test("NOTETAKING: primary checks distinguish pass, task failure, timeout and runner error", () => {
+    // Arrange: four task cases that differ only by their pristine checker.
+    const root = newRoot("autonote-primary-outcomes");
+    const fake = writeFakeOpencode(root);
+    const cases = [
+        ["PASS", { id: "pass", script: "probe-pass.mjs" }],
+        ["FAIL", { id: "fail", script: "probe-fail.mjs" }],
+        [
+            "TIMEOUT",
+            { id: "timeout", script: "probe-timeout.mjs", timeoutMs: 200 },
+        ],
+        ["ERROR", { id: "error", script: "probe-missing.mjs" }],
+    ] as const;
+    const { paths } = generate(
+        root,
+        fake,
+        cases.map(([id, check]) => taskCase(id, { primaryCheck: check })),
+    );
+
+    // Act + assert: each outcome is recorded distinctly, with its identity.
+    for (const [id, check] of cases) {
+        const run = runHarness(
+            root,
+            fake,
+            ["run", id, "--stamp", `s1-${id}`, ...commandArgs(paths)],
+            { FAKE_TRIAL_OUT: file(root, `${id}.jsonl`, ANSWER_JSONL()) },
+        );
+        assert.equal(run.status, 0, run.stderr);
+        const record = readJson(
+            join(paths.results, `s1-${id}`, id, "primary-check.json"),
+        );
+        const expected =
+            id === "PASS"
+                ? "pass"
+                : id === "TIMEOUT"
+                  ? "timeout"
+                  : id === "ERROR"
+                    ? "error"
+                    : "fail";
+        assert.equal(record.status, expected, `${id}: ${record.reason ?? ""}`);
+        assert.equal(record.id, check.id);
+        assert.match(record.sourceHash, /^[0-9a-f]{64}$|^missing$/);
+    }
+    rmRoot(root);
+});
+
+test("NOTETAKING: a model-edited visible test cannot satisfy the pristine primary check", () => {
+    // Arrange: a task case whose pristine checker fails the untouched work.
+    const root = newRoot("autonote-pristine");
+    const fake = writeFakeOpencode(root);
+    const checked = taskCase("T01", {
+        primaryCheck: { id: "fail", script: "probe-fail.mjs" },
+    });
+    const { paths } = generate(root, fake, [checked]);
+
+    // Act: the trial replaces a visible test with a trivially passing one.
+    const tamper = hook(root, "tamper.sh", [
+        "mkdir -p test",
+        "printf '%s\\n' 'import test from \"node:test\"; test(\"ok\", () => {});' > test/visible.test.ts",
+    ]);
+    const run = runHarness(
+        root,
+        fake,
+        ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        {
+            FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()),
+            FAKE_TRIAL_HOOK: tamper,
+        },
+    );
+
+    // Assert: the independent checker still reports the task failure.
+    assert.equal(run.status, 0, run.stderr);
+    const record = readJson(
+        join(paths.results, "s1", "T01", "primary-check.json"),
+    );
+    assert.equal(record.status, "fail");
+    assert.match(record.sourceHash, /^[0-9a-f]{64}$/);
+    rmRoot(root);
+});
+
+test("NOTETAKING: judge evidence carries the primary record and the resulting document", () => {
+    // Arrange: a create case whose pristine check passes and whose note lands.
+    const root = newRoot("autonote-judge-evidence");
+    const fake = writeFakeOpencode(root);
+    const checked = taskCase("T01", {
+        primaryCheck: { id: "pass", script: "probe-pass.mjs" },
+        expectedDocs: { kind: "create", retains: ["retry"] },
+    });
+    const { paths } = generate(root, fake, [checked]);
+    const good = validNote("The retry boundary.", "- Three retries.");
+    const recordHook = hook(root, "record.sh", [
+        "mkdir -p ../lakes/docs/kb",
+        "printf '%s\\n' '" +
+            good.replace(/'/g, "'\\''") +
+            "' > ../lakes/docs/kb/retry.md",
+    ]);
+    const promptOut = join(root, "judge-prompt.txt");
+
+    // Act: run and judge, capturing the exact judge input.
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+            {
+                FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()),
+                FAKE_TRIAL_HOOK: recordHook,
+            },
+        ).status,
+        0,
+    );
+    const judge = runHarness(
+        root,
+        fake,
+        ["judge", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        {
+            FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()),
+            FAKE_JUDGE_PROMPT_OUT: promptOut,
+        },
+    );
+
+    // Assert: the actual note and independent result travelled to the judge.
+    assert.equal(judge.status, 0, judge.stderr);
+    const prompt = readFileSync(promptOut, "utf8");
+    assert.match(prompt, /Independent primary check/);
+    assert.match(prompt, /probe-pass\.mjs/);
+    assert.match(prompt, /status: pass/);
+    assert.match(prompt, /# Recorded note/);
+    assert.match(prompt, /Three retries/);
+    rmRoot(root);
+});
+
+test("NOTETAKING: generation identity covers the task profile and primary checker", () => {
+    // Arrange: one task case generated, then changed in two material ways.
+    const root = newRoot("autonote-identity");
+    const fake = writeFakeOpencode(root);
+    const base = taskCase("T01", {
+        primaryCheck: { id: "pass", script: "probe-pass.mjs" },
+    });
+    const first = generate(root, fake, [base]);
+    assert.equal(first.result.status, 0, first.result.stderr);
+    const generated = readJson(
+        join(first.paths.fixtures, "T01", "generation.json"),
+    );
+    const prompt = readFileSync(join(first.paths.prompts, "T01.md"), "utf8");
+
+    // Act: change the checker, then the permission profile.
+    const checkChanged = generate(
+        root,
+        fake,
+        [
+            {
+                ...base,
+                primaryCheck: { id: "fail", script: "probe-fail.mjs" },
+            },
+        ],
+        { force: true },
+    );
+    const checkHash = readJson(
+        join(first.paths.fixtures, "T01", "generation.json"),
+    ).inputsHash;
+    const profileChanged = generate(
+        root,
+        fake,
+        [{ ...base, permissionProfile: undefined }],
+        { force: true },
+    );
+    const profileHash = readJson(
+        join(first.paths.fixtures, "T01", "generation.json"),
+    ).inputsHash;
+
+    // Assert: identity moved for both, and the prompt did not drift.
+    assert.equal(checkChanged.result.status, 0, checkChanged.result.stderr);
+    assert.equal(profileChanged.result.status, 0, profileChanged.result.stderr);
+    assert.notEqual(checkHash, generated.inputsHash);
+    assert.notEqual(profileHash, checkHash);
+    assert.equal(
+        readFileSync(join(first.paths.prompts, "T01.md"), "utf8"),
+        prompt,
+        "fixture identity changes must not alter the task prompt",
+    );
+    rmRoot(root);
+});
+
+test("NOTETAKING: every checked-in NOTE fixture generates and its reference solution scores", () => {
+    // Arrange: the frozen four-scenario corpus and reference workspaces.
+    const root = newRoot("autonote-reference");
+    const fake = writeFakeOpencode(root);
+    const ids = ["NOTE-01", "NOTE-02", "NOTE-03", "NOTE-04"];
+    const { paths } = generate(
+        root,
+        fake,
+        ids.map((id) => noteCase(id)),
+    );
+
+    const retryFix = hook(root, "note-01.sh", [
+        "cat > src/retry.ts <<'EOF'",
+        "export const maxAttempts = 3;",
+        "export async function withRetry<T>(operation: () => Promise<T>): Promise<T> {",
+        "    let attempt = 0;",
+        "    while (true) {",
+        "        try { return await operation(); }",
+        "        catch (error) { attempt += 1; if (attempt >= maxAttempts) throw error; }",
+        "    }",
+        "}",
+        "EOF",
+        "cat > src/consumer.ts <<'EOF'",
+        'import { withRetry } from "./retry.ts";',
+        "const seen = new Set<string>();",
+        "let deliveries = 0;",
+        "export async function handle(event: { id: string; payload: string }) {",
+        "    if (seen.has(event.id)) return;",
+        "    seen.add(event.id);",
+        "    await withRetry(async () => { deliveries += 1; });",
+        "}",
+        "export function deliveryCount() { return deliveries; }",
+        "EOF",
+        "mkdir -p ../lakes/docs/ops",
+        "cat > ../lakes/docs/ops/retry-boundary.md <<'EOF'",
+        validNote(
+            "This consumer retries three times and deduplicates replayed events.",
+            "- The SDK is at-least-once.\n- This repository caps retries at three.\n- Duplicate event ids are ignored.",
+        ).trim(),
+        "EOF",
+    ]);
+    const retryCodeOnly = hook(root, "note-01-code-only.sh", [
+        "cat > src/retry.ts <<'EOF'",
+        "export const maxAttempts = 3;",
+        "export async function withRetry<T>(operation: () => Promise<T>): Promise<T> {",
+        "    let attempt = 0;",
+        "    while (true) {",
+        "        try { return await operation(); }",
+        "        catch (error) { attempt += 1; if (attempt >= maxAttempts) throw error; }",
+        "    }",
+        "}",
+        "EOF",
+        "cat > src/consumer.ts <<'EOF'",
+        'import { withRetry } from "./retry.ts";',
+        "const seen = new Set<string>();",
+        "let deliveries = 0;",
+        "export async function handle(event: { id: string; payload: string }) {",
+        "    if (seen.has(event.id)) return;",
+        "    seen.add(event.id);",
+        "    await withRetry(async () => { deliveries += 1; });",
+        "}",
+        "export function deliveryCount() { return deliveries; }",
+        "EOF",
+    ]);
+    const nodeFix = hook(root, "note-02.sh", [
+        "printf '%s\\n' 24 > .nvmrc",
+        "sed -i 's/>=22/>=24/' package.json",
+        "cat > scripts/check-node.mjs <<'EOF'",
+        'const major = Number(process.versions.node.split(".")[0]);',
+        "if (major < 24) {",
+        "    console.error(`setup requires Node 24 or newer, found ${process.version}`);",
+        "    process.exit(1);",
+        "}",
+        "console.log(`setup ok on ${process.version}`);",
+        "EOF",
+        "cat > ../lakes/docs/setup/node-version.md <<'EOF'",
+        "---",
+        "Area: Setup",
+        "Keywords: node, version, nvm, setup",
+        "Summary: This repository uses Node 24; setup enforces it.",
+        "---",
+        "",
+        "# Node version",
+        "",
+        "### Facts",
+        "",
+        "- Use nvm.",
+        "- This repository uses Node 24.",
+        "- `npm run setup` enforces the version.",
+        "- CI reads `.nvmrc`.",
+        "EOF",
+    ]);
+    const nodeCodeOnly = hook(root, "note-02-code-only.sh", [
+        "printf '%s\\n' 24 > .nvmrc",
+        "sed -i 's/>=22/>=24/' package.json",
+        "cat > scripts/check-node.mjs <<'EOF'",
+        'const major = Number(process.versions.node.split(".")[0]);',
+        "if (major < 24) {",
+        "    console.error(`setup requires Node 24 or newer, found ${process.version}`);",
+        "    process.exit(1);",
+        "}",
+        "console.log(`setup ok on ${process.version}`);",
+        "EOF",
+    ]);
+    const lockFix = hook(root, "note-03.sh", ["rm -f .tmp/run.lock"]);
+    const replayRead =
+        TOOL_JSONL_META(
+            "docs",
+            "call-1",
+            "completed",
+            { read: "ops/webhook-debugging.md" },
+            "ops/webhook-debugging.md — Webhook replay check\n\n---\nArea: Ops\n---\n\n### Facts\n\n- EVENT_REPLAY is expected.\n\ndocs: revision " +
+                "a".repeat(64) +
+                " — these bytes.",
+            {
+                read: "plugin-core:ops/webhook-debugging.md",
+                lake: "plugin-core",
+                path: "ops/webhook-debugging.md",
+                revision: "a".repeat(64),
+            },
+        ) + ANSWER_JSONL();
+
+    const run = (id: string, stamp: string, hookPath?: string, out?: string) =>
+        runHarness(
+            root,
+            fake,
+            ["run", id, "--stamp", stamp, ...commandArgs(paths)],
+            {
+                FAKE_TRIAL_OUT:
+                    out ?? file(root, `${id}.jsonl`, ANSWER_JSONL()),
+                ...(hookPath ? { FAKE_TRIAL_HOOK: hookPath } : {}),
+            },
+        );
+    const judge = (id: string, stamp: string) =>
+        runHarness(
+            root,
+            fake,
+            ["judge", id, "--stamp", stamp, ...commandArgs(paths)],
+            { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+        );
+    const verdict = (id: string, stamp: string) =>
+        readJson(join(paths.results, stamp, id, "verdict.json"));
+    const primary = (id: string, stamp: string) =>
+        readJson(join(paths.results, stamp, id, "primary-check.json"));
+
+    // Act: every reference solution, each in its own fresh stamp.
+    for (const [id, hookPath, out] of [
+        ["NOTE-01", retryFix, undefined],
+        ["NOTE-02", nodeFix, undefined],
+        ["NOTE-03", lockFix, undefined],
+        ["NOTE-04", undefined, file(root, "NOTE-04.jsonl", replayRead)],
+    ] as const) {
+        const stamp = `ref-${id}`;
+        const runResult = run(id, stamp, hookPath, out);
+        assert.equal(runResult.status, 0, `${id}: ${runResult.stderr}`);
+        assert.equal(judge(id, stamp).status, 0, id);
+        assert.equal(primary(id, stamp).status, "pass", id);
+        assert.equal(verdict(id, stamp).verdict, "pass", id);
+    }
+
+    // Untouched work fails each practical check except the already-green
+    // replay case, whose protected fixture is checked separately.
+    for (const id of ["NOTE-01", "NOTE-02", "NOTE-03"]) {
+        const stamp = `broken-${id}`;
+        const result = run(id, stamp);
+        assert.equal(result.status, 0, `${id}: ${result.stderr}`);
+        assert.equal(primary(id, stamp).status, "fail", id);
+    }
+    const brokeReplay = hook(root, "broke-replay.sh", [
+        "printf '%s\\n' '{\"replay\": false}' > test/fixtures/replay.json",
+    ]);
+    assert.equal(run("NOTE-04", "broken-NOTE-04", brokeReplay).status, 0);
+    assert.equal(primary("NOTE-04", "broken-NOTE-04").status, "fail");
+
+    // Assert: never-write fails the positives; always-write fails restraint.
+    const stampRun = (id: string, stamp: string, hookPath?: string) =>
+        runHarness(
+            root,
+            fake,
+            ["run", id, "--stamp", stamp, ...commandArgs(paths)],
+            {
+                FAKE_TRIAL_OUT: file(root, `${id}.jsonl`, ANSWER_JSONL()),
+                ...(hookPath ? { FAKE_TRIAL_HOOK: hookPath } : {}),
+            },
+        );
+    for (const [id, codeOnly] of [
+        ["NOTE-01", retryCodeOnly],
+        ["NOTE-02", nodeCodeOnly],
+    ] as const) {
+        assert.equal(stampRun(id, `never-${id}`, codeOnly).status, 0);
+        runHarness(
+            root,
+            fake,
+            ["judge", id, "--stamp", `never-${id}`, ...commandArgs(paths)],
+            { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+        );
+        assert.equal(
+            readJson(
+                join(paths.results, `never-${id}`, id, "primary-check.json"),
+            ).status,
+            "pass",
+            `${id} code-only practical work must pass`,
+        );
+        assert.equal(
+            readJson(join(paths.results, `never-${id}`, id, "verdict.json"))
+                .verdict,
+            "invalid",
+            `${id} must fail the required documentation outcome`,
+        );
+    }
+
+    const needless = hook(root, "needless.sh", [
+        "rm -f .tmp/run.lock",
+        "mkdir -p ../lakes/docs/ops",
+        "printf '%s\\n' '" +
+            validNote("A needless note.", "- transient lock.").replace(
+                /'/g,
+                "'\\''",
+            ) +
+            "' > ../lakes/docs/ops/needless.md",
+    ]);
+    assert.equal(stampRun("NOTE-03", "always", needless).status, 0);
+    runHarness(
+        root,
+        fake,
+        ["judge", "NOTE-03", "--stamp", "always", ...commandArgs(paths)],
+        { FAKE_JUDGE_OUT: file(root, "judge.jsonl", VERDICT_JSONL()) },
+    );
+    assert.equal(
+        readJson(join(paths.results, "always", "NOTE-03", "verdict.json"))
+            .verdict,
+        "invalid",
+    );
+    rmRoot(root);
+});
+
+/* ------------------------------------------------------------------ *
  * Scenario naming — display-only map, saved per run
  * ------------------------------------------------------------------ */
 
@@ -6994,6 +8172,151 @@ test("N01: an observed successful nested read satisfies the same verb/path crite
     assert.equal(judge.status, 0, judge.stderr);
     assert.equal(verdict.verdict, "pass");
     rmRoot(root);
+});
+
+test("N01: dispatch input equivalence ignores JSON object member order, including nested objects", () => {
+    // Arrange: the host dispatch and the journal record carry the same read
+    // arguments with a different object member order at two levels.
+    const root = newRoot("n01-key-order");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [NESTED_READ_CASE()]);
+    const dispatchInput = {
+        read: "kb/existing.md",
+        context: { alpha: 1, beta: [1, 2] },
+    };
+    const journalInput = {
+        context: { beta: [1, 2], alpha: 1 },
+        read: "kb/existing.md",
+    };
+    const trail =
+        NESTED_WRAPPER([NESTED_DISPATCH("completed", dispatchInput)]) +
+        ANSWER_JSONL();
+    const journal = JOURNAL_LINE({
+        input: journalInput,
+        result: READ_RESULT("kb/existing.md"),
+    });
+
+    // Act: the wrapper trail plus the plugin's attributed journal record.
+    const { judge, verdict } = runGateWithJournal(
+        root,
+        fake,
+        paths,
+        "T01",
+        "s1",
+        trail,
+        journal,
+    );
+
+    // Assert: member order is not an input difference.
+    assert.equal(judge.status, 0, judge.stderr);
+    assert.equal(verdict.verdict, "pass");
+    rmRoot(root);
+});
+
+test("N01: dispatch input equivalence keeps values, membership, types and array order significant", () => {
+    const cases: Array<{
+        name: string;
+        dispatch: Record<string, unknown>;
+        journal: Record<string, unknown>;
+        session?: string;
+        callID?: string;
+        dispatchStatus?: string;
+    }> = [
+        {
+            name: "changed value",
+            dispatch: { read: "kb/existing.md", lake: "docs" },
+            journal: { read: "kb/existing.md", lake: "other" },
+        },
+        {
+            name: "missing field",
+            dispatch: { read: "kb/existing.md", lake: "docs" },
+            journal: { read: "kb/existing.md" },
+        },
+        {
+            name: "extra field",
+            dispatch: { read: "kb/existing.md" },
+            journal: { read: "kb/existing.md", lake: "docs" },
+        },
+        {
+            name: "type difference",
+            dispatch: { read: "kb/existing.md", limit: 1 },
+            journal: { read: "kb/existing.md", limit: "1" },
+        },
+        {
+            name: "array order",
+            dispatch: { read: "kb/existing.md", tags: ["a", "b"] },
+            journal: { read: "kb/existing.md", tags: ["b", "a"] },
+        },
+        {
+            name: "missing versus explicit null",
+            dispatch: { read: "kb/existing.md", note: null },
+            journal: { read: "kb/existing.md" },
+        },
+        {
+            name: "wrong session",
+            dispatch: { read: "kb/existing.md" },
+            journal: { read: "kb/existing.md" },
+            session: "ses_other",
+        },
+        {
+            name: "wrong call identity",
+            dispatch: { read: "kb/existing.md" },
+            journal: { read: "kb/existing.md" },
+            callID: "call-other",
+        },
+        {
+            name: "unmatched dispatch status",
+            dispatch: { read: "kb/existing.md" },
+            journal: { read: "kb/existing.md" },
+            dispatchStatus: "error",
+        },
+    ];
+    for (const candidate of cases) {
+        // Arrange: one boundary that must still refuse attribution.
+        const root = newRoot(
+            "n01-input-boundary-" + candidate.name.replace(/[^a-z0-9]+/gi, "-"),
+        );
+        const fake = writeFakeOpencode(root);
+        const { paths } = generate(root, fake, [NESTED_READ_CASE()]);
+        const trail =
+            NESTED_WRAPPER([
+                NESTED_DISPATCH(
+                    candidate.dispatchStatus ?? "completed",
+                    candidate.dispatch,
+                ),
+            ]) + ANSWER_JSONL();
+        const journal = JOURNAL_LINE({
+            input: candidate.journal,
+            result: READ_RESULT("kb/existing.md"),
+            ...(candidate.session === undefined
+                ? {}
+                : { sessionID: candidate.session }),
+            ...(candidate.callID === undefined
+                ? {}
+                : { callID: candidate.callID }),
+        });
+
+        // Act
+        const { judge, verdict } = runGateWithJournal(
+            root,
+            fake,
+            paths,
+            "T01",
+            "s1",
+            trail,
+            journal,
+        );
+
+        // Assert: no credit for an unequal input or an unattributed record.
+        assert.notEqual(judge.status, 0, candidate.name);
+        assert.equal(verdict.verdict, "invalid", candidate.name);
+        assert.match(
+            verdict.reason,
+            /unobservable nested operations|docs criterion unmet/,
+            candidate.name,
+        );
+        rmRoot(root);
+    }
 });
 
 test("N01: a nested error is an attempt, never a successful read", () => {
