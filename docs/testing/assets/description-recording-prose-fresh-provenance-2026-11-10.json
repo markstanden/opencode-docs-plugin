@@ -74,7 +74,7 @@
     },
     "candidatesAsset": {
         "path": "docs/testing/assets/native-description-candidates-2026-11-10.json",
-        "sha256": "885e52519cd9c64bd0569f86a82904556a4754aa545d531d92cc6dbb29bc60c6"
+        "sha256": "6e5fbc59651e285e564df009df9457b69860bd8edf9e1f50a399338646d666aa"
     },
     "selection": {
         "control": "A",
@@ -423,7 +423,7 @@
     },
     "integrity": {
         "manifest": "evidence/EVIDENCE.sha256",
-        "manifestRows": 4837,
+        "manifestRows": 4844,
         "signingKeysUnhashed": 94,
         "evidenceRoot": "campaign root on the analysis dev box (not published; dev-box only)"
     }

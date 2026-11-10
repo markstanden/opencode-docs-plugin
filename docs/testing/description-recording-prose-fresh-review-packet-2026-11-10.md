@@ -29,7 +29,7 @@ lead of 23 points.
    under the authorising guardrail. The frozen rule did not charge that class of
    loss as a guardrail, so the original production-review qualification is
    withdrawn. See
-   [the correction](description-recording-prose-fresh-correction-2026-11-10.md).
+   [the correction](../description-recording-prose-fresh-correction-2026-11-10.md).
 2. **Confirmation was not interleaved.** The 20 finalist sessions ran after all
    20 control sessions, so the comparison is exploratory and the pairing is not
    temporal.
@@ -69,7 +69,7 @@ converted into a documentation score.
 | Held-out corpus (as committed, gate-formatted) | `3267c5cc2f5149c70836793b4f35dc57b4ec0a0e881c24102f7c1d8b23a7962a` |
 | Scenario truth                                 | `2244f97654a4dfe66c7eb95b4b3cb3577dabbe00af005d607e2b88992cd121b7` |
 | Schedule SHA-256                               | `f96edba77252ae02fbad107793834e12075116723948ee4e3ec4007287fa87c8` |
-| Candidate asset SHA-256                        | `885e52519cd9c64bd0569f86a82904556a4754aa545d531d92cc6dbb29bc60c6` |
+| Candidate asset SHA-256                        | `6e5fbc59651e285e564df009df9457b69860bd8edf9e1f50a399338646d666aa` |
 
 ### Arms
 
@@ -204,7 +204,7 @@ valid facts (60-second expiry; deploy clears the cache) were deleted in
 `fc-F-r2-H02`; the control's `fc-A-r2-H02` replaced the expiry with a denial
 and dropped the deploy fact; `fc-A-r3-H02` denied expiry and retained only the
 `clear()` mechanism. Exact before/after text is in
-[the correction](description-recording-prose-fresh-correction-2026-11-10.md).
+[the correction](../description-recording-prose-fresh-correction-2026-11-10.md).
 This is not an all-88 preservation audit.
 
 ## Decisive excerpts
@@ -324,7 +324,7 @@ dev-box evidence.
 | ------------------------------------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------- |
 | This packet, trial CSV, provenance, candidate asset                 | committed under `docs/testing/assets/` | reviewer-accessible                                                              |
 | Raw sessions, generated fixtures, judge packets, signing keys, logs | campaign root on the analysis dev box  | dev-box only; not published                                                      |
-| Integrity manifest                                                  | dev-box `evidence/EVIDENCE.sha256`     | 4837 rows, 94 signing-key paths excluded from hashing (contents never published) |
+| Integrity manifest                                                  | dev-box `evidence/EVIDENCE.sha256`     | 4844 rows, 94 signing-key paths excluded from hashing (contents never published) |
 
 ## Reproduce
 

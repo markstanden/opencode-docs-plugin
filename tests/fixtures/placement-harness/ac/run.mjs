@@ -822,6 +822,7 @@ function evidenceRows(root) {
     };
     const rows = [];
     for (const dir of ["gen", "controls", "evidence", "logs"]) {
+        if (!existsSync(join(root, dir))) continue;
         for (const path of walk(join(root, dir)).sort()) {
             const rel = path.slice(root.length + 1);
             if (rel === "evidence/EVIDENCE.sha256") continue;
@@ -857,7 +858,8 @@ function manifest(args) {
     const root = need(args, "--root");
     const rows = evidenceRows(root);
     const path = join(root, "evidence/EVIDENCE.sha256");
-    if (args.get("--write") !== undefined) {
+    if (args.has("--write")) {
+        mkdirSync(dirname(path), { recursive: true });
         writeFileSync(path, rows.join("\n") + "\n", "utf8");
         return 0;
     }

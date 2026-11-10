@@ -1,5 +1,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
+import { join } from "node:path";
 import {
     ARMS,
     HELD_OUT,
@@ -294,5 +298,59 @@ describe("firstBalancedObject", () => {
 
         // Assert
         assert.equal(extracted, undefined);
+    });
+});
+
+describe("manifest", () => {
+    /** Build a throwaway evidence root with one recorded file. */
+    const root = (label: string): string => {
+        const dir = mkdtempSync(`${tmpdir()}/ac-manifest-${label}-`);
+        mkdirSync(`${dir}/gen`, { recursive: true });
+        writeFileSync(`${dir}/gen/result.json`, '{"ok":true}\n');
+        return dir;
+    };
+
+    const run = (root: string, flag: string) =>
+        spawnSync(
+            process.execPath,
+            [
+                join(
+                    import.meta.dirname,
+                    "fixtures/placement-harness/ac/run.mjs",
+                ),
+                "manifest",
+                "--root",
+                root,
+                flag,
+            ],
+            { encoding: "utf8" },
+        ).status;
+
+    it("writes then verifies an unchanged tree", () => {
+        // Arrange
+        const dir = root("ok");
+
+        // Act
+        const written = run(dir, "--write");
+        const verified = run(dir, "--verify");
+
+        // Assert
+        assert.equal(written, 0);
+        assert.equal(verified, 0);
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("refuses a tree changed after the manifest", () => {
+        // Arrange
+        const dir = root("changed");
+        run(dir, "--write");
+        writeFileSync(`${dir}/gen/result.json`, '{"ok":false}\n');
+
+        // Act
+        const verified = run(dir, "--verify");
+
+        // Assert
+        assert.equal(verified, 1);
+        rmSync(dir, { recursive: true, force: true });
     });
 });
