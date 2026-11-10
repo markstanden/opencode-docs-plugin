@@ -1,52 +1,52 @@
 {
-  "note": "Native `docs` tool-description candidates. A is current main, recovered byte-exactly from src/index.ts at 5ea4a71. B is the prior memory-framing candidate, recovered byte-exactly from plan commit 4b75d7b. C-F arrived with Markdown code spans flattened by the prompt transport; backticks were restored on the same convention (API verbs, filenames and `instructions:` as code spans) with wording unchanged. Code spans are literal here; the rendered handback flattened them.",
-  "measured": {
-    "annotationChars": 1658,
-    "experimentalBudget": {
-      "native": 1400,
-      "combined": 3100
+    "note": "Native `docs` tool-description candidates. A is current main, recovered byte-exactly from src/index.ts at 5ea4a71. B is the prior memory-framing candidate, recovered byte-exactly from plan commit 4b75d7b. C-F arrived with Markdown code spans flattened by the prompt transport; backticks were restored on the same convention (API verbs, filenames and `instructions:` as code spans) with wording unchanged. Code spans are literal here; the rendered handback flattened them.",
+    "measured": {
+        "annotationChars": 1658,
+        "experimentalBudget": {
+            "native": 1400,
+            "combined": 3100
+        },
+        "productionBudget": {
+            "native": 600,
+            "combined": 2100
+        }
     },
-    "productionBudget": {
-      "native": 600,
-      "combined": 2100
+    "arms": {
+        "A": {
+            "text": "Search the configured knowledge lakes and nested project `README.md` files before a broad grep for how-to knowledge. A blank search lists recent docs; `help` shows the lakes and ranking. `read` returns a lake doc verbatim plus its revision token; `instructions:` results open with the built-in read tool. `add` creates or replaces a knowledge doc (replace needs that revision); `check` audits convention compliance.",
+            "chars": 415,
+            "combinedChars": 2073,
+            "sha256": "c3903c7d56ab617a4ae9b585daf7634f623585ce9509236b4f17dc177eec1c7c"
+        },
+        "B": {
+            "text": "Search configured lakes and nested `README.md` files before a broad grep. When a durable decision or recurring trap emerges, record it with `add` (create/replace); never record transient state, and update rather than duplicate. `help` lists lakes/ranking; a blank search lists recent docs. `read` returns a doc and the revision `replace` needs; `check` audits convention; `instructions:` results open with the built-in read tool.",
+            "chars": 429,
+            "combinedChars": 2087,
+            "sha256": "09c9cebd09aebf2717802c66aa18def0f9ebeabff079016afe874a9579330d4e"
+        },
+        "C": {
+            "text": "Search configured lakes and nested `README.md` files before broad how-to grep. When authorised, save verified project knowledge that will help a future task. Search for existing coverage: update stale or incomplete knowledge; create only when useful knowledge is missing. Skip session status and generic advice. `help` lists lakes and ranking; blank search lists recent docs. `read` returns a document and its revision token; `add` creates or replaces it, with the revision required for replacement. Open `instructions:` results with the built-in read tool. `check` audits convention compliance.",
+            "chars": 595,
+            "combinedChars": 2253,
+            "sha256": "8238063d5918e55de9cb47b4b2d1e4590c1ad6ddccfaab6162a75cf2284391ff"
+        },
+        "D": {
+            "text": "Use this knowledge store to spare the next person or agent from repeating useful investigation. Search configured lakes and nested project `README.md` files before a broad grep for how-to knowledge. When authorised, preserve verified project decisions, constraints and recurring traps that would change how a future task is done. Correct existing knowledge when it is stale; add a new document when valuable knowledge is missing. A task can be complete without a note: temporary session state and generic advice rarely help the next reader. Record the finding and its evidence, not a diary of your work. `help` shows lakes and ranking; blank search lists recent docs. `read` returns a lake document and revision token. `add` creates or replaces a document; replacement requires that revision. Open `instructions:` results using the built-in read tool. `check` audits convention compliance.",
+            "chars": 889,
+            "combinedChars": 2547,
+            "sha256": "4eefa38d47d79b7bfbf6b251dabeda9f9ad015a68f6bd0971a6fc987425cbdef"
+        },
+        "E": {
+            "text": "Search configured knowledge lakes and nested project `README.md` files before broad how-to grep. When a task establishes a possible documentation finding, use this decision procedure:\n1. Check permission to write and verify the finding against available evidence.\n2. Ask whether it is project-specific knowledge likely to help a later task. Do not save temporary session state, unverified guesses or generic advice.\n3. Search for existing coverage and read relevant documents. If the finding corrects or materially extends one, update it. If useful knowledge is missing, create a concise document. If coverage is already sufficient, leave it alone.\n4. Preserve valid existing content and record only the supported claim, with relevant evidence and limits. Check that the write succeeded. Do not let optional documentation displace the requested task.\n`help` shows the configured lakes and ranking; blank search lists recent documents. `read` returns a document verbatim and its revision token. `add` creates or replaces a document; replacement requires the revision token. Open `instructions:` results with the built-in read tool. `check` audits convention compliance.",
+            "chars": 1168,
+            "combinedChars": 2826,
+            "sha256": "f1f53d96f968ecd381417bd96e1203d57489517b728ad5893e4bb0d8b4dbe117"
+        },
+        "F": {
+            "text": "Search configured knowledge lakes and nested project `README.md` files before broad how-to grep. When authorised, preserve verified knowledge that helps future work; prefer correcting existing coverage to creating a duplicate.\nExamples: if you verify that a repository's documented build prerequisite is obsolete, update that document while preserving its other valid guidance. If investigation establishes an undocumented recurring integration constraint, save the constraint, evidence and practical consequence. If an existing document already explains the finding accurately, no write is needed.\nCounterexamples: a temporary process identifier, this session's successful command, a one-off local workaround without evidence of recurrence, or general programming advice is usually not useful project knowledge. A transient symptom can still reveal a durable lesson: record the verified recurring cause or constraint, not the temporary symptom. Never invent a lesson just to leave a note. Complete the requested task and verify any documentation write.\n`help` shows lakes and ranking; blank search lists recent docs. `read` returns a document verbatim and its revision token. `add` creates or replaces a document; replacement needs that revision. Open `instructions:` results with the built-in read tool. `check` audits convention compliance.",
+            "chars": 1343,
+            "combinedChars": 3001,
+            "sha256": "8223b356b5f3157568be7036030c87bbc3ef298c90ca9040f74a89729efbacc9"
+        }
     }
-  },
-  "arms": {
-    "A": {
-      "text": "Search the configured knowledge lakes and nested project `README.md` files before a broad grep for how-to knowledge. A blank search lists recent docs; `help` shows the lakes and ranking. `read` returns a lake doc verbatim plus its revision token; `instructions:` results open with the built-in read tool. `add` creates or replaces a knowledge doc (replace needs that revision); `check` audits convention compliance.",
-      "chars": 415,
-      "combinedChars": 2073,
-      "sha256": "c3903c7d56ab617a4ae9b585daf7634f623585ce9509236b4f17dc177eec1c7c"
-    },
-    "B": {
-      "text": "Search configured lakes and nested `README.md` files before a broad grep. When a durable decision or recurring trap emerges, record it with `add` (create/replace); never record transient state, and update rather than duplicate. `help` lists lakes/ranking; a blank search lists recent docs. `read` returns a doc and the revision `replace` needs; `check` audits convention; `instructions:` results open with the built-in read tool.",
-      "chars": 429,
-      "combinedChars": 2087,
-      "sha256": "09c9cebd09aebf2717802c66aa18def0f9ebeabff079016afe874a9579330d4e"
-    },
-    "C": {
-      "text": "Search configured lakes and nested `README.md` files before broad how-to grep. When authorised, save verified project knowledge that will help a future task. Search for existing coverage: update stale or incomplete knowledge; create only when useful knowledge is missing. Skip session status and generic advice. `help` lists lakes and ranking; blank search lists recent docs. `read` returns a document and its revision token; `add` creates or replaces it, with the revision required for replacement. Open `instructions:` results with the built-in read tool. `check` audits convention compliance.",
-      "chars": 595,
-      "combinedChars": 2253,
-      "sha256": "8238063d5918e55de9cb47b4b2d1e4590c1ad6ddccfaab6162a75cf2284391ff"
-    },
-    "D": {
-      "text": "Use this knowledge store to spare the next person or agent from repeating useful investigation. Search configured lakes and nested project `README.md` files before a broad grep for how-to knowledge. When authorised, preserve verified project decisions, constraints and recurring traps that would change how a future task is done. Correct existing knowledge when it is stale; add a new document when valuable knowledge is missing. A task can be complete without a note: temporary session state and generic advice rarely help the next reader. Record the finding and its evidence, not a diary of your work. `help` shows lakes and ranking; blank search lists recent docs. `read` returns a lake document and revision token. `add` creates or replaces a document; replacement requires that revision. Open `instructions:` results using the built-in read tool. `check` audits convention compliance.",
-      "chars": 889,
-      "combinedChars": 2547,
-      "sha256": "4eefa38d47d79b7bfbf6b251dabeda9f9ad015a68f6bd0971a6fc987425cbdef"
-    },
-    "E": {
-      "text": "Search configured knowledge lakes and nested project `README.md` files before broad how-to grep. When a task establishes a possible documentation finding, use this decision procedure:\n1. Check permission to write and verify the finding against available evidence.\n2. Ask whether it is project-specific knowledge likely to help a later task. Do not save temporary session state, unverified guesses or generic advice.\n3. Search for existing coverage and read relevant documents. If the finding corrects or materially extends one, update it. If useful knowledge is missing, create a concise document. If coverage is already sufficient, leave it alone.\n4. Preserve valid existing content and record only the supported claim, with relevant evidence and limits. Check that the write succeeded. Do not let optional documentation displace the requested task.\n`help` shows the configured lakes and ranking; blank search lists recent documents. `read` returns a document verbatim and its revision token. `add` creates or replaces a document; replacement requires the revision token. Open `instructions:` results with the built-in read tool. `check` audits convention compliance.",
-      "chars": 1168,
-      "combinedChars": 2826,
-      "sha256": "f1f53d96f968ecd381417bd96e1203d57489517b728ad5893e4bb0d8b4dbe117"
-    },
-    "F": {
-      "text": "Search configured knowledge lakes and nested project `README.md` files before broad how-to grep. When authorised, preserve verified knowledge that helps future work; prefer correcting existing coverage to creating a duplicate.\nExamples: if you verify that a repository's documented build prerequisite is obsolete, update that document while preserving its other valid guidance. If investigation establishes an undocumented recurring integration constraint, save the constraint, evidence and practical consequence. If an existing document already explains the finding accurately, no write is needed.\nCounterexamples: a temporary process identifier, this session's successful command, a one-off local workaround without evidence of recurrence, or general programming advice is usually not useful project knowledge. A transient symptom can still reveal a durable lesson: record the verified recurring cause or constraint, not the temporary symptom. Never invent a lesson just to leave a note. Complete the requested task and verify any documentation write.\n`help` shows lakes and ranking; blank search lists recent docs. `read` returns a document verbatim and its revision token. `add` creates or replaces a document; replacement needs that revision. Open `instructions:` results with the built-in read tool. `check` audits convention compliance.",
-      "chars": 1343,
-      "combinedChars": 3001,
-      "sha256": "8223b356b5f3157568be7036030c87bbc3ef298c90ca9040f74a89729efbacc9"
-    }
-  }
 }

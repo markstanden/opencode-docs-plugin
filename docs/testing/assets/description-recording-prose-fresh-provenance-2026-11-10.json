@@ -1,0 +1,430 @@
+{
+    "campaign": "native-description prose comparison, 2026-11-10",
+    "base": "5ea4a71e9174d638145e16c7f9508357c47542fc",
+    "executedMeasurement": "902a6fe65ecff4cfea0358ae165e21e4f441f003",
+    "planCommit": "c69b1000713dddd3dfadd5de92196b0a44d296d8",
+    "repairsCommit": "731fbf8f99d1e18107d12b664c084c43f12d564a",
+    "findingsCommit": "3c2e6462531867c51a2e1c82b2a59df0fbde9002",
+    "arms": {
+        "A": {
+            "commit": "902a6fe65ecff4cfea0358ae165e21e4f441f003",
+            "tree": "bf553bfce11410d33d68e8232949437952fdb055",
+            "nativeChars": 415,
+            "nativeHash": "c3903c7d56ab617a4ae9b585daf7634f623585ce9509236b4f17dc177eec1c7c",
+            "combinedChars": 2073,
+            "pluginContentHash": "1b2b0319759cfe7a48373ab72b946d3ab416e91e1d0ec597349da82fd5d05df8"
+        },
+        "B": {
+            "commit": "454279001ac6c46394ff14fd34b35220f099d252",
+            "tree": "5c7dd5c9da705274ee859096fe0c095fffc1cba1",
+            "nativeChars": 429,
+            "nativeHash": "09c9cebd09aebf2717802c66aa18def0f9ebeabff079016afe874a9579330d4e",
+            "combinedChars": 2087,
+            "pluginContentHash": "04535cf3b9efece2edb9cc72e1dbbe57fa36e269688623c9d6eac61ee30bbd88"
+        },
+        "C": {
+            "commit": "bbc75a2d01290aab4b10adad610a2b6e38602133",
+            "tree": "038c8ce266b52a6894dddf4775b3541baf9f30e1",
+            "nativeChars": 595,
+            "nativeHash": "8238063d5918e55de9cb47b4b2d1e4590c1ad6ddccfaab6162a75cf2284391ff",
+            "combinedChars": 2253,
+            "pluginContentHash": "743eda2167021feda0e62c3d71ed047e02d27ff186796df04b5c8fcd17800ed8"
+        },
+        "D": {
+            "commit": "49edaea0337c928c77bbee54e2b9ff398437e9a5",
+            "tree": "85ad24dbeae36dfc8d73c7355836d1842991f076",
+            "nativeChars": 889,
+            "nativeHash": "4eefa38d47d79b7bfbf6b251dabeda9f9ad015a68f6bd0971a6fc987425cbdef",
+            "combinedChars": 2547,
+            "pluginContentHash": "248509864ed34cea8fa6034d076cacb9bdc4a60bb7976bb1222ebf7ed42a03ce"
+        },
+        "E": {
+            "commit": "f12e917789eb483f1a4120592374adaf5d14482a",
+            "tree": "fd7f77ca39fdbf40a2fe2e42e458daf28f4a8a43",
+            "nativeChars": 1168,
+            "nativeHash": "f1f53d96f968ecd381417bd96e1203d57489517b728ad5893e4bb0d8b4dbe117",
+            "combinedChars": 2826,
+            "pluginContentHash": "104177e666f6fa36db5cd96d8b2df79d9f1b63b72e93cf769a5c42aefb740006"
+        },
+        "F": {
+            "commit": "3a32fc303d2d1d614820f066509225aeada13594",
+            "tree": "931bda0e19ecf21127cc6e5f0b54b9fc5c377202",
+            "nativeChars": 1343,
+            "nativeHash": "8223b356b5f3157568be7036030c87bbc3ef298c90ca9040f74a89729efbacc9",
+            "combinedChars": 3001,
+            "pluginContentHash": "1033b34d770238d7546de75b5ebb32cdbda8b5a37dc51bfce8c03e482002afff"
+        }
+    },
+    "corpora": {
+        "trialCases": "f975698048c61af6a8a0d03008fdf175a75e15435eb6d356c40ef5ad11e00130",
+        "heldOutExecuted": "2bc81b662a7e16caef49b5dbaf12b3f4744ac397b1fc3bcfaf9ee7eb59a3ce3c",
+        "heldOutInRepository": "3267c5cc2f5149c70836793b4f35dc57b4ec0a0e881c24102f7c1d8b23a7962a",
+        "truth": "2244f97654a4dfe66c7eb95b4b3cb3577dabbe00af005d607e2b88992cd121b7",
+        "diagnostic": "ac956a2d1975a6d3429b293b93d26480c216eee4a25bef4d6bfe4210277a2377"
+    },
+    "prompts": {
+        "NOTE-01": "c61b359a",
+        "NOTE-02": "7503338a",
+        "NOTE-03": "c19ab7e8",
+        "NOTE-04": "7ce4aa79",
+        "H01": "1580dd0b",
+        "H02": "ea8fa68a",
+        "H03": "0eb3ea45",
+        "H04": "93c46d6c"
+    },
+    "candidatesAsset": {
+        "path": "docs/testing/assets/native-description-candidates-2026-11-10.json",
+        "sha256": "885e52519cd9c64bd0569f86a82904556a4754aa545d531d92cc6dbb29bc60c6"
+    },
+    "selection": {
+        "control": "A",
+        "threshold": 2,
+        "arm": "B",
+        "qualifies": true,
+        "checks": [
+            {
+                "arm": "B",
+                "verdict": {
+                    "qualifies": true,
+                    "reason": "lead 6 >= 2"
+                }
+            },
+            {
+                "arm": "C",
+                "verdict": {
+                    "qualifies": false,
+                    "reason": "lead -10 < 2"
+                }
+            },
+            {
+                "arm": "D",
+                "verdict": {
+                    "qualifies": false,
+                    "reason": "lead -10 < 2"
+                }
+            },
+            {
+                "arm": "E",
+                "verdict": {
+                    "qualifies": false,
+                    "reason": "lead -11 < 2"
+                }
+            },
+            {
+                "arm": "F",
+                "verdict": {
+                    "qualifies": false,
+                    "reason": "candidate guardrail breach (1)"
+                }
+            }
+        ],
+        "ranked": [
+            {
+                "arm": "B",
+                "total": 15,
+                "primaryFail": 0,
+                "misleading": 0,
+                "characters": 429,
+                "qualifies": true
+            },
+            {
+                "arm": "C",
+                "total": -1,
+                "primaryFail": 1,
+                "misleading": 0,
+                "characters": 595,
+                "qualifies": false
+            },
+            {
+                "arm": "D",
+                "total": -1,
+                "primaryFail": 1,
+                "misleading": 1,
+                "characters": 889,
+                "qualifies": false
+            },
+            {
+                "arm": "E",
+                "total": -2,
+                "primaryFail": 1,
+                "misleading": 1,
+                "characters": 1168,
+                "qualifies": false
+            }
+        ],
+        "sourceAnalysisSha256": "35992557ac54876b882d9591fd877432216ea633c1e6886302d419d1edaacba5"
+    },
+    "confirmation": {
+        "lead": 23,
+        "threshold": 5,
+        "qualifiesUnderNarrowRule": true
+    },
+    "sensitivity": {
+        "screening": [
+            {
+                "useful": 3,
+                "transient": 0.5,
+                "totals": {
+                    "A": 3.5,
+                    "B": 9,
+                    "C": -2.5,
+                    "D": -4.5,
+                    "E": -5,
+                    "F": -1.5
+                },
+                "ranking": ["B", "A", "F", "C", "D", "E"]
+            },
+            {
+                "useful": 3,
+                "transient": 1,
+                "totals": {
+                    "A": 3,
+                    "B": 9,
+                    "C": -3,
+                    "D": -5,
+                    "E": -6,
+                    "F": -2
+                },
+                "ranking": ["B", "A", "F", "C", "D", "E"]
+            },
+            {
+                "useful": 3,
+                "transient": 2,
+                "totals": {
+                    "A": 2,
+                    "B": 9,
+                    "C": -4,
+                    "D": -6,
+                    "E": -8,
+                    "F": -3
+                },
+                "ranking": ["B", "A", "F", "C", "D", "E"]
+            },
+            {
+                "useful": 5,
+                "transient": 0.5,
+                "totals": {
+                    "A": 9.5,
+                    "B": 15,
+                    "C": -0.5,
+                    "D": -0.5,
+                    "E": -1,
+                    "F": 4.5
+                },
+                "ranking": ["B", "A", "F", "C", "D", "E"]
+            },
+            {
+                "useful": 5,
+                "transient": 1,
+                "totals": {
+                    "A": 9,
+                    "B": 15,
+                    "C": -1,
+                    "D": -1,
+                    "E": -2,
+                    "F": 4
+                },
+                "ranking": ["B", "A", "F", "C", "D", "E"]
+            },
+            {
+                "useful": 5,
+                "transient": 2,
+                "totals": {
+                    "A": 8,
+                    "B": 15,
+                    "C": -2,
+                    "D": -2,
+                    "E": -4,
+                    "F": 3
+                },
+                "ranking": ["B", "A", "F", "C", "D", "E"]
+            },
+            {
+                "useful": 8,
+                "transient": 0.5,
+                "totals": {
+                    "A": 18.5,
+                    "B": 24,
+                    "C": 2.5,
+                    "D": 5.5,
+                    "E": 5,
+                    "F": 13.5
+                },
+                "ranking": ["B", "A", "F", "D", "E", "C"]
+            },
+            {
+                "useful": 8,
+                "transient": 1,
+                "totals": {
+                    "A": 18,
+                    "B": 24,
+                    "C": 2,
+                    "D": 5,
+                    "E": 4,
+                    "F": 13
+                },
+                "ranking": ["B", "A", "F", "D", "E", "C"]
+            },
+            {
+                "useful": 8,
+                "transient": 2,
+                "totals": {
+                    "A": 17,
+                    "B": 24,
+                    "C": 1,
+                    "D": 4,
+                    "E": 2,
+                    "F": 12
+                },
+                "ranking": ["B", "A", "F", "D", "E", "C"]
+            }
+        ],
+        "confirmation": [
+            {
+                "useful": 3,
+                "transient": 0.5,
+                "totals": {
+                    "A": -12.5,
+                    "B": 5.5
+                },
+                "ranking": ["B", "A"]
+            },
+            {
+                "useful": 3,
+                "transient": 1,
+                "totals": {
+                    "A": -13,
+                    "B": 4
+                },
+                "ranking": ["B", "A"]
+            },
+            {
+                "useful": 3,
+                "transient": 2,
+                "totals": {
+                    "A": -14,
+                    "B": 1
+                },
+                "ranking": ["B", "A"]
+            },
+            {
+                "useful": 5,
+                "transient": 0.5,
+                "totals": {
+                    "A": -10.5,
+                    "B": 13.5
+                },
+                "ranking": ["B", "A"]
+            },
+            {
+                "useful": 5,
+                "transient": 1,
+                "totals": {
+                    "A": -11,
+                    "B": 12
+                },
+                "ranking": ["B", "A"]
+            },
+            {
+                "useful": 5,
+                "transient": 2,
+                "totals": {
+                    "A": -12,
+                    "B": 9
+                },
+                "ranking": ["B", "A"]
+            },
+            {
+                "useful": 8,
+                "transient": 0.5,
+                "totals": {
+                    "A": -7.5,
+                    "B": 25.5
+                },
+                "ranking": ["B", "A"]
+            },
+            {
+                "useful": 8,
+                "transient": 1,
+                "totals": {
+                    "A": -8,
+                    "B": 24
+                },
+                "ranking": ["B", "A"]
+            },
+            {
+                "useful": 8,
+                "transient": 2,
+                "totals": {
+                    "A": -9,
+                    "B": 21
+                },
+                "ranking": ["B", "A"]
+            }
+        ]
+    },
+    "executionOrder": {
+        "scheduleSha256": "f96edba77252ae02fbad107793834e12075116723948ee4e3ec4007287fa87c8",
+        "screening": "executed in the frozen slot order",
+        "confirmation": {
+            "deviation": "the 20 finalist slots failed before any model call (runner path case) and were resumed after the 20 control slots",
+            "controlStartedAt": [
+                "2026-11-10T08:55:58.634Z",
+                "2026-11-10T08:56:41.171Z",
+                "2026-11-10T08:56:59.417Z",
+                "2026-11-10T08:57:55.594Z",
+                "2026-11-10T08:58:42.420Z",
+                "2026-11-10T08:59:04.402Z",
+                "2026-11-10T08:59:34.170Z",
+                "2026-11-10T09:00:16.466Z",
+                "2026-11-10T09:00:43.403Z",
+                "2026-11-10T09:01:16.163Z",
+                "2026-11-10T09:01:59.878Z",
+                "2026-11-10T09:02:24.984Z",
+                "2026-11-10T09:03:25.946Z",
+                "2026-11-10T09:03:58.435Z",
+                "2026-11-10T09:05:02.033Z",
+                "2026-11-10T09:05:50.514Z",
+                "2026-11-10T09:06:45.901Z",
+                "2026-11-10T09:07:15.120Z",
+                "2026-11-10T09:07:31.858Z",
+                "2026-11-10T09:08:01.862Z"
+            ],
+            "finalistStartedAt": [
+                "2026-11-10T09:09:02.855Z",
+                "2026-11-10T09:09:58.209Z",
+                "2026-11-10T09:10:30.595Z",
+                "2026-11-10T09:11:01.746Z",
+                "2026-11-10T09:11:29.570Z",
+                "2026-11-10T09:11:52.869Z",
+                "2026-11-10T09:12:24.657Z",
+                "2026-11-10T09:13:12.250Z",
+                "2026-11-10T09:13:59.019Z",
+                "2026-11-10T09:14:45.567Z",
+                "2026-11-10T09:15:21.930Z",
+                "2026-11-10T09:16:11.912Z",
+                "2026-11-10T09:17:05.521Z",
+                "2026-11-10T09:17:29.276Z",
+                "2026-11-10T09:17:49.981Z",
+                "2026-11-10T09:18:13.097Z",
+                "2026-11-10T09:19:01.574Z",
+                "2026-11-10T09:20:05.789Z",
+                "2026-11-10T09:20:26.555Z",
+                "2026-11-10T09:21:01.365Z"
+            ]
+        }
+    },
+    "checks": {
+        "gateRecords": 88,
+        "structuredJudgements": 88,
+        "deterministicResolutions": 2,
+        "judgeErrors": 0,
+        "readinessModelSessions": 7
+    },
+    "integrity": {
+        "manifest": "evidence/EVIDENCE.sha256",
+        "manifestRows": 4837,
+        "signingKeysUnhashed": 94,
+        "evidenceRoot": "campaign root on the analysis dev box (not published; dev-box only)"
+    }
+}
