@@ -176,7 +176,11 @@ for (const testCase of cases) {
         "every permission rule maps to a visible instruction",
         true,
         allMapped && allVisible,
-        JSON.stringify({ rules, mapping, forbidden: testCase.forbiddenInstruction }),
+        JSON.stringify({
+            rules,
+            mapping,
+            forbidden: testCase.forbiddenInstruction,
+        }),
     );
     if (testCase.id === "R04") premiseChecks.r04(liveWork);
     const seeded = runCheck(testCase, liveWork, pristineWork);

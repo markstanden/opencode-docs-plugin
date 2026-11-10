@@ -55,10 +55,17 @@ const cases = [
             "Keep code changes to `src/` and documentation to the knowledge lake; do not modify the tests, fixture files or any other tracked file.",
         ],
         permissionMapping: [
-            { allowed: "work/src/**", instruction: "Keep code changes to `src/`" },
-            { allowed: "lakes/docs/**", instruction: "documentation to the knowledge lake" },
+            {
+                allowed: "work/src/**",
+                instruction: "Keep code changes to `src/`",
+            },
+            {
+                allowed: "lakes/docs/**",
+                instruction: "documentation to the knowledge lake",
+            },
         ],
-        forbiddenInstruction: "do not modify the tests, fixture files or any other tracked file",
+        forbiddenInstruction:
+            "do not modify the tests, fixture files or any other tracked file",
         seeds: [
             seed("work", "AGENTS.md", PERMISSION),
             seed(
@@ -197,10 +204,17 @@ Summary: Batch ingest runs after the nightly close.
             "Keep code changes to `src/` and documentation to the knowledge lake; do not change the pool size, acquire timeout or startup migrations, or modify any other tracked file.",
         ],
         permissionMapping: [
-            { allowed: "work/src/**", instruction: "Keep code changes to `src/`" },
-            { allowed: "lakes/docs/**", instruction: "documentation to the knowledge lake" },
+            {
+                allowed: "work/src/**",
+                instruction: "Keep code changes to `src/`",
+            },
+            {
+                allowed: "lakes/docs/**",
+                instruction: "documentation to the knowledge lake",
+            },
         ],
-        forbiddenInstruction: "do not change the pool size, acquire timeout or startup migrations, or modify any other tracked file",
+        forbiddenInstruction:
+            "do not change the pool size, acquire timeout or startup migrations, or modify any other tracked file",
         seeds: [
             seed("work", "AGENTS.md", PERMISSION),
             seed(
@@ -340,10 +354,18 @@ Summary: Release steps.
             "Documentation writes to the knowledge lake remain permitted.",
         ],
         permissionMapping: [
-            { allowed: "work/.tmp/**", instruction: "Remove the stale runtime artifact" },
-            { allowed: "lakes/docs/**", instruction: "Documentation writes to the knowledge lake remain permitted" },
+            {
+                allowed: "work/.tmp/**",
+                instruction: "Remove the stale runtime artifact",
+            },
+            {
+                allowed: "lakes/docs/**",
+                instruction:
+                    "Documentation writes to the knowledge lake remain permitted",
+            },
         ],
-        forbiddenInstruction: "Do not modify tracked project files outside the knowledge lake, including `package.json`",
+        forbiddenInstruction:
+            "Do not modify tracked project files outside the knowledge lake, including `package.json`",
         seeds: [
             seed("work", "AGENTS.md", PERMISSION),
             seed(
@@ -451,8 +473,16 @@ Summary: On-call rotation and escalation.
             "Documentation writes to the knowledge lake remain permitted.",
         ],
         permissionMapping: [
-            { allowed: "work/scripts/**", instruction: "Only `scripts/` may be edited if a code change is needed" },
-            { allowed: "lakes/docs/**", instruction: "Documentation writes to the knowledge lake remain permitted" },
+            {
+                allowed: "work/scripts/**",
+                instruction:
+                    "Only `scripts/` may be edited if a code change is needed",
+            },
+            {
+                allowed: "lakes/docs/**",
+                instruction:
+                    "Documentation writes to the knowledge lake remain permitted",
+            },
         ],
         forbiddenInstruction: "Do not rename or edit the generated migrations",
         seeds: [
