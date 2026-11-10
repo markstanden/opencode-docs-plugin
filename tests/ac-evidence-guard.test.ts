@@ -127,6 +127,55 @@ test("the clear-reservation command clears a bare marker", () => {
     rmSync(directory, { recursive: true, force: true });
 });
 
+test("judge reserves the attempt before launching and preserves an interrupted call", () => {
+    // Arrange
+    const base = temp();
+    const resultDir = join(base, "results", "stamp", "R01");
+    const attempt = join(resultDir, "ac", "attempt-001");
+    mkdirSync(resultDir, { recursive: true });
+    writeFileSync(join(resultDir, "meta.json"), "{}\n");
+    const truth = join(base, "truth.json");
+    writeFileSync(truth, "{}\n");
+    const launcher = join(base, "launcher.sh");
+    writeFileSync(
+        launcher,
+        `#!/bin/sh\nif [ -f "${attempt}/meta.json" ]; then exit 7; else exit 8; fi\n`,
+    );
+    spawnSync("chmod", ["+x", launcher]);
+
+    // Act
+    const result = spawnSync(
+        process.execPath,
+        [
+            runner,
+            "judge",
+            "--base", base,
+            "--stamp", "stamp",
+            "--case", "R01",
+            "--truth", truth,
+            "--launcher", launcher,
+            "--model", "unused/model",
+            "--workdir", join(base, "runs"),
+        ],
+        { encoding: "utf8" },
+    );
+    const meta = JSON.parse(
+        readFileSync(join(attempt, "meta.json"), "utf8"),
+    ) as { status: string; startedAt?: string; exit?: number };
+    const judgement = JSON.parse(
+        readFileSync(join(attempt, "judgement.json"), "utf8"),
+    ) as { status: string };
+
+    // Assert
+    assert.equal(result.status, 1);
+    assert.equal(meta.status, "finished");
+    assert.ok(meta.startedAt);
+    assert.equal(meta.exit, 7);
+    assert.equal(judgement.status, "judge-error");
+    assert.equal(existsSync(join(attempt, "meta.json")), true);
+    rmSync(base, { recursive: true, force: true });
+});
+
 test("judge refuses a stamp with no recorded trial result", () => {
     // Arrange
     const base = temp();

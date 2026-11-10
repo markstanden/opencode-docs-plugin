@@ -263,19 +263,6 @@ function spawnJudge({ launcher, model, stamp, prompt, runDir, timeout }) {
     });
 }
 
-/** Claim a fresh attempt directory, logging a refusal without deleting it. */
-function claimRecordedAttempt(attemptDir) {
-    mkdirSync(dirname(attemptDir), { recursive: true });
-    const claim = claimAttemptDir(attemptDir);
-    if (!claim.ok) {
-        console.error(
-            `refusing to overwrite attempt at ${attemptDir}: ${claim.reason}`,
-        );
-        return false;
-    }
-    return true;
-}
-
 /** The stored judgement payload for one parsed answer. */
 function judgementPayload(parsed, state) {
     const problems =
@@ -297,7 +284,7 @@ function judgementPayload(parsed, state) {
 
 /** Record a judge attempt's evidence and return its terminal status. */
 function recordJudgement(attemptDir, result, state, model, stamp, caseId) {
-    if (!claimRecordedAttempt(attemptDir)) return 1;
+    const started = readJson(join(attemptDir, "meta.json"));
     writeFileSync(
         join(attemptDir, "output.jsonl"),
         result.stdout ?? "",
@@ -307,6 +294,8 @@ function recordJudgement(attemptDir, result, state, model, stamp, caseId) {
         stamp,
         caseId,
         judgeModel: model,
+        status: "finished",
+        startedAt: started?.startedAt ?? null,
         exit: result.status,
         state,
     });
@@ -429,6 +418,22 @@ function judge(args) {
     const runDir = join(need(args, "--workdir"), `${stamp}-${caseId}`);
     mkdirSync(join(runDir, "work"), { recursive: true });
     writeFileSync(join(runDir, "prompt.md"), prompt, "utf8");
+    mkdirSync(dirname(attemptDir), { recursive: true });
+    const claim = claimAttemptDir(attemptDir);
+    if (!claim.ok) {
+        console.error(
+            `refusing to overwrite attempt at ${attemptDir}: ${claim.reason}`,
+        );
+        return 1;
+    }
+    writeJson(join(attemptDir, "meta.json"), {
+        stamp,
+        caseId,
+        judgeModel: model,
+        status: "started",
+        startedAt: new Date().toISOString(),
+        state,
+    });
     const result = spawnJudge({
         launcher: need(args, "--launcher"),
         model,

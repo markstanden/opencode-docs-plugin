@@ -43,6 +43,14 @@ test("a partial fix that keeps Node 22 as the supported floor is misleading", ()
     assert.equal(verdict(document), "misleading");
 });
 
+test("an explicit rejection of Node 22 is useful, not misleading", () => {
+    // Arrange
+    const document = `Summary: Node 22 is no longer supported; use Node 24 or newer.\n\n### Facts\n\n- Node 22 is no longer supported.\n- Use Node 24 or newer.\n`;
+
+    // Act / Assert
+    assert.equal(verdict(document), "useful-update");
+});
+
 test("a failed-approach mention of 22 does not cancel a completed 24 update", () => {
     // Arrange
     const document = `Summary: This repository requires Node 24 or newer.\n\n### Facts\n\n- \`engines\` is \`>=24\`.\n\n### Failed approaches\n\n- Comparing \`major !== 22\` broke setup.\n`;

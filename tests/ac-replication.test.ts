@@ -136,7 +136,7 @@ test("the new fixtures pass every pristine and counterexample check", () => {
 
     // Assert
     assert.equal(result.status, 0, result.stdout + result.stderr);
-    assert.match(result.stdout, /28\/28 checks passed/);
+    assert.match(result.stdout, /32\/32 checks passed/);
 });
 
 test("every case exposes its scored permission boundary in the prompt", () => {
@@ -161,6 +161,43 @@ test("every case exposes its scored permission boundary in the prompt", () => {
                 `${testCase.id} prompt omits: ${constraint}`,
             );
         }
+    }
+});
+
+test("the R02 preservation review is semantic and evidence-backed", () => {
+    // Arrange
+    const review = JSON.parse(
+        readFileSync(
+            join(
+                here,
+                "..",
+                "docs",
+                "testing",
+                "assets",
+                "description-recording-prose-fresh-replication-r02-preservation-review-2026-11-10.json",
+            ),
+            "utf8",
+        ),
+    ) as {
+        authority: string;
+        cases: Array<{
+            stamp: string;
+            verdict: string;
+            validFacts: Array<{ fact: string; evidence: string }>;
+            obsoleteRemoved: boolean;
+        }>;
+    };
+
+    // Act / Assert
+    assert.equal(review.authority, "semantic-review");
+    assert.equal(review.cases.length, 2);
+    for (const one of review.cases) {
+        assert.equal(one.verdict, "pass");
+        assert.equal(one.validFacts.length, 3);
+        for (const fact of one.validFacts) {
+            assert.ok(fact.evidence.length > 0, `${one.stamp}: ${fact.fact}`);
+        }
+        assert.equal(one.obsoleteRemoved, true);
     }
 });
 
@@ -210,14 +247,19 @@ test("the published attempt ledger reconciles the scored and excluded slots", ()
     assert.equal(ledger.accounting.totals.judgeModelCalls, 33);
 });
 
-test("R02 preservation accepts paraphrase and rejects valid-fact loss", () => {
+test("R02 preservation screen accepts equivalents and rejects contradictions", () => {
     // Arrange
     const script = `
-        import { preservationVerdict } from ${JSON.stringify(join(replication, "preservation.mjs"))};
+        import { preservationScreen } from ${JSON.stringify(join(replication, "preservation.mjs"))};
         const base = "# Pool\\n\\n### Facts\\n\\n";
+        const accepted = (body) => preservationScreen(base + body).status === "accepted";
         const out = {
-          paraphrase: preservationVerdict(base + "- The pool is capped at ten connections.\\n- A caller waits five seconds.\\n- Schema migrations run at start-up.\\n- TLS is required.\\n").accepted,
-          loss: preservationVerdict(base + "- TLS is required.\\n").accepted,
+          paraphrase: accepted("- The pool is capped at ten connections.\\n- A caller waits five seconds for a connection.\\n- Schema migrations run at start-up.\\n- TLS is required.\\n"),
+          loss: accepted("- TLS is required.\\n"),
+          milliseconds: accepted("- The pool holds at most 10 connections.\\n- The acquire timeout is 5000 milliseconds.\\n- Migrations run at application startup.\\n- TLS is required.\\n"),
+          negatedPool: accepted("- The pool is no longer limited to 10 connections.\\n- Acquiring a connection waits up to 5 seconds before failing.\\n- Migrations run at application startup.\\n- TLS is required.\\n"),
+          retryNotTimeout: accepted("- The pool holds at most 10 connections.\\n- The retry delay is 5 seconds.\\n- Migrations run at application startup.\\n- TLS is required.\\n"),
+          negatedMigrations: accepted("- The pool holds at most 10 connections.\\n- Acquiring a connection waits up to 5 seconds before failing.\\n- Migrations never run at startup.\\n- TLS is required.\\n"),
         };
         process.stdout.write(JSON.stringify(out));
     `;
@@ -236,5 +278,9 @@ test("R02 preservation accepts paraphrase and rejects valid-fact loss", () => {
     assert.deepEqual(JSON.parse(result.stdout), {
         paraphrase: true,
         loss: false,
+        milliseconds: true,
+        negatedPool: false,
+        retryNotTimeout: false,
+        negatedMigrations: false,
     });
 });

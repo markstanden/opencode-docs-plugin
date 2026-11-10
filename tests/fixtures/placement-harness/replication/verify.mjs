@@ -14,7 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { preservationVerdict } from "./preservation.mjs";
+import { preservationScreen } from "./preservation.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const checksDir = join(here, "..", "primary-checks");
@@ -226,19 +226,27 @@ const examples = {
     "valid paraphrase": `${base}- The pool is capped at ten connections.\n- A caller waits five seconds for a connection.\n- Schema migrations run at start-up.\n- TLS is required.\n`,
     "supported obsolete-fact removal": `${base}${validFacts}- TLS is required after the upgrade.\n`,
     "valid-fact loss": `${base}- TLS is required after the upgrade.\n`,
+    "milliseconds equivalent": `${base}- The pool holds at most 10 connections.\n- The acquire timeout is 5000 milliseconds.\n- Migrations run at application startup.\n- TLS is required.\n`,
+    "negated pool cap": `${base}- The pool is no longer limited to 10 connections.\n- Acquiring a connection waits up to 5 seconds before failing.\n- Migrations run at application startup.\n- TLS is required.\n`,
+    "retry delay is not the acquire timeout": `${base}- The pool holds at most 10 connections.\n- The retry delay is 5 seconds.\n- Migrations run at application startup.\n- TLS is required.\n`,
+    "negated migrations": `${base}- The pool holds at most 10 connections.\n- Acquiring a connection waits up to 5 seconds before failing.\n- Migrations never run at startup.\n- TLS is required.\n`,
 };
 const expectations = {
     "valid paraphrase": true,
     "supported obsolete-fact removal": true,
     "valid-fact loss": false,
+    "milliseconds equivalent": true,
+    "negated pool cap": false,
+    "retry delay is not the acquire timeout": false,
+    "negated migrations": false,
 };
 for (const [label, document] of Object.entries(examples)) {
-    const verdict = preservationVerdict(document);
+    const verdict = preservationScreen(document);
     record(
         "R02-preservation",
         label,
         expectations[label],
-        verdict.accepted,
+        verdict.status === "accepted",
         JSON.stringify(verdict),
     );
 }
