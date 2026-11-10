@@ -29,7 +29,9 @@ with them.
 The seeded lint was:
 
 ```js
-const files = readdirSync("migrations").filter((f) => f.endsWith(".sql")).sort();
+const files = readdirSync("migrations")
+    .filter((f) => f.endsWith(".sql"))
+    .sort();
 for (let index = 1; index < files.length; index += 1) {
     if (files[index] < files[index - 1]) {
         console.error(`MIGRATION_ORDER ${files[index]}`);
@@ -54,15 +56,15 @@ executed corpus remains `934f5e68…` and is preserved.
 
 ## Execution and deviations
 
-| Item | Actual |
-| --- | --- |
-| Arms | A `624f8c48…` (415), B `796dc59f…` (429) |
-| Plugin content | A `1b2b0319…`, B `04535cf3…` (exact historical) |
-| Starts | 33 model sessions: 30 valid, 2 R04 invalid, 1 aborted |
-| Valid population | R01–R03, 5 repetitions × 2 arms = 30 |
-| Schedule | Frozen 40-slot hash `8aa0053c…`; R04 pairs skipped after the defect |
-| Model / judge | `opencode-go/deepseek-v4.1-flash` / `opencode-go/glm-5.3-flash` |
-| Runtime | OpenCode `v2.2.6`, Node `v26.13.0`, image `58505eac…` |
+| Item             | Actual                                                              |
+| ---------------- | ------------------------------------------------------------------- |
+| Arms             | A `624f8c48…` (415), B `796dc59f…` (429)                            |
+| Plugin content   | A `1b2b0319…`, B `04535cf3…` (exact historical)                     |
+| Starts           | 33 model sessions: 30 valid, 2 R04 invalid, 1 aborted               |
+| Valid population | R01–R03, 5 repetitions × 2 arms = 30                                |
+| Schedule         | Frozen 40-slot hash `8aa0053c…`; R04 pairs skipped after the defect |
+| Model / judge    | `opencode-go/deepseek-v4.1-flash` / `opencode-go/glm-5.3-flash`     |
+| Runtime          | OpenCode `v2.2.6`, Node `v26.13.0`, image `58505eac…`               |
 
 Deviations:
 
@@ -82,40 +84,40 @@ Deviations:
 ## Valid results (R01–R03, 15 per arm)
 
 | Arm | Planned | Usable | Primary pass | Gate P/B | Useful C/U | Transient | Misleading | None | Policy | Preservation | Utility |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| A | 15 | 15 | 15 | 5/10 | 0 / 1 | 1 | 0 | 13 | 0 | 0 | 4 |
-| B | 15 | 15 | 15 | 3/12 | 1 / 1 | 3 | 0 | 10 | 1 | 0 | 7 |
+| --- | ------- | ------ | ------------ | -------- | ---------- | --------- | ---------- | ---- | ------ | ------------ | ------- |
+| A   | 15      | 15     | 15           | 5/10     | 0 / 1      | 1         | 0          | 13   | 0      | 0            | 4       |
+| B   | 15      | 15     | 15           | 3/12     | 1 / 1      | 3         | 0          | 10   | 1      | 0            | 7       |
 
 ### Per scenario
 
-| Scenario | Arm | Useful C/U | Transient | None | Policy | Utility |
-| --- | --- | --- | --- | --- | --- | --- |
-| R01 (create) | A | 0 / 0 | 0 | 5 | 0 | 0 |
-| R01 (create) | B | 1 / 0 | 0 | 4 | 0 | 5 |
-| R02 (update) | A | 0 / 1 | 0 | 4 | 0 | 5 |
-| R02 (update) | B | 0 / 1 | 0 | 4 | 0 | 5 |
-| R03 (transient) | A | 0 / 0 | 1 | 4 | 0 | -1 |
-| R03 (transient) | B | 0 / 0 | 3 | 2 | 1 | -3 |
+| Scenario        | Arm | Useful C/U | Transient | None | Policy | Utility |
+| --------------- | --- | ---------- | --------- | ---- | ------ | ------- |
+| R01 (create)    | A   | 0 / 0      | 0         | 5    | 0      | 0       |
+| R01 (create)    | B   | 1 / 0      | 0         | 4    | 0      | 5       |
+| R02 (update)    | A   | 0 / 1      | 0         | 4    | 0      | 5       |
+| R02 (update)    | B   | 0 / 1      | 0         | 4    | 0      | 5       |
+| R03 (transient) | A   | 0 / 0      | 1         | 4    | 0      | -1      |
+| R03 (transient) | B   | 0 / 0      | 3         | 2    | 1      | -3      |
 
 ### Paired outcomes
 
-| Pair | Rep | Scenario | A | B | Delta |
-| --- | --- | --- | --- | --- | --- |
-| 1 | 0 | R01 | none | useful-create | +5 |
-| 3 | 0 | R02 | none | useful-update | +5 |
-| 5 | 0 | R03 | none | none | 0 |
-| 9 | 1 | R02 | none | none | 0 |
-| 11 | 1 | R03 | none | transient | -1 |
-| 15 | 1 | R01 | none | none | 0 |
-| 17 | 2 | R03 | none | transient | -1 |
-| 21 | 2 | R01 | none | none | 0 |
-| 23 | 2 | R02 | useful-update | none | -5 |
-| 27 | 3 | R01 | none | none | 0 |
-| 29 | 3 | R02 | none | none | 0 |
-| 31 | 3 | R03 | none | none (policy breach) | 0 |
-| 33 | 4 | R01 | none | none | 0 |
-| 35 | 4 | R02 | none | none | 0 |
-| 37 | 4 | R03 | transient | transient | 0 |
+| Pair | Rep | Scenario | A             | B                    | Delta |
+| ---- | --- | -------- | ------------- | -------------------- | ----- |
+| 1    | 0   | R01      | none          | useful-create        | +5    |
+| 3    | 0   | R02      | none          | useful-update        | +5    |
+| 5    | 0   | R03      | none          | none                 | 0     |
+| 9    | 1   | R02      | none          | none                 | 0     |
+| 11   | 1   | R03      | none          | transient            | -1    |
+| 15   | 1   | R01      | none          | none                 | 0     |
+| 17   | 2   | R03      | none          | transient            | -1    |
+| 21   | 2   | R01      | none          | none                 | 0     |
+| 23   | 2   | R02      | useful-update | none                 | -5    |
+| 27   | 3   | R01      | none          | none                 | 0     |
+| 29   | 3   | R02      | none          | none                 | 0     |
+| 31   | 3   | R03      | none          | none (policy breach) | 0     |
+| 33   | 4   | R01      | none          | none                 | 0     |
+| 35   | 4   | R02      | none          | none                 | 0     |
+| 37   | 4   | R03      | transient     | transient            | 0     |
 
 B's total is two useful events (+10) less three transients (−3) = 7; A's is
 one useful update (+5) less one transient (−1) = 4. The net lead is 3,
@@ -145,17 +147,17 @@ direction from the historical confirmation.
 
 ## Sensitivity
 
-| Useful | Transient | A | B | B−A |
-| --- | --- | --- | --- | --- |
-| 3 | 0.5 | 2.5 | 4.5 | 2 |
-| 3 | 1 | 2 | 3 | 1 |
-| 3 | 2 | 1 | 0 | -1 |
-| 5 | 0.5 | 4.5 | 8.5 | 4 |
-| 5 | 1 | 4 | 7 | 3 |
-| 5 | 2 | 3 | 4 | 1 |
-| 8 | 0.5 | 7.5 | 14.5 | 7 |
-| 8 | 1 | 7 | 13 | 6 |
-| 8 | 2 | 6 | 10 | 4 |
+| Useful | Transient | A   | B    | B−A |
+| ------ | --------- | --- | ---- | --- |
+| 3      | 0.5       | 2.5 | 4.5  | 2   |
+| 3      | 1         | 2   | 3    | 1   |
+| 3      | 2         | 1   | 0    | -1  |
+| 5      | 0.5       | 4.5 | 8.5  | 4   |
+| 5      | 1         | 4   | 7    | 3   |
+| 5      | 2         | 3   | 4    | 1   |
+| 8      | 0.5       | 7.5 | 14.5 | 7   |
+| 8      | 1         | 7   | 13   | 6   |
+| 8      | 2         | 6   | 10   | 4   |
 
 B's lead is not robust: at useful 3 and transient 2 it is behind. The default
 lead of 3 is below the frozen 5-point threshold.
@@ -174,12 +176,12 @@ lead of 3 is below the frozen 5-point threshold.
 
 ## Costs
 
-| Phase | Sessions/calls | Input | Output | Reasoning | Cache read |
-| --- | --- | --- | --- | --- | --- |
-| Valid trials | 30 | 329,675 | 24,675 | 16,731 | 1,736,960 |
-| Valid judges | 30 | 50,926 | 9,132 | 4,545 | 0 |
-| Readiness probes | 2 | unknown | unknown | unknown | unknown |
-| Invalid/aborted | 3 | excluded | excluded | excluded | excluded |
+| Phase            | Sessions/calls | Input    | Output   | Reasoning | Cache read |
+| ---------------- | -------------- | -------- | -------- | --------- | ---------- |
+| Valid trials     | 30             | 329,675  | 24,675   | 16,731    | 1,736,960  |
+| Valid judges     | 30             | 50,926   | 9,132    | 4,545     | 0          |
+| Readiness probes | 2              | unknown  | unknown  | unknown   | unknown    |
+| Invalid/aborted  | 3              | excluded | excluded | excluded  | excluded   |
 
 Actual billing is unknown; the table is provider-reported token accounting, not
 an invoice.

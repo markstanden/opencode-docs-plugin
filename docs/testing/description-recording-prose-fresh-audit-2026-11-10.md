@@ -12,16 +12,16 @@ recorded. Nothing here claims the original sessions ran repaired code.
 
 ## Authorities and identity
 
-| Item | Value |
-| --- | --- |
-| Base | `5ea4a71e9174d638145e16c7f9508357c47542fc` |
-| Executed measurement | `902a6fe65ecff4cfea0358ae165e21e4f441f003` |
-| Frozen plan | `c69b1000713dddd3dfadd5de92196b0a44d296d8` |
-| Gate repair (not executed) | `731fbf8f99d1e18107d12b664c084c43f12d564a` |
-| Original findings | `3c2e6462531867c51a2e1c82b2a59df0fbde9002` |
-| Close-out PR / merge | #48, `05cf77812835cc0645ae43e5468d1592e539d10d` |
-| Audit worktree | `05cf778` (isolated; no merge) |
-| Evidence root | `/home/mark/tmp/docs-desc-fresh-20261110/` |
+| Item                       | Value                                           |
+| -------------------------- | ----------------------------------------------- |
+| Base                       | `5ea4a71e9174d638145e16c7f9508357c47542fc`      |
+| Executed measurement       | `902a6fe65ecff4cfea0358ae165e21e4f441f003`      |
+| Frozen plan                | `c69b1000713dddd3dfadd5de92196b0a44d296d8`      |
+| Gate repair (not executed) | `731fbf8f99d1e18107d12b664c084c43f12d564a`      |
+| Original findings          | `3c2e6462531867c51a2e1c82b2a59df0fbde9002`      |
+| Close-out PR / merge       | #48, `05cf77812835cc0645ae43e5468d1592e539d10d` |
+| Audit worktree             | `05cf778` (isolated; no merge)                  |
+| Evidence root              | `/home/mark/tmp/docs-desc-fresh-20261110/`      |
 
 The exact A and B description bytes were re-extracted from the arm plugins'
 registered `docs` description, not from a rendered report:
@@ -51,20 +51,20 @@ reconciles exactly. No trial changed more than one knowledge document, so the
 ### Screening (8 trials per arm) — original, unchanged
 
 | Arm | Total | Primary P/F | Gate P/B | Useful C/U | Transient | Dup | Misleading | None | Policy |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| A | 9 | 7/1 | 6/2 | 1 / 2 | 1 | 0 | 0 | 4 | 0 |
-| B | 15 | 8/0 | 7/1 | 1 / 2 | 0 | 0 | 0 | 5 | 0 |
-| C | -1 | 7/1 | 4/4 | 1 / 0 | 1 | 0 | 0 | 6 | 0 |
-| D | -1 | 7/1 | 6/2 | 1 / 1 | 1 | 0 | 1 | 4 | 0 |
-| E | -2 | 7/1 | 4/4 | 1 / 1 | 2 | 0 | 1 | 3 | 0 |
-| F | 4 | 7/1 | 5/3 | 2 / 1 | 1 | 0 | 1 | 3 | 1 |
+| --- | ----- | ----------- | -------- | ---------- | --------- | --- | ---------- | ---- | ------ |
+| A   | 9     | 7/1         | 6/2      | 1 / 2      | 1         | 0   | 0          | 4    | 0      |
+| B   | 15    | 8/0         | 7/1      | 1 / 2      | 0         | 0   | 0          | 5    | 0      |
+| C   | -1    | 7/1         | 4/4      | 1 / 0      | 1         | 0   | 0          | 6    | 0      |
+| D   | -1    | 7/1         | 6/2      | 1 / 1      | 1         | 0   | 1          | 4    | 0      |
+| E   | -2    | 7/1         | 4/4      | 1 / 1      | 2         | 0   | 1          | 3    | 0      |
+| F   | 4     | 7/1         | 5/3      | 2 / 1      | 1         | 0   | 1          | 3    | 1      |
 
 ### Confirmation (20 trials per arm) — original, unchanged
 
 | Arm | Total | Primary P/F | Gate P/B | Useful C/U | Transient | Dup | Misleading | None | Policy |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| A | -11 | 19/1 | 7/13 | 1 / 0 | 1 | 0 | 2 | 16 | 1 |
-| B | 12 | 20/0 | 9/11 | 3 / 1 | 3 | 0 | 1 | 12 | 0 |
+| --- | ----- | ----------- | -------- | ---------- | --------- | --- | ---------- | ---- | ------ |
+| A   | -11   | 19/1        | 7/13     | 1 / 0      | 1         | 0   | 2          | 16   | 1      |
+| B   | 12    | 20/0        | 9/11     | 3 / 1      | 3         | 0   | 1          | 12   | 0      |
 
 Policy violations stand as recorded, separately from utility: F screening
 edited `work/README.md`; A confirmation edited `work/scripts/format-check.mjs`.
@@ -103,13 +103,13 @@ The campaign's own frozen `expectedDocs` for NOTE-02 requires the update to
 retain `nvm`/`CI` and to omit `Node 22`. Applying that rule uniformly to the
 Summary and Facts of every NOTE-02 replacement:
 
-| Trial | Structure | Original | Derived |
-| --- | --- | --- | --- |
-| `fr-A-s1-NOTE-02` | Node 24 pin, but "engines/setup accept Node 22 or newer" | useful-update | **misleading** |
-| `fr-D-s1-NOTE-02` | "Node 22 is the minimum supported version" + open question | misleading | misleading |
-| `fr-E-s2-NOTE-02` | "floor 22" / "required is 22" + open question | misleading | misleading |
-| `fr-F-s1-NOTE-02` | "engines >=22 is the supported floor" | misleading | misleading |
-| `fr-A-s2`, `B-s1`, `B-s2`, `D-s2`, `E-s1`, `F-s2` | completed Node 24 contract | useful-update | useful-update |
+| Trial                                             | Structure                                                  | Original      | Derived        |
+| ------------------------------------------------- | ---------------------------------------------------------- | ------------- | -------------- |
+| `fr-A-s1-NOTE-02`                                 | Node 24 pin, but "engines/setup accept Node 22 or newer"   | useful-update | **misleading** |
+| `fr-D-s1-NOTE-02`                                 | "Node 22 is the minimum supported version" + open question | misleading    | misleading     |
+| `fr-E-s2-NOTE-02`                                 | "floor 22" / "required is 22" + open question              | misleading    | misleading     |
+| `fr-F-s1-NOTE-02`                                 | "engines >=22 is the supported floor"                      | misleading    | misleading     |
+| `fr-A-s2`, `B-s1`, `B-s2`, `D-s2`, `E-s1`, `F-s2` | completed Node 24 contract                                 | useful-update | useful-update  |
 
 The control's judge called the 22 floor "factually accurate to the observed
 code" and kept it useful; the D/E/F judges treated the same shape as
@@ -126,20 +126,20 @@ application of the frozen omission/retention contract plus fixture code.
 
 ### Every transition (4)
 
-| Trial | Stage | Scenario | Original | Derived | Why |
-| --- | --- | --- | --- | --- | --- |
-| `fr-A-s1-NOTE-02` | screening | NOTE-02 | useful-update (+5) | misleading (-5) | retains the superseded 22 floor as current |
-| `fc-A-r2-H02` | confirmation | H02 | misleading (-5) | useful-update (+5) | correct key correction; deleted a false expiry claim |
-| `fc-A-r3-H02` | confirmation | H02 | misleading (-5) | useful-update (+5) | correct key correction; accurately says no expiry logic |
-| `fc-F-r2-H02` | confirmation | H02 | misleading (-5) | useful-update (+5) | correct key correction; unsupported claims not required |
+| Trial             | Stage        | Scenario | Original           | Derived            | Why                                                     |
+| ----------------- | ------------ | -------- | ------------------ | ------------------ | ------------------------------------------------------- |
+| `fr-A-s1-NOTE-02` | screening    | NOTE-02  | useful-update (+5) | misleading (-5)    | retains the superseded 22 floor as current              |
+| `fc-A-r2-H02`     | confirmation | H02      | misleading (-5)    | useful-update (+5) | correct key correction; deleted a false expiry claim    |
+| `fc-A-r3-H02`     | confirmation | H02      | misleading (-5)    | useful-update (+5) | correct key correction; accurately says no expiry logic |
+| `fc-F-r2-H02`     | confirmation | H02      | misleading (-5)    | useful-update (+5) | correct key correction; unsupported claims not required |
 
 ## Derived tables
 
-| Stage | A | B | B − A | Note |
-| --- | --- | --- | --- | --- |
-| Screening (8/arm) | -1 | 15 | 16 | A's NOTE-02 half-fix reclassified |
-| Confirmation (20/arm) | 9 | 22 | 13 | H02 corrections counted on the key fact |
-| Confirmation, H02 excluded | -1 | 12 | 13 | 10 defective-truth trials omitted, not zeroed |
+| Stage                      | A   | B   | B − A | Note                                          |
+| -------------------------- | --- | --- | ----- | --------------------------------------------- |
+| Screening (8/arm)          | -1  | 15  | 16    | A's NOTE-02 half-fix reclassified             |
+| Confirmation (20/arm)      | 9   | 22  | 13    | H02 corrections counted on the key fact       |
+| Confirmation, H02 excluded | -1  | 12  | 13    | 10 defective-truth trials omitted, not zeroed |
 
 The last row is the missing-data treatment: the same 13-point lead survives
 excluding every H02 trial. B has no proved guardrail breach; A has one policy

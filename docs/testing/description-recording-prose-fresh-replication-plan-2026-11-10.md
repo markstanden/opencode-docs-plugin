@@ -27,28 +27,28 @@ The strings were extracted from the arm plugins' registered `docs`
 description, not reconstructed from a report. The provider-boundary probes
 captured both byte-exactly (415/429, same hashes) in a real request body.
 
-| Identity | Value |
-| --- | --- |
-| Control plugin content hash | `1b2b0319759cfe7a48373ab72b946d3ab416e91e1d0ec597349da82fd5d05df8` |
-| Finalist plugin content hash | `04535cf3b9efece2edb9cc72e1dbbe57fa36e269688623c9d6eac61ee30bbd88` |
-| Arm A commit / tree | `624f8c48a7c41874ca60158963d80b23feda7d3b` / `abaf7d757540b2668e25dfdd1d377b78e0ac0ec0` |
-| Arm B commit / tree | `796dc59f15e6e0b50e8b4680bc2a46ba761f2d3b` / `5571aa66657e185bd2b3100a05f317fc30005399` |
-| Base for both arms | `bf767ea` plus the audited gate repairs; `src/` identical to `902a6fe` |
-| Corpus | `934f5e683113c10d94a4722ddac584b4e267e3b11bc45590fc26419871e2de0b` |
-| Truth | `066615127cbb629ff160f2cf9e1f251bde6f1f3cbfd1b055ec6b9495aefed3d5` |
-| Schedule hash | `8aa0053c7a27265e7772db7f476eca22683fdc26681c16f4218daea752bbe2b4` |
-| Workhorse / judge | `opencode-go/deepseek-v4.1-flash` / `opencode-go/glm-5.3-flash` |
-| Runtime | OpenCode `v2.2.6`; Node `v26.13.0`; image `58505eac2fe9161a02db4719e6a8a34e9106b644e9eee0aaa00184269b643beb` |
-| Evidence root | `/home/mark/tmp/docs-desc-fresh-20261110/r2/` (dev-box only) |
+| Identity                     | Value                                                                                                        |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Control plugin content hash  | `1b2b0319759cfe7a48373ab72b946d3ab416e91e1d0ec597349da82fd5d05df8`                                           |
+| Finalist plugin content hash | `04535cf3b9efece2edb9cc72e1dbbe57fa36e269688623c9d6eac61ee30bbd88`                                           |
+| Arm A commit / tree          | `624f8c48a7c41874ca60158963d80b23feda7d3b` / `abaf7d757540b2668e25dfdd1d377b78e0ac0ec0`                      |
+| Arm B commit / tree          | `796dc59f15e6e0b50e8b4680bc2a46ba761f2d3b` / `5571aa66657e185bd2b3100a05f317fc30005399`                      |
+| Base for both arms           | `bf767ea` plus the audited gate repairs; `src/` identical to `902a6fe`                                       |
+| Corpus                       | `934f5e683113c10d94a4722ddac584b4e267e3b11bc45590fc26419871e2de0b`                                           |
+| Truth                        | `066615127cbb629ff160f2cf9e1f251bde6f1f3cbfd1b055ec6b9495aefed3d5`                                           |
+| Schedule hash                | `8aa0053c7a27265e7772db7f476eca22683fdc26681c16f4218daea752bbe2b4`                                           |
+| Workhorse / judge            | `opencode-go/deepseek-v4.1-flash` / `opencode-go/glm-5.3-flash`                                              |
+| Runtime                      | OpenCode `v2.2.6`; Node `v26.13.0`; image `58505eac2fe9161a02db4719e6a8a34e9106b644e9eee0aaa00184269b643beb` |
+| Evidence root                | `/home/mark/tmp/docs-desc-fresh-20261110/r2/` (dev-box only)                                                 |
 
 ## Scenarios (newly authored holdouts)
 
-| Case | Opportunity | Task |
-| --- | --- | --- |
-| R01 | useful create | vendor CSV carries a UTF-8 BOM; strip only the leading BOM |
-| R02 | useful correction | TLS must be required; preserve pool 10, 5-second acquire timeout and startup migrations |
-| R03 | transient only | stale machine-local `.tmp/dev.sock` after a killed dev server |
-| R04 | already covered | lexical migration-lint `MIGRATION_ORDER` is deliberate; `npm test` is the gate |
+| Case | Opportunity       | Task                                                                                    |
+| ---- | ----------------- | --------------------------------------------------------------------------------------- |
+| R01  | useful create     | vendor CSV carries a UTF-8 BOM; strip only the leading BOM                              |
+| R02  | useful correction | TLS must be required; preserve pool 10, 5-second acquire timeout and startup migrations |
+| R03  | transient only    | stale machine-local `.tmp/dev.sock` after a killed dev server                           |
+| R04  | already covered   | lexical migration-lint `MIGRATION_ORDER` is deliberate; `npm test` is the gate          |
 
 R01–R04 were authored by this agent after reading the prior findings; they are
 newly authored holdouts, not independent validation. Five repetitions of one

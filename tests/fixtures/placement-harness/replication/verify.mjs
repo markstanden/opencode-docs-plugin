@@ -128,7 +128,7 @@ const fixes = {
 };
 
 const premiseChecks = {
-    R04(work) {
+    r04(work) {
         const result = spawnSync("npm", ["run", "lint", "--silent"], {
             cwd: work,
             encoding: "utf8",
@@ -154,7 +154,7 @@ for (const testCase of cases) {
 
     const liveRoot = mkdtempSync(join(tmpdir(), `live-${testCase.id}-`));
     const liveWork = materialise(testCase, liveRoot);
-    premiseChecks[testCase.id]?.(liveWork);
+    if (testCase.id === "R04") premiseChecks.r04(liveWork);
     const seeded = runCheck(testCase, liveWork, pristineWork);
     const seededPasses = testCase.id === "R04";
     record(
