@@ -434,13 +434,16 @@ Summary: On-call rotation and escalation.
                 "scripts/lint-migrations.mjs",
                 `import { readdirSync } from "node:fs";
 
-const files = readdirSync("migrations")
-    .filter((file) => file.endsWith(".sql"))
-    .sort();
-for (let index = 1; index < files.length; index += 1) {
-    if (files[index] < files[index - 1]) {
-        console.error(\`MIGRATION_ORDER \${files[index]}\`);
+const files = readdirSync("migrations").filter((file) => file.endsWith(".sql"));
+const lexical = [...files].sort();
+const numeric = [...files].sort(
+    (left, right) => Number.parseInt(left, 10) - Number.parseInt(right, 10),
+);
+for (let index = 0; index < numeric.length; index += 1) {
+    if (lexical[index] !== numeric[index]) {
+        console.error(\`MIGRATION_ORDER \${numeric[index]}\`);
         process.exitCode = 1;
+        break;
     }
 }
 console.log(\`checked \${files.length} migrations\`);

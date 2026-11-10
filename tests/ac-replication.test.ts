@@ -136,7 +136,7 @@ test("the new fixtures pass every pristine and counterexample check", () => {
 
     // Assert
     assert.equal(result.status, 0, result.stdout + result.stderr);
-    assert.match(result.stdout, /15\/15 checks passed/);
+    assert.match(result.stdout, /16\/16 checks passed/);
 });
 
 test("R02 preservation accepts paraphrase and rejects valid-fact loss", () => {

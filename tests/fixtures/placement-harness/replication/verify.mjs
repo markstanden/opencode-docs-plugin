@@ -127,6 +127,25 @@ const fixes = {
     },
 };
 
+const premiseChecks = {
+    R04(work) {
+        const result = spawnSync("npm", ["run", "lint", "--silent"], {
+            cwd: work,
+            encoding: "utf8",
+            timeout: 60000,
+        });
+        const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+        record(
+            "R04",
+            "premise: lint reports the 002 inversion",
+            true,
+            result.status !== 0 &&
+                output.includes("MIGRATION_ORDER 002_add_index.sql"),
+            output,
+        );
+    },
+};
+
 for (const testCase of cases) {
     const pristineRoot = mkdtempSync(
         join(tmpdir(), `pristine-${testCase.id}-`),
@@ -135,6 +154,7 @@ for (const testCase of cases) {
 
     const liveRoot = mkdtempSync(join(tmpdir(), `live-${testCase.id}-`));
     const liveWork = materialise(testCase, liveRoot);
+    premiseChecks[testCase.id]?.(liveWork);
     const seeded = runCheck(testCase, liveWork, pristineWork);
     const seededPasses = testCase.id === "R04";
     record(
