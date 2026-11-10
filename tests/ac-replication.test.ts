@@ -136,7 +136,7 @@ test("the new fixtures pass every pristine and counterexample check", () => {
 
     // Assert
     assert.equal(result.status, 0, result.stdout + result.stderr);
-    assert.match(result.stdout, /22\/22 checks passed/);
+    assert.match(result.stdout, /28\/28 checks passed/);
 });
 
 test("every case exposes its scored permission boundary in the prompt", () => {

@@ -163,6 +163,21 @@ for (const testCase of cases) {
             constraint,
         );
     }
+    const rules = testCase.mutationPolicy?.allowed ?? [];
+    const mapping = testCase.permissionMapping ?? [];
+    const mapped = new Set(mapping.map((one) => one.allowed));
+    const allMapped =
+        rules.length === mapped.size && rules.every((rule) => mapped.has(rule));
+    const allVisible =
+        mapping.every((one) => testCase.taskPrompt.includes(one.instruction)) &&
+        testCase.taskPrompt.includes(testCase.forbiddenInstruction ?? "");
+    record(
+        testCase.id,
+        "every permission rule maps to a visible instruction",
+        true,
+        allMapped && allVisible,
+        JSON.stringify({ rules, mapping, forbidden: testCase.forbiddenInstruction }),
+    );
     if (testCase.id === "R04") premiseChecks.r04(liveWork);
     const seeded = runCheck(testCase, liveWork, pristineWork);
     const seededPasses = testCase.id === "R04";

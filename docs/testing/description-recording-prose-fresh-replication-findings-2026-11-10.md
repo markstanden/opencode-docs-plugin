@@ -63,7 +63,7 @@ Repair (commit `097454f`): the lint now compares lexical against numeric order
 and reports the first inversion; the deterministic verifier asserts the
 premise (`MIGRATION_ORDER 002_add_index.sql`) as well as the seeded/intended/
 wrong-fix checks. Repaired corpus hash
-`830930c4129de86d538d2c3ca0c33ae0cb1dd5fb855aa1347f43720d91cfd4cd`; the
+`74457aae26d3bb14108437baace18dc59abd953806b05e3807c041149994b1e0`; the
 executed corpus remains `934f5e68…` and is preserved.
 
 ## Execution and deviations
@@ -149,7 +149,7 @@ slot. The schedule was not restarted; it was resumed at 12:15:12Z with
   12:06:45Z and 12:28:30Z.
 - R04 pairs r1–r4 were never started. The R04 r0 pair is retained as invalid.
 - The resumed slots used the pre-repair corpus `934f5e68…`; the repaired corpus
-  `830930c4…` exists only in the audit branch and was not executed.
+  `74457aae…` exists only in the audit branch and was not executed.
 - The `rr-B-r1-R02` pair is split in the record: its A slot completed at
   12:13:02Z, its B slot was aborted, then rerun at 12:15:12Z.
 - The pause between 12:12:19Z and 12:15:12Z was used to prove and repair the
@@ -309,9 +309,12 @@ The revised R03 scenario makes the boundary visible to both arms:
 > tracked project files outside the knowledge lake, including `package.json`.
 
 The detailed rubric stays hidden. The revised prompt is in the replication
-corpus (`830930c4…`); **it was not executed**. Every case now carries a
-`visibleConstraints` list, and the fixture verifier asserts each constraint
-appears in the task prompt. That is the permission-visibility check for the
+corpus (`74457aae…`); **it was not executed**. Every case now carries a
+`visibleConstraints` list and a `permissionMapping`; the fixture verifier
+asserts each constraint appears in the task prompt, every `mutationPolicy`
+allowed rule maps to a visible instruction, and the general forbidden
+instruction is present. This is the reverse check that an omitted list entry
+cannot leave a hidden permission restriction. That is the permission-visibility check for the
 next campaign.
 
 ## Transient clutter
@@ -369,7 +372,7 @@ an invoice.
 
 ## Decision
 
-**Exact B is unassessed; the replication is incomplete and inconclusive.**
+**B’s confirmation remains incomplete and inconclusive.**
 The all-scored partial gives B a descriptive +3, but the **13 complete pairs
 lean A by 2**, and the +3 comes from an unmatched B observation. The frozen
 5-point criterion was specified for the full 40-session design (20 trials per
