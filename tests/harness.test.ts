@@ -1573,6 +1573,81 @@ test("F04: in-policy writes judge; out-of-policy writes invalidate despite --all
     rmRoot(root);
 });
 
+test("gate-only: records the deterministic gate verdict without a judge call", () => {
+    const root = newRoot("gate-only");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [
+        recordingCase("T01", {
+            mutationPolicy: { allowed: ["lakes/kb/**"], minWrites: 1 },
+        }),
+    ]);
+
+    // A recording case that writes nothing cannot satisfy its required write.
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "empty", ...commandArgs(paths)],
+            { FAKE_TRIAL_OUT: file(root, "trial-empty.jsonl", ANSWER_JSONL()) },
+        ).status,
+        0,
+    );
+    const marker = file(root, "judge-prompt-seen", "");
+    rmSync(marker);
+    const blocked = runHarness(
+        root,
+        fake,
+        ["judge", "T01", "--stamp", "empty", "--gate-only", ...commandArgs(paths)],
+        { FAKE_JUDGE_PROMPT_OUT: marker },
+    );
+    assert.notEqual(blocked.status, 0);
+    const blockedGate = readJson(
+        join(paths.results, "empty", "T01", "gate.json"),
+    );
+    assert.equal(blockedGate.status, "blocked");
+    assert.match(blockedGate.reason, /policy requires 1/);
+    assert.equal(existsSync(marker), false);
+    assert.equal(
+        existsSync(join(paths.results, "empty", "T01", "verdict.json")),
+        false,
+    );
+
+    // An in-policy write satisfies the same gate; still no judge call.
+    const hook = file(
+        root,
+        "in-policy.sh",
+        '#!/bin/sh\necho "- fresh knowledge" >> ../lakes/kb/existing.md\n',
+    );
+    assert.equal(
+        runHarness(
+            root,
+            fake,
+            ["run", "T01", "--stamp", "ok", ...commandArgs(paths)],
+            {
+                FAKE_TRIAL_OUT: file(root, "trial-ok.jsonl", ANSWER_JSONL()),
+                FAKE_TRIAL_HOOK: hook,
+            },
+        ).status,
+        0,
+    );
+    const passed = runHarness(
+        root,
+        fake,
+        ["judge", "T01", "--stamp", "ok", "--gate-only", ...commandArgs(paths)],
+        { FAKE_JUDGE_PROMPT_OUT: marker },
+    );
+    assert.equal(passed.status, 0);
+    const passedGate = readJson(join(paths.results, "ok", "T01", "gate.json"));
+    assert.equal(passedGate.status, "pass");
+    assert.equal(passedGate.reason, null);
+    assert.equal(existsSync(marker), false);
+    assert.equal(
+        existsSync(join(paths.results, "ok", "T01", "verdict.json")),
+        false,
+    );
+    rmRoot(root);
+});
+
 test("F04: decision-only baseline keeps the legacy --allow-writes semantics", () => {
     const root = newRoot("f04-legacy");
     const fake = writeFakeOpencode(root);
