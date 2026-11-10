@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -107,6 +107,23 @@ test("the frozen A and B assets are the exact historical bytes", () => {
         hash(b),
         "09c9cebd09aebf2717802c66aa18def0f9ebeabff079016afe874a9579330d4e",
     );
+});
+
+test("the AC judge launcher is executable on a clean checkout", () => {
+    // Arrange
+    const launcher = join(
+        here,
+        "fixtures",
+        "placement-harness",
+        "ac",
+        "judge-launcher.sh",
+    );
+
+    // Act
+    const mode = statSync(launcher).mode;
+
+    // Assert
+    assert.ok((mode & 0o111) !== 0, `${launcher} is not executable`);
 });
 
 test("the new fixtures pass every pristine and counterexample check", () => {
