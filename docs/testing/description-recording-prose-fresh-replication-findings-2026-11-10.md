@@ -157,7 +157,7 @@ not the frozen 40-session design. The 30 scored trials are internally paired by
 scenario and repetition, but the four-scenario population is incomplete and
 two pairs contain a replacement observation.
 
-## Valid results (R01–R03, 15 per arm)
+## Scored results (R01–R03, 15 per arm)
 
 | Arm | Planned | Usable | Primary pass | Gate P/B | Useful C/U | Transient | Misleading | None | Policy | Preservation | Utility |
 | --- | ------- | ------ | ------------ | -------- | ---------- | --------- | ---------- | ---- | ------ | ------------ | ------- |
