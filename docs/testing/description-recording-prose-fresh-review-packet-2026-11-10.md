@@ -1,3 +1,9 @@
+---
+Area: Testing
+Keywords: review-packet, prose-comparison, native-description, preservation, evidence
+Summary: Committed review evidence for the 2026-11-10 six-arm prose comparison — sanitised 88-trial table, identities, selection record, sensitivity and decisive excerpts, with the preservation-rule correction and the non-interleaved confirmation stated up front.
+---
+
 # Campaign review packet: native-description prose comparison, 2026-11-10
 
 Committed review evidence for the six-arm description comparison. The raw
