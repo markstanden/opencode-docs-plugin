@@ -127,7 +127,10 @@ test("the clear-reservation command clears a bare marker", () => {
     rmSync(directory, { recursive: true, force: true });
 });
 
-test("judge reserves the attempt before launching and preserves an interrupted call", () => {
+test("judge reserves the attempt before launching and records a failed launcher attempt", () => {
+    // This proves reservation ordering (the launcher sees meta.json before it
+    // runs) and persistence after a failed call; it does not simulate an OS
+    // kill of the parent judge process.
     // Arrange
     const base = temp();
     const resultDir = join(base, "results", "stamp", "R01");
@@ -219,13 +222,16 @@ test("judge refuses a stamp with no recorded trial result", () => {
     rmSync(base, { recursive: true, force: true });
 });
 
-test("judge refuses an existing attempt without a judgement", () => {
+test("judge refuses an interrupted attempt that has started metadata", () => {
     // Arrange
     const base = temp();
     const resultDir = join(base, "results", "stamp", "R01");
     const attempt = join(resultDir, "ac", "attempt-001");
     mkdirSync(attempt, { recursive: true });
-    writeFileSync(join(resultDir, "meta.json"), "{}\n");
+    writeFileSync(
+        join(resultDir, "meta.json"),
+        '{"status":"started","startedAt":"2026-11-10T00:00:00Z"}\n',
+    );
     writeFileSync(join(attempt, "output.jsonl"), "original\n");
     const truth = join(base, "truth.json");
     writeFileSync(truth, "{}\n");

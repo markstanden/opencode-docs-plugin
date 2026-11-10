@@ -380,11 +380,12 @@ an invoice.
 
 - **Judge attempts are reserved before the model call.** `judge` claims
   `attempt-001` and writes `meta.json` with `status: "started"`, `startedAt`,
-  stamp, case and model before `spawnJudge`. An interruption leaves the
-  reservation and started metadata; a restart refuses the existing attempt.
-  Competing claims are refused before any second model call. Tests cover an
-  interrupted launcher and an existing attempt, not only pre-existing
-  directories.
+  stamp, case and model before `spawnJudge`. A true process interruption
+  therefore leaves the reservation and started metadata; a restart refuses the
+  existing attempt. Competing claims are refused before any second model call.
+  Tests cover a failed launcher (which proves the reservation existed before
+  launch) and an existing started attempt; they do not simulate an OS kill of
+  the parent judge process.
 - **Reservation clearing cannot delete evidence.** `clear-reservation` removes
   only `.reservation` and refuses when any other entry exists.
 - **Preservation is semantic.** The deterministic screen only rejects explicit
@@ -392,10 +393,12 @@ an invoice.
   `unknown` when a fact is absent; the authoritative pass/fail is the published
   semantic review. The cited false-positive and false-negative counterexamples
   are tests.
-- **NOTE-02 classifier handles rejection.** An explicit “Node 22 is no longer
-  supported; use Node 24 or newer” is `useful-update`; a current 22 floor is
-  still `misleading`. The helper remains scoped to the historical NOTE-02
-  Summary/Facts correction, not a general semantic classifier.
+- **NOTE-02 classifier evaluates assertions separately.** A rejection in one
+  sentence cannot cancel an affirmative claim in another: an affirmative
+  Summary plus a rejecting Facts bullet is `misleading`; an explicit “Node 22
+  is no longer supported; use Node 24 or newer” alone is `useful-update`. The
+  helper remains scoped to the historical NOTE-02 Summary/Facts correction,
+  not a general semantic classifier.
 
 ## Decision
 

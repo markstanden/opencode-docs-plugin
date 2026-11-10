@@ -11,13 +11,22 @@ const rejects22 = (text) =>
         text,
     );
 
+const asserts22 = (text) =>
+    /Node\s*22/i.test(text) ||
+    /22\s*or newer/i.test(text) ||
+    /\bfloor\b[^\n]{0,12}\b22\b/i.test(text) ||
+    /\bminimum\b[^\n]{0,24}\b22\b/i.test(text) ||
+    /required\s+is\s+22/i.test(text);
+
+/** Split Summary/Facts into assertions so one rejection cannot mask another. */
+const assertions = (text) =>
+    text
+        .split(/\n+|(?<=[.!?;])\s+/)
+        .map((part) => part.trim())
+        .filter(Boolean);
+
 const claims22 = (text) =>
-    !rejects22(text) &&
-    (/Node\s*22/i.test(text) ||
-        /22\s*or newer/i.test(text) ||
-        /\bfloor\b[^\n]{0,12}\b22\b/i.test(text) ||
-        /\bminimum\b[^\n]{0,24}\b22\b/i.test(text) ||
-        /required\s+is\s+22/i.test(text));
+    assertions(text).some((assertion) => asserts22(assertion) && !rejects22(assertion));
 
 /** The Summary line and `### Facts` bullets of a knowledge document. */
 export function claimSurface(document) {

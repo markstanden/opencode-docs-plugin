@@ -51,6 +51,22 @@ test("an explicit rejection of Node 22 is useful, not misleading", () => {
     assert.equal(verdict(document), "useful-update");
 });
 
+test("a rejection in Facts does not cancel an affirmative Summary claim", () => {
+    // Arrange
+    const document = `Summary: This repository supports Node 22 or newer.\n\n### Facts\n\n- Node 22 is no longer supported; use Node 24 or newer.\n`;
+
+    // Act / Assert
+    assert.equal(verdict(document), "misleading");
+});
+
+test("a rejection in one sentence does not cancel a later affirmative claim", () => {
+    // Arrange
+    const document = `Summary: Node 22 is no longer supported. This repository supports Node 22 or newer.\n\n### Facts\n\n- Use Node 24 or newer.\n`;
+
+    // Act / Assert
+    assert.equal(verdict(document), "misleading");
+});
+
 test("a failed-approach mention of 22 does not cancel a completed 24 update", () => {
     // Arrange
     const document = `Summary: This repository requires Node 24 or newer.\n\n### Facts\n\n- \`engines\` is \`>=24\`.\n\n### Failed approaches\n\n- Comparing \`major !== 22\` broke setup.\n`;
