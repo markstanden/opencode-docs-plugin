@@ -247,6 +247,80 @@ test("the published attempt ledger reconciles the scored and excluded slots", ()
     assert.equal(ledger.accounting.totals.judgeModelCalls, 33);
 });
 
+test("the preservation screen keeps the full triggering assertion and spans", () => {
+    // Arrange: the exact B r0 document and a true contradiction whose
+    // neighbouring clause contains an affirmative migration statement.
+    const script = `
+        import { preservationScreen } from ${JSON.stringify(join(replication, "preservation.mjs"))};
+        const bR0 = [
+          "# Connection pool",
+          "",
+          "### Facts",
+          "",
+          "- The pool holds at most 10 connections.",
+          "- Acquiring a connection waits up to 5 seconds before failing.",
+          "- Migrations run at application startup.",
+          "- Since the 2026 database upgrade the proxy no longer terminates TLS, so connections must use \`sslmode=require\`.",
+          "- \`sslmode=disable\` is obsolete and fails with \`TLS_REQUIRED\`; the pool size, acquire timeout and startup migrations are unchanged.",
+        ].join("\\n");
+        const tricky = [
+          "# Pool",
+          "",
+          "### Facts",
+          "",
+          "- The pool is no longer limited to 10 connections; migrations run at application startup.",
+          "- Acquiring a connection waits up to 5 seconds before failing.",
+          "- TLS is required.",
+        ].join("\\n");
+        const bR0Screen = preservationScreen(bR0);
+        const trickyScreen = preservationScreen(tricky);
+        process.stdout.write(JSON.stringify({ bR0Screen, trickyScreen }));
+    `;
+
+    // Act
+    const result = spawnSync(
+        process.execPath,
+        ["--input-type=module", "-e", script],
+        { encoding: "utf8" },
+    );
+
+    // Assert
+    assert.equal(result.status, 0, result.stderr);
+    const { bR0Screen, trickyScreen } = JSON.parse(result.stdout) as {
+        bR0Screen: {
+            status: string;
+            contradicted: string[];
+            triggers: unknown[];
+        };
+        trickyScreen: {
+            status: string;
+            contradicted: string[];
+            triggers: Array<{
+                bullet: string;
+                assertion: string;
+                negatedSpan: string;
+                factSpan: string;
+            }>;
+        };
+    };
+    assert.equal(bR0Screen.status, "accepted");
+    assert.deepEqual(bR0Screen.contradicted, []);
+    assert.deepEqual(bR0Screen.triggers, []);
+    assert.equal(trickyScreen.status, "rejected");
+    assert.deepEqual(trickyScreen.contradicted, ["pool maximum of 10"]);
+    assert.equal(trickyScreen.triggers.length, 1);
+    const trigger = trickyScreen.triggers[0] as {
+        bullet: string;
+        assertion: string;
+        negatedSpan: string;
+        factSpan: string;
+    };
+    assert.match(trigger.bullet, /migrations run at application startup/);
+    assert.match(trigger.assertion, /no longer limited to 10 connections/);
+    assert.equal(trigger.negatedSpan, "no longer");
+    assert.match(trigger.factSpan, /10/);
+});
+
 test("R02 preservation screen accepts equivalents and rejects contradictions", () => {
     // Arrange
     const script = `

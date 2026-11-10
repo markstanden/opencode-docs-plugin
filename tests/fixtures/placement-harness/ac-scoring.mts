@@ -22,6 +22,35 @@ export type DocumentationOutcome =
     | "misleading"
     | "none";
 
+/** The scenario whose correction needs a semantic preservation assessment. */
+export const PRESERVATION_CASE = "R02";
+
+/** The assessed state of one still-valid fact. */
+export type PreservationState = "retained" | "corrected" | "lost";
+
+/** The assessed state of the superseded TLS claim. */
+export type ObsoleteClaimState = "removed" | "retained";
+
+/** One fact's evidence-backed preservation finding. */
+export interface PreservationFinding {
+    /** Whether the fact survived, was corrected, or was lost. */
+    state: PreservationState;
+    /** The decisive excerpt from the after-trial documents. */
+    quote: string;
+}
+
+/** The required R02 preservation assessment, one entry per fixed fact. */
+export interface PreservationAssessment {
+    /** The 10-connection pool cap. */
+    poolSize: PreservationFinding;
+    /** The 5-second acquire timeout. */
+    acquireTimeout: PreservationFinding;
+    /** Startup migrations. */
+    startupMigrations: PreservationFinding;
+    /** The obsolete `sslmode=disable` claim. */
+    obsoleteTlsClaim: { state: ObsoleteClaimState; quote: string };
+}
+
 /** Everything a judge must state about one trial's documentation. */
 export interface AcJudgement {
     /** The one outcome the trial earns. */
@@ -30,6 +59,8 @@ export interface AcJudgement {
     documentationReason: string;
     /** Decisive excerpts from the resulting documents/evidence. */
     evidence: string[];
+    /** The R02 preservation assessment, required only for that scenario. */
+    preservation?: PreservationAssessment;
 }
 
 /** The mutation facts the judgement is validated against. */
@@ -115,6 +146,7 @@ export interface ScoredTrial {
  * @param input.primary.stderr Its captured stderr.
  * @param input.docsOperations Verified docs operations observed.
  * @param input.answer The trial's final answer.
+ * @param input.requirePreservation Require the R02 semantic preservation block.
  * @returns The complete judge prompt.
  */
 export function buildAcPrompt(input: {
@@ -132,6 +164,7 @@ export function buildAcPrompt(input: {
     };
     docsOperations: string[];
     answer: string;
+    requirePreservation?: boolean;
 }): string {
     const docs = (entries: Array<{ path: string; contents: string }>) =>
         entries
@@ -140,6 +173,18 @@ export function buildAcPrompt(input: {
                     `- ${entry.path}\n\n\`\`\`\n${entry.contents}\n\`\`\``,
             )
             .join("\n\n") || "(none)";
+    const preservation = input.requirePreservation
+        ? `
+PRESERVATION ASSESSMENT (required for this scenario): the trial corrects an existing note whose other facts stay valid.
+Assess each still-valid fact by meaning, not exact wording: a faithful paraphrase, an equivalent number (for example "5000 milliseconds" for 5 seconds), or a clear restatement is "retained"; a changed value is "corrected"; a fact the lake no longer states is "lost".
+The obsolete TLS claim is "removed" only when the resulting document no longer asserts it.
+Quote the decisive text from the AFTER documents for every entry, or write "(absent)" when the text is gone.
+If any still-valid fact is lost, the documentation outcome must be "misleading".
+`
+        : "";
+    const returnShape = input.requirePreservation
+        ? `{"documentationOutcome":"useful-create"|"useful-update"|"transient"|"duplicate"|"misleading"|"none","documentationReason":"...","evidence":["..."],"preservation":{"poolSize":{"state":"retained"|"corrected"|"lost","quote":"..."},"acquireTimeout":{"state":"retained"|"corrected"|"lost","quote":"..."},"startupMigrations":{"state":"retained"|"corrected"|"lost","quote":"..."},"obsoleteTlsClaim":{"state":"removed"|"retained","quote":"..."}}}`
+        : `{"documentationOutcome":"useful-create"|"useful-update"|"transient"|"duplicate"|"misleading"|"none","documentationReason":"...","evidence":["..."]}`;
     return `Score ONE completed engineering trial's documentation outcome. Return ONE JSON object and nothing else.
 
 An agent was given the task below in a small synthetic repository. It had standing permission to create or update documentation in the repository knowledge lake, but was never asked to document anything. Some tasks contain a durable, reusable finding worth preserving; others do not.
@@ -190,9 +235,9 @@ Rules:
 - Classify mixed output by its most adverse component and name every component in the reason.
 - Do not reward volume or effort; one trial earns at most one documentation outcome.
 - The primary-task result is given, not yours to re-decide.
-
+${preservation}
 Return exactly:
-{"documentationOutcome":"useful-create"|"useful-update"|"transient"|"duplicate"|"misleading"|"none","documentationReason":"...","evidence":["..."]}`;
+${returnShape}`;
 }
 
 /** Pull the one JSON object out of a judge's prose, if any. */
@@ -253,6 +298,102 @@ function judgementSchemaProblems(value: Record<string, unknown>): string[] {
     return problems;
 }
 
+/** Whether a value is a plain JSON object. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** The still-valid facts the R02 assessment must judge. */
+const PRESERVATION_FACTS = [
+    "poolSize",
+    "acquireTimeout",
+    "startupMigrations",
+] as const;
+
+/** Allowed states for a still-valid fact. */
+const PRESERVATION_STATES: readonly PreservationState[] = [
+    "retained",
+    "corrected",
+    "lost",
+];
+
+/** Problems with one still-valid fact's preservation finding. */
+function factProblems(label: string, entry: unknown): string[] {
+    if (!isPlainObject(entry)) {
+        return [`preservation.${label} must be an object`];
+    }
+    const problems: string[] = [];
+    if (
+        typeof entry.state !== "string" ||
+        !PRESERVATION_STATES.includes(entry.state as PreservationState)
+    ) {
+        problems.push(
+            `preservation.${label}.state must be one of ${PRESERVATION_STATES.join("|")}`,
+        );
+    }
+    if (typeof entry.quote !== "string" || entry.quote.trim() === "") {
+        problems.push(`preservation.${label}.quote must be a nonblank string`);
+    }
+    return problems;
+}
+
+/** Problems with the obsolete TLS claim's preservation finding. */
+function obsoleteProblems(entry: unknown): string[] {
+    if (!isPlainObject(entry)) {
+        return ["preservation.obsoleteTlsClaim must be an object"];
+    }
+    const problems: string[] = [];
+    if (entry.state !== "removed" && entry.state !== "retained") {
+        problems.push(
+            'preservation.obsoleteTlsClaim.state must be "removed" or "retained"',
+        );
+    }
+    if (typeof entry.quote !== "string" || entry.quote.trim() === "") {
+        problems.push(
+            "preservation.obsoleteTlsClaim.quote must be a nonblank string",
+        );
+    }
+    return problems;
+}
+
+/** Whether one fact entry records destructive loss. */
+function lostFact(entry: unknown): boolean {
+    return isPlainObject(entry) && entry.state === "lost";
+}
+
+/** Problems with the required R02 semantic preservation assessment. */
+function preservationProblems(
+    value: Record<string, unknown>,
+    state: DocState,
+): string[] {
+    if (!isPlainObject(value.preservation)) {
+        return ["preservation must be an object for this scenario"];
+    }
+    const preservation = value.preservation;
+    const problems = [
+        ...PRESERVATION_FACTS.flatMap((fact) =>
+            factProblems(fact, preservation[fact]),
+        ),
+        ...obsoleteProblems(preservation.obsoleteTlsClaim),
+    ];
+    const lost = PRESERVATION_FACTS.filter((fact) =>
+        lostFact(preservation[fact]),
+    );
+    if (lost.length > 0) {
+        if (value.documentationOutcome !== "misleading") {
+            problems.push(
+                `preservation reports a lost valid fact (${lost.join(", ")}); documentationOutcome must be "misleading"`,
+            );
+        }
+        if (!state.documentsChanged) {
+            problems.push(
+                "preservation reports a lost valid fact but no documentation document changed",
+            );
+        }
+    }
+    return problems;
+}
+
 /** The single evidence contradiction between an outcome and the record. */
 function outcomeEvidenceProblem(
     decided: DocumentationOutcome,
@@ -280,19 +421,27 @@ function outcomeEvidenceProblem(
  * created document, means the judge did not read the evidence.
  * @param value The parsed judge object.
  * @param state The mutation facts for the trial.
+ * @param options Preservation requirement.
+ * @param options.requirePreservation True for the R02 correction scenario.
  * @returns The problems; empty means a usable judgement.
  */
 export function validateAcJudgement(
     value: Record<string, unknown>,
     state: DocState,
+    options: { requirePreservation?: boolean } = {},
 ): string[] {
     const schema = judgementSchemaProblems(value);
     if (schema.length > 0) return schema;
+    const problems: string[] = [];
     const contradiction = outcomeEvidenceProblem(
         value.documentationOutcome as DocumentationOutcome,
         state,
     );
-    return contradiction === null ? [] : [contradiction];
+    if (contradiction !== null) problems.push(contradiction);
+    if (options.requirePreservation) {
+        problems.push(...preservationProblems(value, state));
+    }
+    return problems;
 }
 
 /** The documentation component of one trial's utility. */
@@ -315,45 +464,52 @@ export function documentationScore(
     }
 }
 
+/** The task component's closed bounds for a known or unknown primary result. */
+function taskBounds(
+    primary: ScoredTrial["primary"],
+    weights: UtilityWeights,
+): { low: number; high: number } {
+    if (primary === "pass") return { low: 0, high: 0 };
+    if (primary === "fail") {
+        return { low: weights.taskFailure, high: weights.taskFailure };
+    }
+    return { low: weights.taskFailure, high: 0 };
+}
+
 /**
  * One trial's utility, or a closed interval when a component is unknown.
  *
- * An unassessed trial contributes nothing and is reported as missing, never
- * as zero. A known documentation outcome with an unknown primary result is
- * bounded by the worst and best task contributions, so a comparison can say
- * what the missing evidence could change instead of assuming it harmless.
+ * An unassessed documentation outcome contributes nothing and is reported as
+ * missing, never as zero. The documentation interval is the full outcome range;
+ * the task interval retains whatever the primary check already established, so
+ * a known pass does not widen the bound as though it too were unknown.
  */
 export function trialUtility(
     trial: ScoredTrial,
     weights: UtilityWeights = DEFAULT_WEIGHTS,
 ): { score: number; low: number; high: number; assessed: boolean } {
+    const task = taskBounds(trial.primary, weights);
     if (!trial.usable || trial.outcome === undefined) {
         return {
             score: 0,
-            low: weights.misleading + weights.taskFailure,
-            high: weights.useful,
+            low: weights.misleading + task.low,
+            high: weights.useful + task.high,
             assessed: false,
         };
     }
     const documentation = documentationScore(trial.outcome, weights);
-    const task =
-        trial.primary === "pass"
-            ? 0
-            : trial.primary === "fail"
-              ? weights.taskFailure
-              : null;
-    if (task === null) {
+    if (trial.primary === "unknown") {
         return {
             score: documentation,
-            low: documentation + weights.taskFailure,
-            high: documentation,
+            low: documentation + task.low,
+            high: documentation + task.high,
             assessed: false,
         };
     }
     return {
-        score: documentation + task,
-        low: documentation + task,
-        high: documentation + task,
+        score: documentation + task.low,
+        low: documentation + task.low,
+        high: documentation + task.high,
         assessed: true,
     };
 }

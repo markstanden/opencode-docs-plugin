@@ -221,9 +221,11 @@ export function docChanges(
  */
 export const LABEL_PATTERNS = [
     /docs-desc-fresh/,
+    /recording-confirm/,
     /\/home\/[^/\s]+/,
     /fr-[A-F]-[sr]\d/,
     /fc-[AF]-r\d/,
+    /cc-[AB]-r\d/,
     /(?:^|\W)arm[_ -]?[A-F](?:\W|$)/i,
     /candidate/i,
     /control arm/i,

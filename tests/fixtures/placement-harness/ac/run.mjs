@@ -32,6 +32,7 @@ import {
     labelLeaks,
 } from "./campaign.mts";
 import {
+    PRESERVATION_CASE,
     buildAcPrompt,
     finalistQualifies,
     parseAcJudgement,
@@ -233,6 +234,7 @@ function packetFor(base, stamp, caseId, truth) {
             join(caseDir, "docs-operations.jsonl"),
         ),
         answer: readText(join(caseDir, "final.md")),
+        requirePreservation: caseId === PRESERVATION_CASE,
     });
     return { caseDir, prompt, state };
 }
@@ -264,11 +266,13 @@ function spawnJudge({ launcher, model, stamp, prompt, runDir, timeout }) {
 }
 
 /** The stored judgement payload for one parsed answer. */
-function judgementPayload(parsed, state) {
+function judgementPayload(parsed, state, caseId) {
     const problems =
         parsed.value === undefined
             ? parsed.problems
-            : validateAcJudgement(parsed.value, state);
+            : validateAcJudgement(parsed.value, state, {
+                  requirePreservation: caseId === PRESERVATION_CASE,
+              });
     return {
         problems,
         value:
@@ -313,7 +317,7 @@ function recordJudgement(attemptDir, result, state, model, stamp, caseId) {
         return 1;
     }
     const parsed = parseAcJudgement(answer);
-    const judgement = judgementPayload(parsed, state);
+    const judgement = judgementPayload(parsed, state, caseId);
     writeJson(join(attemptDir, "judgement.json"), judgement.value);
     return judgement.problems.length === 0 ? 0 : 1;
 }
@@ -460,7 +464,9 @@ function resolveAttempt(attemptDir, judgement) {
     if (extracted !== undefined) {
         try {
             const parsed = JSON.parse(extracted);
-            const problems = validateAcJudgement(parsed, meta.state);
+            const problems = validateAcJudgement(parsed, meta.state, {
+                requirePreservation: meta.caseId === PRESERVATION_CASE,
+            });
             if (problems.length === 0) {
                 record.status = "judged";
                 record.parsed = parsed;
@@ -540,6 +546,25 @@ function guardrailOf(meta, gateAt) {
     );
 }
 
+/** The still-valid R02 facts whose destructive loss is a guardrail breach. */
+const PRESERVED_FACTS = ["poolSize", "acquireTimeout", "startupMigrations"];
+
+/**
+ * Whether the judge's semantic assessment records a lost still-valid fact.
+ * An absent assessment is unknown, never a breach.
+ */
+function preservationLost(preservation) {
+    if (preservation === null || typeof preservation !== "object") return false;
+    return PRESERVED_FACTS.some((fact) => preservation[fact]?.state === "lost");
+}
+
+/** The recorded guardrail verdict: mutation policy or destructive loss. */
+function guardrailFor(meta, gateAt, assessment) {
+    return (
+        guardrailOf(meta, gateAt) || preservationLost(assessment.preservation)
+    );
+}
+
 /** The duration a recorded run reports, or null. */
 function durationOf(meta) {
     if (typeof meta?.timings?.totalMs === "number") return meta.timings.totalMs;
@@ -592,6 +617,7 @@ function assessmentOf(dir, attempted) {
         outcome: outcomeOf(judgement),
         reason: orNull(judgement?.documentationReason),
         evidence: evidenceOf(judgement),
+        preservation: orNull(judgement?.preservation),
         tokens: orNull(acMeta?.usage),
         durationMs: orNull(acMeta?.durationMs),
     };
@@ -618,7 +644,7 @@ function trialRecord({ stage, slot, arm, base }) {
         assessmentStatus: assessment.status,
         outcome: assessment.outcome,
         primary: primaryCategory(primary),
-        guardrailBreach: guardrailOf(meta, gateAt),
+        guardrailBreach: guardrailFor(meta, gateAt, assessment),
         gateStatus: gateAt?.status ?? "missing",
         gateReason: gateAt?.reason ?? null,
         policyViolations: meta?.policyViolations ?? [],

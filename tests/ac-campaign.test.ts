@@ -243,7 +243,16 @@ describe("labelLeaks", () => {
         // Act + Assert
         assert.ok(labelLeaks("this is arm B's trial").length > 0);
         assert.ok(labelLeaks("fr-B-s1-NOTE-01 judged it").length > 0);
+        assert.ok(labelLeaks("cc-A-r0-R01 judged it").length > 0);
         assert.ok(labelLeaks("compare against the candidate").length > 0);
+    });
+
+    it("refuses a packet naming the confirmation campaign", () => {
+        // Act
+        const leaks = labelLeaks("evidence lives under recording-confirm/");
+
+        // Assert
+        assert.ok(leaks.length > 0);
     });
 
     it("accepts an arm-blind packet", () => {

@@ -228,8 +228,9 @@ test("judge refuses an interrupted attempt that has started metadata", () => {
     const resultDir = join(base, "results", "stamp", "R01");
     const attempt = join(resultDir, "ac", "attempt-001");
     mkdirSync(attempt, { recursive: true });
+    writeFileSync(join(resultDir, "meta.json"), '{"exit":0}\n');
     writeFileSync(
-        join(resultDir, "meta.json"),
+        join(attempt, "meta.json"),
         '{"status":"started","startedAt":"2026-11-10T00:00:00Z"}\n',
     );
     writeFileSync(join(attempt, "output.jsonl"), "original\n");
@@ -263,6 +264,10 @@ test("judge refuses an interrupted attempt that has started metadata", () => {
     // Assert
     assert.equal(result.status, 1);
     assert.match(result.stderr, /refusing to overwrite existing attempt/);
+    assert.equal(
+        readFileSync(join(attempt, "meta.json"), "utf8"),
+        '{"status":"started","startedAt":"2026-11-10T00:00:00Z"}\n',
+    );
     assert.equal(
         readFileSync(join(attempt, "output.jsonl"), "utf8"),
         "original\n",
