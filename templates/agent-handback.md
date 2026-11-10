@@ -35,19 +35,18 @@ Add this instruction to the execution prompt:
 
 Use these labels accurately:
 
-| Label | Meaning |
-| --- | --- |
-| Not run | Execution or check was not performed. |
-| Not applicable | The field does not apply; explain if unclear. |
-| Unknown | Evidence does not establish the answer. |
-| Blocked | Name the blocker and affected work. |
-| Reported | Supplied by another source, not independently verified here. |
+| Label          | Meaning                                                      |
+| -------------- | ------------------------------------------------------------ |
+| Not run        | Execution or check was not performed.                        |
+| Not applicable | The field does not apply; explain if unclear.                |
+| Unknown        | Evidence does not establish the answer.                      |
+| Blocked        | Name the blocker and affected work.                          |
+| Reported       | Supplied by another source, not independently verified here. |
 
 Never use zero for unknown or unperformed work. Do not invent identities,
 timestamps, counts, causes or accessibility.
 
 # Core response contract
-
 
 ## Outcome
 
@@ -75,15 +74,19 @@ A findings commit is not automatically the code executed in a campaign.
 ## Scope and deviations
 
 Completed:
+
 - {{deliverable}}
 
 Authorised work not completed:
+
 - {{item and reason, or none}}
 
 Material deviations:
+
 - {{planned versus actual, reason, consequence, or none}}
 
 External actions actually taken:
+
 - {{push/PR/comment/merge/release/cleanup, with targets, or none}}
 
 ## Validation
@@ -93,6 +96,7 @@ External actions actually taken:
 | {{command or CI check}} | {{SHA/files}}  | {{pass/fail/not run}} | {{output summary or link/path}} |
 
 Separate:
+
 - Checks run in this task.
 - CI observed at a pinned SHA.
 - Earlier results reused, with the reason they still apply.
@@ -116,9 +120,11 @@ Use not applicable for tasks without preserved evidence.}}
 ## Limitations and next boundary
 
 Established:
+
 - {{conclusion directly supported by evidence}}
 
 Unresolved:
+
 - {{specific uncertainty and its practical effect}}
 
 Recommended next action:
@@ -137,6 +143,7 @@ Review target:
 | {{blocker/optional}} | {{specific issue}} | {{concrete example}}    | {{file/line or evidence reference}} |
 
 For meaningful findings include:
+
 - Reproduction or counterexample, if performed.
 - Expected versus observed behaviour.
 - Minimum suggested correction.
@@ -154,6 +161,7 @@ Reviewer conclusion:
 | {{decision}} | {{concrete choice}} | {{evidence/trade-off}} | {{resolved / needs decision}} |
 
 Implementation gaps:
+
 - {{specific missing capability and smallest proposed addition}}
 
 Acceptance:
@@ -174,6 +182,7 @@ Boundary preserved:
 {{Relevant compatibility, defaults and invariant evidence.}}
 
 Regression proof:
+
 - Before fix: {{test/counterexample and actual failure, if applicable}}.
 - After fix: {{actual result}}.
 - Negative boundaries: {{meaningful counterexamples checked}}.
@@ -182,6 +191,7 @@ Include the decisive diff hunk when it is small or central to review.
 Do not dump unrelated code.
 
 For prose-only changes:
+
 - Give exact old/new text or the complete addition.
 - Identify the changed model-visible surface.
 - State which other relevant surfaces were checked unchanged.
@@ -193,6 +203,7 @@ For prose-only changes:
 | {{authorised action}} | {{ref/PR/release}} | {{SHA}}    | {{actual result}} | {{URL}}  |
 
 Where applicable, distinguish:
+
 - Reviewed head.
 - Final PR head.
 - Merge/squash commit.
