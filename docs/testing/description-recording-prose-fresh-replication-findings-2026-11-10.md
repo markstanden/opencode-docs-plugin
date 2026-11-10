@@ -51,7 +51,7 @@ Repair (commit `097454f`): the lint now compares lexical against numeric order
 and reports the first inversion; the deterministic verifier asserts the
 premise (`MIGRATION_ORDER 002_add_index.sql`) as well as the seeded/intended/
 wrong-fix checks. Repaired corpus hash
-`8818a4b985ef9a07bdc1b8025466d7b7d4d9e6dd7e5ccc2c5396f2f2f6088a4e`; the
+`2e0c36798de8b65b16cfcdb86e15f9ab67327229777a4b743341326008f35237`; the
 executed corpus remains `934f5e68…` and is preserved.
 
 ## Execution and deviations
