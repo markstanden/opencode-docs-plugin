@@ -263,16 +263,41 @@ function spawnJudge({ launcher, model, stamp, prompt, runDir, timeout }) {
     });
 }
 
-/** Record a judge attempt's evidence and return its terminal status. */
-function recordJudgement(attemptDir, result, state, model, stamp, caseId) {
+/** Claim a fresh attempt directory, logging a refusal without deleting it. */
+function claimRecordedAttempt(attemptDir) {
     mkdirSync(dirname(attemptDir), { recursive: true });
     const claim = claimAttemptDir(attemptDir);
     if (!claim.ok) {
         console.error(
             `refusing to overwrite attempt at ${attemptDir}: ${claim.reason}`,
         );
-        return 1;
+        return false;
     }
+    return true;
+}
+
+/** The stored judgement payload for one parsed answer. */
+function judgementPayload(parsed, state) {
+    const problems =
+        parsed.value === undefined
+            ? parsed.problems
+            : validateAcJudgement(parsed.value, state);
+    return {
+        problems,
+        value:
+            problems.length === 0
+                ? { status: "judged", ...parsed.value }
+                : {
+                      status: "invalid-verdict",
+                      problems,
+                      parsed: parsed.value ?? null,
+                  },
+    };
+}
+
+/** Record a judge attempt's evidence and return its terminal status. */
+function recordJudgement(attemptDir, result, state, model, stamp, caseId) {
+    if (!claimRecordedAttempt(attemptDir)) return 1;
     writeFileSync(
         join(attemptDir, "output.jsonl"),
         result.stdout ?? "",
@@ -299,21 +324,9 @@ function recordJudgement(attemptDir, result, state, model, stamp, caseId) {
         return 1;
     }
     const parsed = parseAcJudgement(answer);
-    const problems =
-        parsed.value === undefined
-            ? parsed.problems
-            : validateAcJudgement(parsed.value, state);
-    writeJson(
-        join(attemptDir, "judgement.json"),
-        problems.length === 0
-            ? { status: "judged", ...parsed.value }
-            : {
-                  status: "invalid-verdict",
-                  problems,
-                  parsed: parsed.value ?? null,
-              },
-    );
-    return problems.length === 0 ? 0 : 1;
+    const judgement = judgementPayload(parsed, state);
+    writeJson(join(attemptDir, "judgement.json"), judgement.value);
+    return judgement.problems.length === 0 ? 0 : 1;
 }
 
 /**
