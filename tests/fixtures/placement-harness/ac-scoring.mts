@@ -464,45 +464,52 @@ export function documentationScore(
     }
 }
 
+/** The task component's closed bounds for a known or unknown primary result. */
+function taskBounds(
+    primary: ScoredTrial["primary"],
+    weights: UtilityWeights,
+): { low: number; high: number } {
+    if (primary === "pass") return { low: 0, high: 0 };
+    if (primary === "fail") {
+        return { low: weights.taskFailure, high: weights.taskFailure };
+    }
+    return { low: weights.taskFailure, high: 0 };
+}
+
 /**
  * One trial's utility, or a closed interval when a component is unknown.
  *
- * An unassessed trial contributes nothing and is reported as missing, never
- * as zero. A known documentation outcome with an unknown primary result is
- * bounded by the worst and best task contributions, so a comparison can say
- * what the missing evidence could change instead of assuming it harmless.
+ * An unassessed documentation outcome contributes nothing and is reported as
+ * missing, never as zero. The documentation interval is the full outcome range;
+ * the task interval retains whatever the primary check already established, so
+ * a known pass does not widen the bound as though it too were unknown.
  */
 export function trialUtility(
     trial: ScoredTrial,
     weights: UtilityWeights = DEFAULT_WEIGHTS,
 ): { score: number; low: number; high: number; assessed: boolean } {
+    const task = taskBounds(trial.primary, weights);
     if (!trial.usable || trial.outcome === undefined) {
         return {
             score: 0,
-            low: weights.misleading + weights.taskFailure,
-            high: weights.useful,
+            low: weights.misleading + task.low,
+            high: weights.useful + task.high,
             assessed: false,
         };
     }
     const documentation = documentationScore(trial.outcome, weights);
-    const task =
-        trial.primary === "pass"
-            ? 0
-            : trial.primary === "fail"
-              ? weights.taskFailure
-              : null;
-    if (task === null) {
+    if (trial.primary === "unknown") {
         return {
             score: documentation,
-            low: documentation + weights.taskFailure,
-            high: documentation,
+            low: documentation + task.low,
+            high: documentation + task.high,
             assessed: false,
         };
     }
     return {
-        score: documentation + task,
-        low: documentation + task,
-        high: documentation + task,
+        score: documentation + task.low,
+        low: documentation + task.low,
+        high: documentation + task.high,
         assessed: true,
     };
 }

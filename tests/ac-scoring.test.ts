@@ -522,6 +522,57 @@ describe("trialUtility", () => {
 
         // Assert
         assert.equal(utility.score, 0);
+        assert.equal(utility.low, -5);
+        assert.equal(utility.high, 5);
+        assert.equal(utility.assessed, false);
+    });
+
+    it("retains a known primary pass when the documentation outcome is missing", () => {
+        // Arrange
+        const slot = trial({
+            usable: true,
+            outcome: undefined,
+            primary: "pass",
+        });
+
+        // Act
+        const utility = trialUtility(slot);
+
+        // Assert
+        assert.equal(utility.low, -5);
+        assert.equal(utility.high, 5);
+        assert.equal(utility.assessed, false);
+    });
+
+    it("retains a known primary failure when the documentation outcome is missing", () => {
+        // Arrange
+        const slot = trial({
+            usable: true,
+            outcome: undefined,
+            primary: "fail",
+        });
+
+        // Act
+        const utility = trialUtility(slot);
+
+        // Assert
+        assert.equal(utility.low, -10);
+        assert.equal(utility.high, 0);
+        assert.equal(utility.assessed, false);
+    });
+
+    it("uses the full range when both components are unknown", () => {
+        // Arrange
+        const slot = trial({
+            usable: true,
+            outcome: undefined,
+            primary: "unknown",
+        });
+
+        // Act
+        const utility = trialUtility(slot);
+
+        // Assert
         assert.equal(utility.low, -10);
         assert.equal(utility.high, 5);
         assert.equal(utility.assessed, false);
@@ -571,6 +622,21 @@ describe("summariseArm", () => {
         assert.equal(summary.meanPerAssessed, 5);
         assert.ok(summary.missingLow < 0);
         assert.ok(summary.missingHigh > 0);
+    });
+
+    it("retains known primary results in missing-data bounds", () => {
+        // Arrange
+        const slots = [
+            trial({ outcome: undefined, primary: "pass" }),
+            trial({ outcome: undefined, primary: "fail" }),
+        ];
+
+        // Act
+        const summary = summariseArm(slots);
+
+        // Assert
+        assert.equal(summary.missingLow, -15);
+        assert.equal(summary.missingHigh, 5);
     });
 });
 
