@@ -96,7 +96,8 @@ export const DEFAULT_WEIGHTS: UtilityWeights = {
     taskFailure: -5,
 };
 
-const OUTCOMES: readonly DocumentationOutcome[] = [
+/** The one documentation outcome a trial receives. */
+export const DOCUMENTATION_OUTCOMES: readonly DocumentationOutcome[] = [
     "useful-create",
     "useful-update",
     "transient",
@@ -271,10 +272,10 @@ function judgementSchemaProblems(value: Record<string, unknown>): string[] {
     const outcome = value.documentationOutcome;
     if (
         typeof outcome !== "string" ||
-        !OUTCOMES.includes(outcome as DocumentationOutcome)
+        !DOCUMENTATION_OUTCOMES.includes(outcome as DocumentationOutcome)
     ) {
         problems.push(
-            `documentationOutcome must be one of ${OUTCOMES.join("|")}`,
+            `documentationOutcome must be one of ${DOCUMENTATION_OUTCOMES.join("|")}`,
         );
     }
     if (
