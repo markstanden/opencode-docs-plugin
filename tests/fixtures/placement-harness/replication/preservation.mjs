@@ -9,7 +9,7 @@ const VALID = {
     },
     "5-second acquire timeout": {
         pattern:
-            /\b(?:acquire|acquiring|wait|waits|timeout|connection)\b[^\n.]{0,60}\b(?:5|five)\s*(?:\.0)?\s*(?:s\b|sec(?:ond)?s?\b|ms\b|milliseconds?)\b|\b(?:5|five)\s*(?:\.0)?\s*(?:s\b|sec(?:ond)?s?\b|ms\b|milliseconds?)\b[^\n.]{0,60}\b(?:acquire|acquiring|wait|waits|timeout|connection)\b|\b5000\s*(?:ms|milliseconds?)\b/i,
+            /\b(?:acquire|acquiring|wait|waits|timeout|connection)\b[^\n.]{0,60}\b(?:5|five)\s*(?:(?:\.0)\s*)?(?:s\b|sec(?:ond)?s?\b|ms\b|milliseconds?)\b|\b(?:5|five)\s*(?:(?:\.0)\s*)?(?:s\b|sec(?:ond)?s?\b|ms\b|milliseconds?)\b[^\n.]{0,60}\b(?:acquire|acquiring|wait|waits|timeout|connection)\b|\b5000\s*(?:ms|milliseconds?)\b/i,
     },
     "startup migrations": { pattern: /\bmigrat/i },
 };
