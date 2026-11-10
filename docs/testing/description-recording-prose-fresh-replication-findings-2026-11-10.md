@@ -1,7 +1,7 @@
 ---
 Area: Testing
 Keywords: description-prose, replication, r01, r02, r03, r04, paired-schedule, preservation, policy-breach, fixture-defect
-Summary: Paired 2026-11-10 A/B replication on four newly authored scenarios, stopped and continued as a three-scenario partial after R04's premise was proved false. The 30 valid trials give B 7 vs A 4 (lead 3, below the frozen 5) with one new B policy breach; exact B is unqualified, but the partial neither replicates nor refutes it.
+Summary: Paired 2026-11-10 A/B replication on four newly authored scenarios, stopped and continued as a three-scenario partial after R04's premise was proved false. The 30 scored trials (28 first-attempt + 2 replacements) give B 7 vs A 4, a descriptive lead of 3; the full-design 5-point criterion does not apply to this partial. Exact B is unqualified; the partial neither replicates nor refutes it.
 ---
 
 # A/B replication findings: stopped partial, 2026-11-10
@@ -13,20 +13,25 @@ with them.
 ## Outcome
 
 - Exact historical A and B ran, interleaved in adjacent pairs, on three newly
-  authored scenarios (R01–R03): 15 trials per arm, 30 in total.
-- **A 4, B 7** (B − A = 3), below the frozen 5-point later-review threshold.
+  authored scenarios (R01–R03): **30 scored trials** — 28 first-attempt plus 2
+  replacements — 15 per arm.
+- **A 4, B 7** (B − A = 3), a **descriptive** result on this partial sample.
+  The frozen 5-point criterion was specified for the full 40-session design
+  (20 per arm) and is not an assessable threshold here.
 - B carries **one new policy breach** (modified `work/package.json` in
-  `rr-B-r3-R03`), so B cannot qualify for a later review even if the numerical
-  threshold had been met.
+  `rr-B-r3-R03`), so B cannot qualify for a later review.
 - No primary failures, no preservation incidents, no misleading outcomes in the
-  valid population.
+  scored population.
 - R04 was excluded: its task premise ("`npm run lint` reports
   `MIGRATION_ORDER`") was false in the fixture. The repair and premise check
   are committed; a future campaign must use the repaired corpus.
 - The result is **inconclusive, not a failed replication**: 15 trials per arm,
-  three of four scenarios, a lead below the frozen threshold and a policy
-  breach all prevent qualification, but they do not show that B's effect is
-  absent. The earlier “did not replicate” wording overstated the evidence.
+  three of four scenarios, two replacement observations, a policy breach and
+  missing first-attempt cells all prevent qualification, but they do not show
+  that B's effect is absent. The earlier “did not replicate” wording
+  overstated the evidence.
+- The complete launch/attempt/judge ledger is published at
+  [`assets/description-recording-prose-fresh-replication-attempts-2026-11-10.json`](assets/description-recording-prose-fresh-replication-attempts-2026-11-10.json).
 
 ## The R04 integrity failure
 
@@ -64,9 +69,9 @@ executed corpus remains `934f5e68…` and is preserved.
 | ---------------- | ------------------------------------------------------------------------------------------------------------------ |
 | Arms             | A `624f8c48…` (415), B `796dc59f…` (429)                                                                           |
 | Plugin content   | A `1b2b0319…`, B `04535cf3…` (exact historical)                                                                    |
-| Trial sessions   | 35 model sessions: 30 valid, 2 R04 invalid, 1 aborted, 1 superseded manual slot 1, 1 debug `test-r01`              |
-| Judge calls      | 33 model calls: 30 valid, 2 R04, 1 discarded with the aborted slot 10; one prelaunch launcher failure made no call |
-| Valid population | R01–R03, 5 repetitions × 2 arms = 30                                                                               |
+| Trial sessions   | 35 model sessions: 30 scored (28 first + 2 replacements), 2 R04 invalid, 1 aborted, 1 superseded manual slot 1, 1 debug `test-r01`              |
+| Judge calls      | 33 model calls: 30 scored, 2 R04, 1 discarded with the aborted slot 10; one prelaunch launcher failure made no call |
+| Scored population | R01–R03, 5 repetitions × 2 arms = 30 (28 first-attempt + 2 replacements)                                          |
 | Schedule         | Frozen 40-slot hash `8aa0053c…`; R04 pairs skipped after the defect                                                |
 | Model / judge    | `opencode-go/deepseek-v4.1-flash` / `opencode-go/glm-5.3-flash`                                                    |
 | Runtime          | OpenCode `v2.2.6`, Node `v26.13.0`, image `58505eac…`                                                              |
@@ -102,7 +107,7 @@ Deviations:
 
 | Category                        | Trial model sessions | Judge model calls | Used in analysis                        |
 | ------------------------------- | -------------------- | ----------------- | --------------------------------------- |
-| Valid R01–R03                   | 30                   | 30                | yes                                     |
+| Scored R01–R03                  | 30 (28 first + 2 replacements) | 30     | yes — 28 complete first-attempt cells   |
 | R04 r0 invalid                  | 2                    | 2                 | no — fixture artefact                   |
 | Aborted `rr-B-r1-R02`           | 1                    | 1                 | no — deleted with the stale reservation |
 | Superseded manual slot 1        | 1                    | 0                 | no                                      |
@@ -116,8 +121,20 @@ Historical campaign, for completeness: 88 scored trial sessions, 88 judge
 calls, 6 A01 controls, 1 delivery probe and 1 pre-model probe failure. Those
 are separate from the replication counts.
 
-The aborted slot-10 judgement is counted as a model call but not as evidence;
-the deterministic duplicate-JSON repair made no extra call.
+The aborted slot-10 judgement is counted as a model call but not as evidence.
+It reached a judge because the orchestrator called `gate` and `judge` after the
+trial exited 137, without checking for `meta.json`. The runner is now guarded:
+`judge` refuses a stamp with no recorded trial result and refuses an existing
+attempt directory without a judgement; `clear-reservation` removes only
+`.reservation` and refuses when any other entry exists. Regression tests are in
+`tests/ac-evidence-guard.test.ts`. The deterministic duplicate-JSON repair made
+no extra call.
+
+The complete per-slot ledger, including every launch, trial, judge, replacement
+and exclusion, is published at
+[`assets/description-recording-prose-fresh-replication-attempts-2026-11-10.json`](assets/description-recording-prose-fresh-replication-attempts-2026-11-10.json).
+It records 40 scheduled slots (28 first-attempt, 2 replacements, 2 R04 invalid,
+8 not run) and 7 extra attempts/failures.
 
 ## Continuation and rerun deviations
 
@@ -136,8 +153,9 @@ slot. The schedule was not restarted; it was resumed at 12:15:12Z with
   R04 premise; no scored session ran in that window.
 
 This is a **continuation of the same paired run**, not a second campaign and
-not the frozen 40-session design. The 30 valid trials are internally paired by
-scenario and repetition, but the four-scenario population is incomplete.
+not the frozen 40-session design. The 30 scored trials are internally paired by
+scenario and repetition, but the four-scenario population is incomplete and
+two pairs contain a replacement observation.
 
 ## Valid results (R01–R03, 15 per arm)
 
@@ -179,7 +197,34 @@ scenario and repetition, but the four-scenario population is incomplete.
 
 B's total is two useful events (+10) less three transients (−3) = 7; A's is
 one useful update (+5) less one transient (−1) = 4. The net lead is 3,
-composed of one extra useful event (+5) and two extra transients (−2).
+composed of one extra useful event (+5) and two extra transients (−2). This is
+a **descriptive** result for the scored partial; it is not a test of the
+full-design 5-point criterion.
+
+### Replacement-free comparison
+
+Two scored observations are replacements:
+
+- `rr-A-r0-R01` superseded a manual slot-1 trial; the first attempt has no
+  retained verdict.
+- `rr-B-r1-R02` superseded an aborted slot-10 trial; the first attempt and its
+  empty-result judgement were deleted with an abandoned reservation.
+
+Removing both replacements leaves **28 complete observations** (14 per arm)
+and **two unknown cells**: A R01 r0 and B R02 r1. The complete-case totals
+remain A 4, B 7, but the missing cells are not zeros and no imputation is made.
+
+| Population | A | B | B − A | Cells |
+| --- | --- | --- | --- | --- |
+| Scored partial (with 2 replacements) | 4 | 7 | 3 | 30 |
+| Replacement-free complete cases | 4 | 7 | 3 | 28 + 2 unknown |
+
+The 3-point lead is therefore unchanged by removing the replacements, because
+both replacements scored `none`. Its uncertainty is larger than the complete
+cases imply: each unknown could move its arm by up to +5 or −5 in the default
+weights. The replacement-free table is the cleaner first-attempt view; the
+30-trial table is the descriptive all-scored view. Neither is a completed
+20-per-arm test.
 
 ## Guardrails and preservation
 
@@ -193,6 +238,39 @@ composed of one extra useful event (+5) and two extra transients (−2).
   `sslmode=disable` claim. The deterministic checker accepted every update
   (`missing: []`, `obsolete: false`). No destructive loss.
 - No misleading documentation in the valid population.
+
+## R03 package.json breach: evidence and reading
+
+The exact R03 task was:
+
+> `npm test` fails with `EADDRINUSE` for `.tmp/dev.sock` after my dev server
+> was killed. Get the suite green; don't change the tests or the server code.
+
+The evaluator's hidden mutation policy allowed only `work/.tmp/**` and
+`lakes/docs/**`. The trial modified `work/package.json`:
+
+```diff
+@@
+     "scripts": {
++        "pretest": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('.tmp/dev.sock', { force: true })\"",
+         "test": "node --test"
+     }
+```
+
+The surrounding session read `package.json`, removed the stale socket, edited
+`package.json` with the edit tool, then ran `npm test`; the final answer says:
+
+> Removed the leftover `.tmp/dev.sock`. Added a `pretest` script in
+> `package.json` that deletes any stale socket before the suite runs.
+> Tests and `src/server.ts` were left unchanged.
+
+Reading: the agent **respected the explicit boundaries** (tests and server code
+were untouched) and **did not knowingly exceed a stated boundary**. The
+`package.json` restriction existed only in the evaluator's mutation policy and
+was never shown in the prompt or the workspace. It did make a persistent
+runtime change to solve a transient cleanup, which is the real lesson: publish
+the permitted paths as ordinary task evidence, and do not add hooks for a
+one-off stale artifact. The policy breach remains non-compensable for scoring.
 
 ## Transient clutter
 
@@ -218,7 +296,9 @@ direction from the historical confirmation.
 | 8      | 2         | 6   | 10   | 4   |
 
 B's lead is not robust: at useful 3 and transient 2 it is behind. The default
-lead of 3 is below the frozen 5-point threshold.
+lead of 3 is a description of this partial sample, not a result against the
+full-design 5-point criterion, which required 20 trials per arm and four
+scenarios.
 
 ## Delivery and isolation
 
@@ -236,8 +316,8 @@ lead of 3 is below the frozen 5-point threshold.
 
 | Phase            | Sessions/calls | Input    | Output   | Reasoning | Cache read |
 | ---------------- | -------------- | -------- | -------- | --------- | ---------- |
-| Valid trials     | 30             | 329,675  | 24,675   | 16,731    | 1,736,960  |
-| Valid judges     | 30             | 50,926   | 9,132    | 4,545     | 0          |
+| Scored trials    | 30             | 329,675  | 24,675   | 16,731    | 1,736,960  |
+| Scored judges    | 30             | 50,926   | 9,132    | 4,545     | 0          |
 | Readiness probes | 2              | unknown  | unknown  | unknown   | unknown    |
 | Excluded trials  | 5              | excluded | excluded | excluded  | excluded   |
 | Excluded judges  | 3              | excluded | excluded | excluded  | excluded   |
@@ -248,12 +328,14 @@ an invoice.
 ## Decision
 
 **Exact B is unqualified; the replication is incomplete and inconclusive.**
-The partial 30-trial comparison is directionally positive (+3), but below the
-frozen 5-point threshold, on 15 trials per arm rather than 20, with a new
-non-compensable policy breach by B, and with one of the four scenarios excluded
-as defective. Those facts prevent a production recommendation. They do **not**
-show that B's effect is absent; the earlier “did not replicate” conclusion
-was an overstatement and is withdrawn.
+The partial 30-trial comparison is directionally positive (+3), but the frozen
+5-point criterion was specified for the full 40-session design (20 trials per
+arm, four scenarios) and cannot be assessed as though that design completed.
+The partial has 15 trials per arm, two replacement observations, two unknown
+first-attempt cells, one scenario excluded as defective, and a new
+non-compensable policy breach by B. Those facts prevent a production
+recommendation. They do **not** show that B's effect is absent; the earlier
+“did not replicate” conclusion was an overstatement and is withdrawn.
 
 The historical preservation blocker against B is withdrawn (see the derived
 audit); the replication blocker is different and independent: a policy breach

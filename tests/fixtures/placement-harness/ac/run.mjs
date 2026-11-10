@@ -2,12 +2,14 @@
 /**
  * Campaign support for the arm-blind description comparison.
  *
- * Six commands, all reading and writing outside the repository:
+ * Seven commands, all reading and writing outside the repository:
  * `schedule` regenerates the frozen slot list; `gate` records the harness's
  * deterministic verdict per trial; `judge` collects one structured,
  * evidence-checked judgement from a self-contained packet; `resolve` re-parses
  * answers whose only failure was trailing prose; `report` aggregates recorded
- * trials into the published utility tables; `manifest` hashes the evidence.
+ * trials into the published utility tables; `manifest` hashes the evidence;
+ * `clear-reservation` removes only an abandoned lock and refuses when any
+ * recorded evidence is present.
  *
  * Nothing here calls a model except `judge`, and `judge` never retries.
  */
@@ -22,6 +24,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { claimAttemptDir, clearReservation } from "./evidence-guard.mts";
 import {
     buildSchedule,
     docChanges,
@@ -262,7 +265,14 @@ function spawnJudge({ launcher, model, stamp, prompt, runDir, timeout }) {
 
 /** Record a judge attempt's evidence and return its terminal status. */
 function recordJudgement(attemptDir, result, state, model, stamp, caseId) {
-    mkdirSync(attemptDir, { recursive: true });
+    mkdirSync(dirname(attemptDir), { recursive: true });
+    const claim = claimAttemptDir(attemptDir);
+    if (!claim.ok) {
+        console.error(
+            `refusing to overwrite attempt at ${attemptDir}: ${claim.reason}`,
+        );
+        return 1;
+    }
     writeFileSync(
         join(attemptDir, "output.jsonl"),
         result.stdout ?? "",
@@ -382,6 +392,19 @@ function judge(args) {
         "attempt-001",
     );
     if (existsSync(join(attemptDir, "judgement.json"))) return 0;
+    if (existsSync(attemptDir)) {
+        console.error(
+            `refusing to overwrite existing attempt at ${attemptDir}; ` +
+                "preserve it and use a new attempt directory",
+        );
+        return 1;
+    }
+    if (!existsSync(join(base, "results", stamp, caseId, "meta.json"))) {
+        console.error(
+            `refusing to judge ${stamp}/${caseId}: no recorded trial result`,
+        );
+        return 1;
+    }
     const { prompt, state } = packetFor(base, stamp, caseId, truth);
     const leaks = labelLeaks(prompt);
     if (leaks.length > 0) {
@@ -898,9 +921,18 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
                 return report(args);
             case "manifest":
                 return manifest(args);
+            case "clear-reservation": {
+                const cleared = clearReservation(need(args, "--result"));
+                if (!cleared.ok) {
+                    console.error(cleared.reason);
+                    return 1;
+                }
+                console.log(cleared.reason);
+                return 0;
+            }
             default:
                 console.error(
-                    "usage: run.mjs schedule|gate|judge|resolve|report|manifest [--flag value]",
+                    "usage: run.mjs schedule|gate|judge|resolve|report|manifest|clear-reservation [--flag value]",
                 );
                 return 2;
         }

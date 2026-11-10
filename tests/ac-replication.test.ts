@@ -139,6 +139,55 @@ test("the new fixtures pass every pristine and counterexample check", () => {
     assert.match(result.stdout, /16\/16 checks passed/);
 });
 
+test("the published attempt ledger reconciles the scored and excluded slots", () => {
+    // Arrange
+    const ledger = JSON.parse(
+        readFileSync(
+            join(
+                here,
+                "..",
+                "docs",
+                "testing",
+                "assets",
+                "description-recording-prose-fresh-replication-attempts-2026-11-10.json",
+            ),
+            "utf8",
+        ),
+    ) as {
+        slots: Array<{ trial: { status: string } }>;
+        accounting: {
+            validFirstAttempt: { trials: number };
+            replacementScored: { trials: number };
+            r04Invalid: { trials: number };
+            totals: { trialModelSessions: number; judgeModelCalls: number };
+        };
+    };
+
+    // Act
+    const statuses = ledger.slots.map((slot) => slot.trial.status);
+
+    // Assert
+    assert.equal(ledger.slots.length, 40);
+    assert.equal(
+        statuses.filter((status) => status === "valid").length,
+        ledger.accounting.validFirstAttempt.trials,
+    );
+    assert.equal(
+        statuses.filter((status) => status === "replacement").length,
+        ledger.accounting.replacementScored.trials,
+    );
+    assert.equal(
+        statuses.filter((status) => status === "invalid-r04-premise").length,
+        ledger.accounting.r04Invalid.trials,
+    );
+    assert.equal(
+        statuses.filter((status) => status === "not-run").length,
+        8,
+    );
+    assert.equal(ledger.accounting.totals.trialModelSessions, 37);
+    assert.equal(ledger.accounting.totals.judgeModelCalls, 33);
+});
+
 test("R02 preservation accepts paraphrase and rejects valid-fact loss", () => {
     // Arrange
     const script = `
