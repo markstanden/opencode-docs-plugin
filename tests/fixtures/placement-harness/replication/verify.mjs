@@ -196,10 +196,6 @@ for (const [label, document] of Object.entries(examples)) {
 }
 
 const failed = report.filter((one) => !one.ok);
-writeFileSync(
-    join(here, "FIXTURE-CHECKS.json"),
-    JSON.stringify(report, null, 2) + "\n",
-);
 console.log(
     `\n${report.length - failed.length}/${report.length} checks passed`,
 );
