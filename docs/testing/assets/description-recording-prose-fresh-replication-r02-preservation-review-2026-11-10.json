@@ -1,0 +1,54 @@
+{
+    "schemaVersion": 1,
+    "campaign": "description-recording-prose-fresh-replication-2026-11-10",
+    "authority": "semantic-review",
+    "reviewedAt": "2026-11-10T12:35:00Z",
+    "reviewer": "parent agent, manual evidence review",
+    "method": "Read each final R02 document against the fixture's four facts and the changed TLS requirement. The deterministic screen is a cross-check only; the pass/fail below is the authoritative preservation assessment.",
+    "cases": [
+        {
+            "stamp": "rr-A-r2-R02",
+            "document": "lakes/docs/db/pool.md",
+            "screen": "accepted",
+            "verdict": "pass",
+            "validFacts": [
+                {
+                    "fact": "pool maximum of 10",
+                    "evidence": "Facts: 'The pool holds at most 10 connections.'"
+                },
+                {
+                    "fact": "5-second acquire timeout",
+                    "evidence": "Facts: 'Acquiring a connection waits up to 5 seconds before failing.'"
+                },
+                {
+                    "fact": "startup migrations",
+                    "evidence": "Facts: 'Migrations run at application startup.'"
+                }
+            ],
+            "obsoleteRemoved": true,
+            "obsoleteEvidence": "Facts require TLS and mark sslmode=disable obsolete; no current disable claim remains."
+        },
+        {
+            "stamp": "rr-B-r0-R02",
+            "document": "lakes/docs/db/pool.md",
+            "screen": "accepted",
+            "verdict": "pass",
+            "validFacts": [
+                {
+                    "fact": "pool maximum of 10",
+                    "evidence": "Facts: 'The pool holds at most 10 connections.'"
+                },
+                {
+                    "fact": "5-second acquire timeout",
+                    "evidence": "Facts: 'Acquiring a connection waits up to 5 seconds before failing.'"
+                },
+                {
+                    "fact": "startup migrations",
+                    "evidence": "Facts: 'Migrations run at application startup.'"
+                }
+            ],
+            "obsoleteRemoved": true,
+            "obsoleteEvidence": "Facts require TLS; sslmode=disable appears only as a rejected obsolete approach."
+        }
+    ]
+}
