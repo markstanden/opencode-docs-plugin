@@ -1597,7 +1597,14 @@ test("gate-only: records the deterministic gate verdict without a judge call", (
     const blocked = runHarness(
         root,
         fake,
-        ["judge", "T01", "--stamp", "empty", "--gate-only", ...commandArgs(paths)],
+        [
+            "judge",
+            "T01",
+            "--stamp",
+            "empty",
+            "--gate-only",
+            ...commandArgs(paths),
+        ],
         { FAKE_JUDGE_PROMPT_OUT: marker },
     );
     assert.notEqual(blocked.status, 0);

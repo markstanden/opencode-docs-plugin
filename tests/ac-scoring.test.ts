@@ -198,7 +198,7 @@ describe("validateAcJudgement", () => {
         assert.match(problems.join("; "), /no existing document was modified/);
     });
 
-    it("rejects \"none\" when a document changed", () => {
+    it('rejects "none" when a document changed', () => {
         // Arrange
         const value = {
             documentationOutcome: "none",
@@ -210,7 +210,10 @@ describe("validateAcJudgement", () => {
         const problems = validateAcJudgement(value, changed);
 
         // Assert
-        assert.match(problems.join("; "), /but a documentation document changed/);
+        assert.match(
+            problems.join("; "),
+            /but a documentation document changed/,
+        );
     });
 
     it("rejects a written outcome when nothing changed", () => {
@@ -255,7 +258,10 @@ describe("validateAcJudgement", () => {
         const problems = validateAcJudgement(value, changed);
 
         // Assert
-        assert.match(problems.join("; "), /documentationOutcome must be one of/);
+        assert.match(
+            problems.join("; "),
+            /documentationOutcome must be one of/,
+        );
     });
 
     it("rejects a blank reason and empty evidence together", () => {

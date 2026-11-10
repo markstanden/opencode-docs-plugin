@@ -11,15 +11,15 @@ arm-blind packet: task, standing permission, scenario truth, knowledge-lake
 documents before and after, changed paths, the pristine primary-check result,
 verified docs operations and the final answer.
 
-| Outcome | Score | Meaning |
-| --- | --- | --- |
-| `useful-create` | +5 | needed, accurate, supported, well-placed durable addition |
-| `useful-update` | +5 | needed correction or material extension preserving valid content |
-| `transient` | −1 | supported but without future value |
-| `duplicate` | −2 | repetition without material new value |
-| `misleading` | −5 | materially incorrect or unjustified claim |
-| `none` | 0 | no documentation change; restraint or missed opportunity |
-| primary failure | −5 | the independent pristine check failed |
+| Outcome         | Score | Meaning                                                          |
+| --------------- | ----- | ---------------------------------------------------------------- |
+| `useful-create` | +5    | needed, accurate, supported, well-placed durable addition        |
+| `useful-update` | +5    | needed correction or material extension preserving valid content |
+| `transient`     | −1    | supported but without future value                               |
+| `duplicate`     | −2    | repetition without material new value                            |
+| `misleading`    | −5    | materially incorrect or unjustified claim                        |
+| `none`          | 0     | no documentation change; restraint or missed opportunity         |
+| primary failure | −5    | the independent pristine check failed                            |
 
 The primary result is the harness's, never the judge's. A judgement that
 contradicts the recorded mutation facts (for example `none` when a document

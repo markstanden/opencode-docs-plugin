@@ -24,7 +24,9 @@ export type DocumentationOutcome =
 
 /** Everything a judge must state about one trial's documentation. */
 export interface AcJudgement {
+    /** The one outcome the trial earns. */
     documentationOutcome: DocumentationOutcome;
+    /** Why that outcome, naming every mixed component. */
     documentationReason: string;
     /** Decisive excerpts from the resulting documents/evidence. */
     evidence: string[];
@@ -74,7 +76,9 @@ const OUTCOMES: readonly DocumentationOutcome[] = [
 
 /** One trial's resolved inputs for scoring. */
 export interface ScoredTrial {
+    /** The arm the trial belongs to. */
     arm: string;
+    /** The scenario it ran. */
     scenario: string;
     /** Whether the trial was planned (a slot in the frozen schedule). */
     planned: boolean;
@@ -98,6 +102,19 @@ export interface ScoredTrial {
  * final answer. No arm label, candidate description, hypothesis, prior
  * verdict or aggregate result is accepted by this function.
  * @param input The labelled evidence blocks.
+ * @param input.taskPrompt The exact task the agent was given.
+ * @param input.standingPermission The workspace permission file's contents.
+ * @param input.scenarioTruth The scenario's durable-finding facts.
+ * @param input.beforeDocs Knowledge-lake documents before the trial.
+ * @param input.afterDocs Knowledge-lake documents after the trial.
+ * @param input.changedPaths Paths the trial changed.
+ * @param input.primary The independent primary-check result.
+ * @param input.primary.status The checker's status.
+ * @param input.primary.exit Its exit code, or null.
+ * @param input.primary.stdout Its captured stdout.
+ * @param input.primary.stderr Its captured stderr.
+ * @param input.docsOperations Verified docs operations observed.
+ * @param input.answer The trial's final answer.
  * @returns The complete judge prompt.
  */
 export function buildAcPrompt(input: {
@@ -107,13 +124,21 @@ export function buildAcPrompt(input: {
     beforeDocs: Array<{ path: string; contents: string }>;
     afterDocs: Array<{ path: string; contents: string }>;
     changedPaths: string[];
-    primary: { status: string; exit: number | null; stdout: string; stderr: string };
+    primary: {
+        status: string;
+        exit: number | null;
+        stdout: string;
+        stderr: string;
+    };
     docsOperations: string[];
     answer: string;
 }): string {
     const docs = (entries: Array<{ path: string; contents: string }>) =>
         entries
-            .map((entry) => `- ${entry.path}\n\n\`\`\`\n${entry.contents}\n\`\`\``)
+            .map(
+                (entry) =>
+                    `- ${entry.path}\n\n\`\`\`\n${entry.contents}\n\`\`\``,
+            )
             .join("\n\n") || "(none)";
     return `Score ONE completed engineering trial's documentation outcome. Return ONE JSON object and nothing else.
 
@@ -182,13 +207,70 @@ export function parseAcJudgement(text: string): {
     }
     try {
         const value: unknown = JSON.parse(text.slice(start, end + 1));
-        if (value === null || typeof value !== "object" || Array.isArray(value)) {
+        if (
+            value === null ||
+            typeof value !== "object" ||
+            Array.isArray(value)
+        ) {
             return { problems: ["verdict is not a JSON object"] };
         }
         return { value: value as Record<string, unknown>, problems: [] };
     } catch {
         return { problems: ["verdict is not valid JSON"] };
     }
+}
+
+/** Schema problems for one parsed judgement: fields, enums and evidence. */
+function judgementSchemaProblems(value: Record<string, unknown>): string[] {
+    const problems: string[] = [];
+    const outcome = value.documentationOutcome;
+    if (
+        typeof outcome !== "string" ||
+        !OUTCOMES.includes(outcome as DocumentationOutcome)
+    ) {
+        problems.push(
+            `documentationOutcome must be one of ${OUTCOMES.join("|")}`,
+        );
+    }
+    if (
+        typeof value.documentationReason !== "string" ||
+        value.documentationReason.trim() === ""
+    ) {
+        problems.push("documentationReason must be a nonblank string");
+    }
+    if (!Array.isArray(value.evidence)) {
+        problems.push("evidence must be an array");
+        return problems;
+    }
+    if (
+        value.evidence.length === 0 ||
+        value.evidence.some(
+            (entry) => typeof entry !== "string" || entry.trim() === "",
+        )
+    ) {
+        problems.push("evidence must contain at least one nonblank string");
+    }
+    return problems;
+}
+
+/** The single evidence contradiction between an outcome and the record. */
+function outcomeEvidenceProblem(
+    decided: DocumentationOutcome,
+    state: DocState,
+): string | null {
+    if (!state.documentsChanged && decided !== "none") {
+        return `judged "${decided}" but no documentation document changed`;
+    }
+    if (state.documentsChanged && decided === "none") {
+        return 'judged "none" but a documentation document changed';
+    }
+    if (decided === "useful-create" && state.createdPaths.length === 0) {
+        return 'judged "useful-create" but no document was created';
+    }
+    if (decided === "useful-update" && state.modifiedPaths.length === 0) {
+        return 'judged "useful-update" but no existing document was modified';
+    }
+    return null;
 }
 
 /**
@@ -204,49 +286,13 @@ export function validateAcJudgement(
     value: Record<string, unknown>,
     state: DocState,
 ): string[] {
-    const problems: string[] = [];
-    const outcome = value.documentationOutcome;
-    if (typeof outcome !== "string" || !OUTCOMES.includes(outcome as DocumentationOutcome)) {
-        problems.push(
-            `documentationOutcome must be one of ${OUTCOMES.join("|")}`,
-        );
-    }
-    if (
-        typeof value.documentationReason !== "string" ||
-        value.documentationReason.trim() === ""
-    ) {
-        problems.push("documentationReason must be a nonblank string");
-    }
-    if (!Array.isArray(value.evidence)) {
-        problems.push("evidence must be an array");
-    } else if (
-        value.evidence.length === 0 ||
-        value.evidence.some(
-            (entry) => typeof entry !== "string" || entry.trim() === "",
-        )
-    ) {
-        problems.push("evidence must contain at least one nonblank string");
-    }
-    if (problems.length > 0) return problems;
-
-    const decided = outcome as DocumentationOutcome;
-    if (!state.documentsChanged && decided !== "none") {
-        problems.push(
-            `judged "${decided}" but no documentation document changed`,
-        );
-    }
-    if (state.documentsChanged && decided === "none") {
-        problems.push("judged \"none\" but a documentation document changed");
-    }
-    if (decided === "useful-create" && state.createdPaths.length === 0) {
-        problems.push("judged \"useful-create\" but no document was created");
-    }
-    if (decided === "useful-update" && state.modifiedPaths.length === 0) {
-        problems.push(
-            "judged \"useful-update\" but no existing document was modified",
-        );
-    }
-    return problems;
+    const schema = judgementSchemaProblems(value);
+    if (schema.length > 0) return schema;
+    const contradiction = outcomeEvidenceProblem(
+        value.documentationOutcome as DocumentationOutcome,
+        state,
+    );
+    return contradiction === null ? [] : [contradiction];
 }
 
 /** The documentation component of one trial's utility. */
@@ -282,7 +328,12 @@ export function trialUtility(
     weights: UtilityWeights = DEFAULT_WEIGHTS,
 ): { score: number; low: number; high: number; assessed: boolean } {
     if (!trial.usable || trial.outcome === undefined) {
-        return { score: 0, low: weights.misleading + weights.taskFailure, high: weights.useful, assessed: false };
+        return {
+            score: 0,
+            low: weights.misleading + weights.taskFailure,
+            high: weights.useful,
+            assessed: false,
+        };
     }
     const documentation = documentationScore(trial.outcome, weights);
     const task =
@@ -309,22 +360,37 @@ export function trialUtility(
 
 /** Per-arm aggregate of the frozen trial population. */
 export interface ArmSummary {
+    /** The arm this summary describes. */
     arm: string;
+    /** Planned slots. */
     planned: number;
+    /** Slots whose session started. */
     attempted: number;
+    /** Slots that completed. */
     completed: number;
+    /** Slots with usable evidence. */
     usable: number;
+    /** Slots with a usable documentation judgement. */
     assessed: number;
+    /** Count of trials per documentation outcome. */
     outcomes: Record<DocumentationOutcome, number>;
+    /** Primary checks that passed. */
     primaryPass: number;
+    /** Primary checks that failed. */
     primaryFail: number;
+    /** Primary checks without a usable result. */
     primaryUnknown: number;
+    /** Trials flagged for a non-compensable guardrail breach. */
     guardrailBreaches: number;
+    /** Sum of assessed trial utilities. */
     total: number;
+    /** Mean over planned slots, or null without a denominator. */
     meanPerPlanned: number | null;
+    /** Mean over assessed slots, or null without a denominator. */
     meanPerAssessed: number | null;
-    /** Sum of the low/high bounds of every unassessed planned trial. */
+    /** Sum of the low bounds of every unassessed planned trial. */
     missingLow: number;
+    /** Sum of the high bounds of every unassessed planned trial. */
     missingHigh: number;
 }
 
@@ -336,6 +402,37 @@ const emptyOutcomes = (): Record<DocumentationOutcome, number> => ({
     misleading: 0,
     none: 0,
 });
+
+/** Add one trial's outcome and task counts to the summary. */
+function countTrial(summary: ArmSummary, trial: ScoredTrial): void {
+    if (trial.planned) summary.planned += 1;
+    if (trial.usable) {
+        summary.completed += 1;
+        summary.usable += 1;
+    }
+    if (trial.outcome !== undefined) summary.outcomes[trial.outcome] += 1;
+    if (trial.primary === "pass") summary.primaryPass += 1;
+    if (trial.primary === "fail") summary.primaryFail += 1;
+    if (trial.primary === "unknown") summary.primaryUnknown += 1;
+    if (trial.guardrailBreach) summary.guardrailBreaches += 1;
+}
+
+/** Add one trial's utility, keeping unassessed slots as bounds. */
+function addTrialUtility(
+    summary: ArmSummary,
+    trial: ScoredTrial,
+    weights: UtilityWeights,
+): void {
+    const utility = trialUtility(trial, weights);
+    if (utility.assessed) {
+        summary.assessed += 1;
+        summary.total += utility.score;
+        return;
+    }
+    if (!trial.planned) return;
+    summary.missingLow += utility.low;
+    summary.missingHigh += utility.high;
+}
 
 /**
  * Aggregate one arm's trials. Means are reported per planned trial (the
@@ -369,24 +466,8 @@ export function summariseArm(
         missingHigh: 0,
     };
     for (const trial of trials) {
-        const utility = trialUtility(trial, weights);
-        if (trial.planned) summary.planned += 1;
-        if (trial.usable) {
-            summary.completed += 1;
-            summary.usable += 1;
-        }
-        if (trial.outcome !== undefined) summary.outcomes[trial.outcome] += 1;
-        if (trial.primary === "pass") summary.primaryPass += 1;
-        if (trial.primary === "fail") summary.primaryFail += 1;
-        if (trial.primary === "unknown") summary.primaryUnknown += 1;
-        if (trial.guardrailBreach) summary.guardrailBreaches += 1;
-        if (utility.assessed) {
-            summary.assessed += 1;
-            summary.total += utility.score;
-        } else if (trial.planned) {
-            summary.missingLow += utility.low;
-            summary.missingHigh += utility.high;
-        }
+        countTrial(summary, trial);
+        addTrialUtility(summary, trial, weights);
     }
     summary.meanPerPlanned =
         summary.planned === 0 ? null : summary.total / summary.planned;
@@ -444,7 +525,8 @@ export function rankCandidates(
         (left, right) =>
             right.summary.total - left.summary.total ||
             left.summary.primaryFail - right.summary.primaryFail ||
-            left.summary.outcomes.misleading - right.summary.outcomes.misleading ||
+            left.summary.outcomes.misleading -
+                right.summary.outcomes.misleading ||
             left.characters - right.characters ||
             left.arm.localeCompare(right.arm),
     );
@@ -452,9 +534,13 @@ export function rankCandidates(
 
 /** One sensitivity cell: useful weight × transient penalty. */
 export interface SensitivityCell {
+    /** The useful create/update weight in this cell. */
     useful: number;
+    /** The transient penalty (positive magnitude) in this cell. */
     transient: number;
+    /** Total utility per arm. */
     totals: Record<string, number>;
+    /** Arms best first. */
     ranking: string[];
 }
 

@@ -7902,6 +7902,8 @@ function recordedRubricProblem(
  * @param caseId The case being gated.
  * @param resultDir The case's result directory.
  * @param gate The gate outcome from {@link judgeGateReason}.
+ * @param gate.reason The refusal reason, or null when the gate passed.
+ * @param gate.artifacts The verified artefact list on a pass.
  * @param answerHash The recorded answer's identity.
  * @returns 0 when the gate passed, 1 when it blocked (an expected outcome,
  *   not a harness failure).

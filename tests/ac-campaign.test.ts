@@ -58,12 +58,13 @@ describe("schedule", () => {
 
     it("rotates the screening scenario order across repetitions", () => {
         // Arrange
-        const order = (repetition: number) =>
-            [...new Set(
+        const order = (repetition: number) => [
+            ...new Set(
                 schedule.screening
                     .filter((slot) => slot.repetition === repetition)
                     .map((slot) => slot.scenario),
-            )];
+            ),
+        ];
 
         // Act
         const first = order(1);
@@ -79,7 +80,8 @@ describe("schedule", () => {
         const firstRole = (repetition: number, scenario: string) =>
             schedule.confirmation.find(
                 (slot) =>
-                    slot.repetition === repetition && slot.scenario === scenario,
+                    slot.repetition === repetition &&
+                    slot.scenario === scenario,
             )?.role;
 
         // Act

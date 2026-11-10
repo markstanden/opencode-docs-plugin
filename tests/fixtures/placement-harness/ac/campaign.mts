@@ -253,11 +253,9 @@ export function firstBalancedObject(text: string): string | undefined {
     let inString = false;
     let escaped = false;
     for (let index = start; index < text.length; index += 1) {
-        const char = text[index];
+        const char = text[index] as string;
         if (inString) {
-            if (escaped) escaped = false;
-            else if (char === "\\") escaped = true;
-            else if (char === '"') inString = false;
+            ({ inString, escaped } = stepInString(char, escaped));
             continue;
         }
         if (char === '"') inString = true;
@@ -268,4 +266,19 @@ export function firstBalancedObject(text: string): string | undefined {
         }
     }
     return undefined;
+}
+
+/**
+ * Advance the string-literal state by one character.
+ * @param char The current character.
+ * @param escaped Whether the previous character was an escape.
+ * @returns The next string and escape state.
+ */
+function stepInString(
+    char: string,
+    escaped: boolean,
+): { inString: boolean; escaped: boolean } {
+    if (escaped) return { inString: true, escaped: false };
+    if (char === "\\") return { inString: true, escaped: true };
+    return { inString: char !== '"', escaped: false };
 }

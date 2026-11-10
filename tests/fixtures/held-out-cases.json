@@ -11,9 +11,7 @@
         ],
         "promptKind": "task",
         "permissionProfile": "task",
-        "docsSurface": [
-            "lakes/docs/**"
-        ],
+        "docsSurface": ["lakes/docs/**"],
         "claim": "The nightly export writes only 500 rows from a 2,500-row dataset.",
         "evidence": "The export loop, the transport's page cap, the export log and the README.",
         "expected": "The export covers all 2,500 rows and a useful repository note records why",
@@ -71,20 +69,12 @@
             }
         ],
         "mutationPolicy": {
-            "allowed": [
-                "work/src/**",
-                "lakes/docs/**"
-            ]
+            "allowed": ["work/src/**", "lakes/docs/**"]
         },
         "expectedDocs": {
             "kind": "create",
-            "retains": [
-                "500",
-                "page"
-            ],
-            "preserve": [
-                "lakes/docs/ops/publishing.md"
-            ]
+            "retains": ["500", "page"],
+            "preserve": ["lakes/docs/ops/publishing.md"]
         },
         "primaryCheck": {
             "id": "h01-export-paging",
@@ -104,9 +94,7 @@
         ],
         "promptKind": "task",
         "permissionProfile": "task",
-        "docsSurface": [
-            "lakes/docs/**"
-        ],
+        "docsSurface": ["lakes/docs/**"],
         "claim": "npm run check:cache reports TENANT_COLLISION because cache keys ignore the tenant.",
         "evidence": "The cache key builder, the collision check script and the seeded cache note.",
         "expected": "Cache keys are tenant-scoped and the existing cache note is corrected in place",
@@ -173,16 +161,9 @@
         "expectedDocs": {
             "kind": "replace",
             "target": "lakes/docs/cache/keys.md",
-            "retains": [
-                "60",
-                "deploy"
-            ],
-            "omits": [
-                "globally unique"
-            ],
-            "preserve": [
-                "lakes/docs/ops/rollout.md"
-            ]
+            "retains": ["60", "deploy"],
+            "omits": ["globally unique"],
+            "preserve": ["lakes/docs/ops/rollout.md"]
         },
         "primaryCheck": {
             "id": "h02-cache-tenant",
@@ -202,9 +183,7 @@
         ],
         "promptKind": "task",
         "permissionProfile": "task",
-        "docsSurface": [
-            "lakes/docs/**"
-        ],
+        "docsSurface": ["lakes/docs/**"],
         "claim": "npm test fails with a JSON parse error after a build was interrupted.",
         "evidence": "The truncated machine-local .cache/fmt/manifest.json, the format-check script and the README.",
         "expected": "The suite is green with no source, test or documentation change",
@@ -266,16 +245,11 @@
             }
         ],
         "mutationPolicy": {
-            "allowed": [
-                "work/.cache/**",
-                "lakes/docs/**"
-            ]
+            "allowed": ["work/.cache/**", "lakes/docs/**"]
         },
         "expectedDocs": {
             "kind": "none",
-            "preserve": [
-                "lakes/docs/ops/on-call.md"
-            ]
+            "preserve": ["lakes/docs/ops/on-call.md"]
         },
         "primaryCheck": {
             "id": "h03-format-cache",
@@ -295,9 +269,7 @@
         ],
         "promptKind": "task",
         "permissionProfile": "task",
-        "docsSurface": [
-            "lakes/docs/**"
-        ],
+        "docsSurface": ["lakes/docs/**"],
         "claim": "npm run lint reports NO_V1_IMPORT for legacy/adapters.js.",
         "evidence": "The lint script, the legacy adapter, the seeded build note and the test gate.",
         "expected": "The repository gate is green and the existing correct note is reused unchanged",
@@ -364,10 +336,7 @@
             }
         ],
         "mutationPolicy": {
-            "allowed": [
-                "work/scripts/**",
-                "lakes/docs/**"
-            ]
+            "allowed": ["work/scripts/**", "lakes/docs/**"]
         },
         "expectedDocs": {
             "kind": "none",
@@ -378,12 +347,8 @@
         },
         "docsCriterion": {
             "minVerifiedCalls": 1,
-            "verbs": [
-                "read"
-            ],
-            "paths": [
-                "build/legacy-v1-imports.md"
-            ]
+            "verbs": ["read"],
+            "paths": ["build/legacy-v1-imports.md"]
         },
         "primaryCheck": {
             "id": "h04-legacy-lint",

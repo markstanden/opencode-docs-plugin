@@ -15,7 +15,7 @@ prompt="${!#}"
 run_dir="${AC_RUN_DIR:?missing AC_RUN_DIR}"
 image="${PLACEMENT_IMAGE:-localhost/opencode-placement-trials}"
 mkdir -p "$run_dir/work" "$run_dir/config-home/opencode"
-printf '%s' "$prompt" > "$run_dir/prompt.md"
+printf '%s' "$prompt" >"$run_dir/prompt.md"
 node - "$run_dir/config-home/opencode/opencode.json" "${AC_MODEL:?missing AC_MODEL}" <<'JS'
 const fs = require("fs");
 const [path, model] = process.argv.slice(2);
@@ -37,13 +37,13 @@ JS
 # The caveman MCP is a host convenience the judge does not need.
 clean=$(node -e 'const fs=require("fs");let d={};try{d=JSON.parse(process.env.OPENCODE_CONFIG_CONTENT||"{}")}catch{};delete d.mcp;process.stdout.write(JSON.stringify(d))')
 exec podman run --rm --network host --userns=keep-id --read-only \
-  --tmpfs /tmp:rw,nosuid,size=256m \
-  -v "$run_dir:$run_dir:rw" \
-  -w "$run_dir/work" \
-  -e PWD="$run_dir/work" \
-  -e XDG_CONFIG_HOME="$run_dir/config-home" \
-  -e XDG_DATA_HOME=/tmp/agent-home/.local/share \
-  -e XDG_CACHE_HOME=/tmp/agent-home/.cache \
-  -e HOME=/tmp/agent-home \
-  -e OPENCODE_CONFIG_CONTENT="$clean" \
-  "$image" opencode "$@"
+    --tmpfs /tmp:rw,nosuid,size=256m \
+    -v "$run_dir:$run_dir:rw" \
+    -w "$run_dir/work" \
+    -e PWD="$run_dir/work" \
+    -e XDG_CONFIG_HOME="$run_dir/config-home" \
+    -e XDG_DATA_HOME=/tmp/agent-home/.local/share \
+    -e XDG_CACHE_HOME=/tmp/agent-home/.cache \
+    -e HOME=/tmp/agent-home \
+    -e OPENCODE_CONFIG_CONTENT="$clean" \
+    "$image" opencode "$@"
