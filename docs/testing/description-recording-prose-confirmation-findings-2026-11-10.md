@@ -1,7 +1,7 @@
 ---
 Area: Testing
 Keywords: description-prose, confirmation, r01, r02, r03, r04, paired-schedule, preservation, incomplete
-Summary: Completed the 40-session paired A/B confirmation on the repaired R01–R04 corpus. 38 of 40 structured assessments completed; 18 complete pairs and 2 unmatched observations. B utility 26 versus A 29 (B−A −3). The frozen criterion is not met because two R02 judge answers were truncated, so the result is incomplete and inconclusive rather than evidence against B.
+Summary: Completed the 40-session paired A/B confirmation on the repaired R01–R04 corpus. 38 of 40 structured assessments completed; 18 complete pairs and 2 unmatched observations. B utility 26 versus A 29 (B−A −3); missing-data intervals A 24–34 and B 21–31. The qualification criterion is not satisfied because assessment coverage is incomplete, and the assessed population shows no B advantage; the result is incomplete and inconclusive rather than evidence against B.
 ---
 
 # Native-description A/B confirmation: findings, 2026-11-10
@@ -20,13 +20,19 @@ scenario repeated, not five scenario types.
   truncated and remain unknown.
 - **18 complete pairs** and **2 unmatched observations**. Default utility:
   **A 29, B 26, B−A = −3** over the 38 assessed trials. Missing-data intervals:
-  A `19..34`, B `16..31`.
-- The frozen later-review criterion is **not met**: required assessments are
-  incomplete. The descriptive result also does not show B's advantage.
+  A `24..34`, B `21..31`; the full-population B−A interval is `−13..+7`.
+- B's three-point deficit is one extra transient note (−1) and one extra
+  duplicate (−2). Both arms recorded the same assessed useful work: five
+  creates and four updates each.
+- The qualification criterion is **not satisfied because assessment coverage is
+  incomplete**; the assessed population shows no B advantage.
 - No primary task failed outside R04. No mutation-policy breach occurred. No
-  R02 semantic preservation loss was found. Two R04 trials (one per arm) edited
-  the lint script and then documented the changed behaviour; both failed the
-  pristine primary check and were scored `misleading`.
+  R02 preservation loss was found among the **eight assessed R02 trials**
+  (8/8 preservation coverage); the two unassessed R02 trials have no verdict and
+  remain unknown. Two R04 trials (one per arm) edited the lint script and then
+  documented the changed behaviour; both failed the pristine primary check and
+  were scored `misleading`. R04 destructive loss is an **unresolved guardrail
+  for both arms** (below), not a clean pass.
 
 **Decision: incomplete/inconclusive; no recommendation and no adoption.**
 
@@ -92,8 +98,8 @@ and not "none".
 
 | Arm | Planned | Attempted | Completed | Usable | Assessed | Primary P/F | Useful C/U | Transient | Duplicate | Misleading | None | Utility | Interval |
 | --- | ------- | --------- | --------- | ------ | -------- | ----------- | ---------- | --------- | --------- | ---------- | ---- | ------- | -------- |
-| A   | 20      | 20        | 20        | 20     | 19       | 19/1        | 5/4        | 2         | 2         | 1          | 5    | 29      | 19..34   |
-| B   | 20      | 20        | 20        | 20     | 19       | 19/1        | 5/4        | 3         | 3         | 1          | 3    | 26      | 16..31   |
+| A   | 20      | 20        | 20        | 20     | 19       | 19/1        | 5/4        | 2         | 2         | 1          | 5    | 29      | 24..34   |
+| B   | 20      | 20        | 20        | 20     | 19       | 19/1        | 5/4        | 3         | 3         | 1          | 3    | 26      | 21..31   |
 
 | Case | Arm | Assessed | Useful C/U | Transient | Duplicate | Misleading | None | Primary fail | Utility |
 | ---- | --- | -------- | ---------- | --------- | --------- | ---------- | ---- | ------------ | ------- |
@@ -227,13 +233,16 @@ None deleted the document. Two of the seven (the misleading pair above)
 replaced a true seeded fact with a false one. I report these as gate-blocked
 documentation changes and adverse correctness outcomes; I do not convert an
 authorised note rewrite into a non-compensable destructive-loss breach without
-a semantic preservation verdict. The stricter deterministic reading is recorded
-as an open question rather than used to change the frozen criteria.
+a semantic preservation verdict. R04 destructive loss is therefore recorded as
+an **unresolved guardrail for both arms**, not as a clean pass or a B-specific
+breach.
 
 ## R02 semantic preservation
 
 The structured judge required four evidence-backed entries for every R02 trial.
-Six of eight completed; all six reported `retained / retained / retained` for
+Documentation assessment covered **8 of 10** R02 trials (4/5 per arm);
+preservation coverage is **8 of 8 assessed** (4/4 per arm). All eight assessed
+trials carry the four entries and report `retained / retained / retained` for
 the pool size, acquire timeout and startup migrations, and `removed` for the
 obsolete TLS claim. Example (`cc-A-r0-R02`): pool "The pool holds at most 10
 connections."; timeout "Acquiring a connection waits up to 5 seconds before
@@ -243,11 +252,26 @@ appears. Other judges quoted `(absent)` or explained why an explicit "obsolete"
 sentence was not a current claim.
 
 The two unassessed R02 documents visibly retain all three facts and remove the
-obsolete claim, but their judge answers did not complete; they remain unknown.
-The deterministic `preservationScreen` is a cross-check only: it accepted nine
-of the ten R02 documents and rejected `cc-B-r0-R02` as a "startup migrations"
-contradiction, a false positive on a faithful retention sentence. The judge's
-semantic record governs; the screen did not decide any guardrail.
+obsolete claim, but their judge answers did not complete; they have no
+preservation verdict and remain unknown.
+
+The deterministic `preservationScreen` is a cross-check only. A post-campaign
+run of the corrected screen accepts all ten R02 documents. The original screen
+rejected `cc-B-r0-R02` as a "startup migrations" contradiction because a
+negation in the preceding clause (`sslmode=disable … obsolete`) was applied to
+the whole bullet. That false positive is now a regression test that preserves
+the full bullet, the evaluated assertion and the matched spans; the judge's
+semantic record governs and the screen decided no guardrail.
+
+### R04 preservation: unresolved, symmetric
+
+The frozen instrument assessed R02 semantically and R04 only through the
+documentation gate's `preserve` rule. Three A and four B R04 trials modified the
+seeded note; two of those (one per arm: `cc-A-r3-R04`, `cc-B-r1-R04`) replaced a
+true mechanism fact with a false claim and failed the primary task. The
+instrument does not establish whether that is destructive loss of valid
+knowledge. It is recorded as an **unresolved guardrail for both arms**, not a
+B-specific breach and not a clean pass.
 
 ## Delivery and isolation
 
@@ -277,23 +301,56 @@ semantic record governs; the screen did not decide any guardrail.
   unknown.
 - Wall time 46m13s; mean trial 58.6s; mean judge process 9.6s (max 39.0s).
 
+## Post-campaign measurement corrections
+
+This is a derived correction. Raw trials, judge outputs, outcomes and utility
+weights are unchanged.
+
+- **R02 preservation coverage** was mis-stated as `0/6` with "all six". The data
+  has **8 assessed R02 trials, and all 8 carry the four required preservation
+  fields** (4/4 per arm). Documentation coverage is 8/10; preservation coverage
+  is 8/8 assessed. The "6" was a reporting typo, not two judgements missing
+  fields.
+- **Missing-data bounds** previously widened every unassessed trial to the full
+  task range. The shared scorer now retains a known primary result. Both missing
+  R02 trials passed their primary task, so each arm's missing component is
+  `−5..+5`, not `−10..+5`. Corrected intervals: A `24..34`, B `21..31`;
+  full-population B−A `−13..+7`. The derived analysis module is
+  `evidence/measurement/ac-scoring-c7246be.mts` (commit `c7246be`), and the
+  pre-correction analysis is preserved as `ANALYSIS-confirmation.pre-bounds-fix.json`.
+- **Decision wording** follows structured coverage: the qualification criterion
+  is not satisfied because assessment coverage is incomplete; the assessed
+  population shows no B advantage. The observed −3 is not a separately
+  established failure.
+- **R04 destructive loss** is recorded as an unresolved guardrail for both arms,
+  symmetrically, because the frozen instrument had no R04 semantic preservation
+  assessment.
+- **Preservation screen:** it now evaluates independent assertions and records
+  the full bullet, evaluated assertion and matched spans on every rejection. The
+  exact false-positive B r0 bullet is a regression test; a post-campaign run
+  accepts all ten R02 documents.
+- **Repository checks after the corrections:** 815/815 tests pass (810 at the
+  execution revision plus 5 new), typecheck passes, `defined comply` is
+  compliant. No trial or judge evidence was altered.
+
 ## Decision and limits
 
-**Incomplete/inconclusive.** The design ran all 40 sessions, but 2 required
-assessments are unknown, so the frozen criterion ("all 40 trials and required
-assessments complete") is not met. The 38-assessment result is A 29 / B 26
-(B−A −3; complete pairs A ahead by 3: 5 A wins, 3 B wins, 10 ties). This does
-not show that B's effect is absent; it also does not show a benefit. The
-missing-data intervals overlap. No production recommendation follows.
+**Incomplete/inconclusive.** The qualification criterion is not satisfied
+because assessment coverage is incomplete; the assessed population shows no B
+advantage. The design ran all 40 sessions, but 2 required assessments are
+unknown, so the frozen criterion ("all 40 trials and required assessments
+complete") is not met. The 38-assessment result is A 29 / B 26 (B−A −3;
+complete pairs A ahead by 3: 5 A wins, 3 B wins, 10 ties). Missing-data
+intervals are A `24..34` and B `21..31`; the full-population B−A interval is
+`−13..+7`, so a +5 lead is not excluded by the missing data. The observed −3 is
+not a separately established failure. No production recommendation follows.
 
-On the guardrail limb: B has no mutation-policy breach and no R02 semantic
-preservation loss. It has four R04 gate preserve blocks; three are duplicates
-and one (`cc-B-r1-R04`) replaces a true seeded fact with a false claim and
-fails the primary task. That case is a **disputed potential destructive-loss
-case**, not an established breach under the frozen instrument: the lake write
-was authorised and R04 had no required semantic preservation assessment. A
-stricter reading would fail B's guardrail limb as well; the completeness limb
-fails either way. A's `cc-A-r3-R04` is the symmetric case.
+Guardrail status: B has no mutation-policy breach and no R02 preservation loss
+among the eight assessed R02 trials. R04 destructive loss is unresolved for
+both arms: each has one misleading rewrite that replaced a true mechanism fact
+with a false claim (`cc-A-r3-R04`, `cc-B-r1-R04`), and the frozen instrument did
+not assess that guardrail semantically. This is not a clean pass for either arm,
+and it is not a B-specific breach.
 
 Remaining limits:
 
