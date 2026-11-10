@@ -140,6 +140,13 @@ deterministic rubric) is refused as altered evidence, not adopted. Explicit
 case ids must belong to the experiment. Legacy stamps without run.json warn
 openly and use the current corpus (a documented limitation, not a pass).
 
+`--gate-only` stops after the deterministic gates and writes `gate.json`
+(status, reason, artefacts, answer hash) without calling a judge model. It
+exists for campaigns that score with their own structured, arm-blind judge
+while preserving the harness's gate verdict as separate evidence: a blocked
+gate exits nonzero and writes no `verdict.json`, so a gate record can never
+be mistaken for a semantic verdict.
+
 ### Generation fingerprints
 
 `generate` (and `describe`) validate the corpus in FULL mode at their

@@ -214,6 +214,7 @@ interface CliOptions {
     force: boolean;
     noJudge: boolean;
     allowWrites: boolean;
+    gateOnly: boolean;
     discovery: boolean;
     recordingClosing: RecordingClosing;
     printLogs: boolean;
@@ -707,12 +708,19 @@ const DEFAULTS: DefaultedOptions = {
 
 /** Letters where a bare switch flag lands in `CliOptions`. */
 type BooleanSwitch =
-    "force" | "noJudge" | "allowWrites" | "discovery" | "printLogs" | "help";
+    | "force"
+    | "noJudge"
+    | "allowWrites"
+    | "gateOnly"
+    | "discovery"
+    | "printLogs"
+    | "help";
 
 const SWITCHES: Record<string, BooleanSwitch> = {
     "--force": "force",
     "--no-judge": "noJudge",
     "--allow-writes": "allowWrites",
+    "--gate-only": "gateOnly",
     "--discovery": "discovery",
     "--print-logs": "printLogs",
     "--help": "help",
@@ -890,6 +898,7 @@ function parseArgs(argv: string[]) {
         force: false,
         noJudge: false,
         allowWrites: false,
+        gateOnly: false,
         discovery: false,
         recordingClosing: "original",
         printLogs: false,
@@ -7882,6 +7891,51 @@ function recordedRubricProblem(
         : "recorded rubric does not match the experiment's saved definition";
 }
 
+/**
+ * Record the deterministic pre-judge gate without calling a judge model.
+ *
+ * A campaign that scores documentation with its own structured judge still
+ * needs the harness's own gate verdict preserved next to the run, so the
+ * gate outcome and the semantic assessment stay separate evidence. Writes
+ * `gate.json`; never a `verdict.json`, so a gate record cannot be mistaken
+ * for a semantic verdict.
+ * @param caseId The case being gated.
+ * @param resultDir The case's result directory.
+ * @param gate The gate outcome from {@link judgeGateReason}.
+ * @param gate.reason The refusal reason, or null when the gate passed.
+ * @param gate.artifacts The verified artefact list on a pass.
+ * @param answerHash The recorded answer's identity.
+ * @returns 0 when the gate passed, 1 when it blocked (an expected outcome,
+ *   not a harness failure).
+ */
+function writeGateRecord(
+    caseId: string,
+    resultDir: string,
+    gate: { reason: string | null; artifacts: Array<{ path: string }> },
+    answerHash: string,
+) {
+    const status = gate.reason === null ? "pass" : "blocked";
+    write(
+        join(resultDir, "gate.json"),
+        JSON.stringify(
+            {
+                caseId,
+                status,
+                reason: gate.reason,
+                artifacts: gate.artifacts.map((artifact) => artifact.path),
+                answerHash,
+                checkedAt: new Date().toISOString(),
+            },
+            null,
+            2,
+        ) + "\n",
+    );
+    console.log(
+        `${caseId}: gate ${status}${gate.reason === null ? "" : ` — ${gate.reason}`}`,
+    );
+    return gate.reason === null ? 0 : 1;
+}
+
 async function judgeOne(
     testCase: FullTrialCase,
     options: CliOptions,
@@ -7896,6 +7950,9 @@ async function judgeOne(
         ? fileHash(join(resultDir, "final.md"))
         : "unknown";
     const gate = judgeGateReason(resultDir, options, testCase);
+    if (options.gateOnly === true) {
+        return writeGateRecord(testCase.id, resultDir, gate, answerHash);
+    }
     if (gate.reason !== null) {
         return writeInvalidVerdict(
             testCase.id,

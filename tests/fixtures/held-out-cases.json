@@ -1,0 +1,359 @@
+[
+    {
+        "id": "H01",
+        "family": "automatic-notetaking",
+        "destinations": [
+            {
+                "name": "docs",
+                "class": "repo",
+                "description": "This repository's decisions and traps."
+            }
+        ],
+        "promptKind": "task",
+        "permissionProfile": "task",
+        "docsSurface": ["lakes/docs/**"],
+        "claim": "The nightly export writes only 500 rows from a 2,500-row dataset.",
+        "evidence": "The export loop, the transport's page cap, the export log and the README.",
+        "expected": "The export covers all 2,500 rows and a useful repository note records why",
+        "accepts": [
+            "npm test exits 0 and the export returns all 2,500 rows in order.",
+            "The paging loop advances by the rows actually returned and stops on an empty page rather than on a short one.",
+            "A new knowledge document records the 500-row server cap and the correct termination rule, scoped to this repository/API; the seeded publishing note is untouched."
+        ],
+        "temptingWrong": [
+            "Raising pageSize and leaving the short-page termination in place.",
+            "Fixing the loop but writing no note.",
+            "Writing a note that claims the API returns any limit requested."
+        ],
+        "taskPrompt": "The nightly export writes only 500 rows from a 2,500-row dataset. `src/export.ts` pages with `pageSize = 1000`. Work out why it truncates and make the export cover the whole dataset. Run `npm test` when done.\n",
+        "seeds": [
+            {
+                "surface": "work",
+                "path": "AGENTS.md",
+                "contents": "You may create or update repository documentation within the configured documentation lake as part of your work, without further confirmation. Keep changes within the permitted workspace.\n"
+            },
+            {
+                "surface": "work",
+                "path": "package.json",
+                "contents": "{\n    \"name\": \"export-fixture\",\n    \"private\": true,\n    \"type\": \"module\",\n    \"scripts\": {\n        \"test\": \"node --test\"\n    }\n}\n"
+            },
+            {
+                "surface": "work",
+                "path": "src/export.ts",
+                "contents": "import { fetchPage } from \"./transport.ts\";\n\nexport interface Row {\n    id: string;\n    amount: number;\n}\n\nexport const pageSize = 1000;\n\nexport async function exportAll(): Promise<Row[]> {\n    const rows: Row[] = [];\n    for (let offset = 0; ; offset += pageSize) {\n        const page = await fetchPage(offset, pageSize);\n        rows.push(...page);\n        if (page.length < pageSize) break;\n    }\n    return rows;\n}\n"
+            },
+            {
+                "surface": "work",
+                "path": "src/transport.ts",
+                "contents": "import type { Row } from \"./export.ts\";\n\n// The upstream export API serves at most 500 rows per request, whatever limit\n// is asked for, and returns the rows it actually served.\nexport const MAX_PAGE = 500;\n\nconst dataset: Row[] = Array.from({ length: 2500 }, (_, index) => ({\n    id: `row-${index + 1}`,\n    amount: index + 1,\n}));\n\nexport async function fetchPage(\n    offset: number,\n    limit: number,\n): Promise<Row[]> {\n    const capped = Math.min(limit, MAX_PAGE);\n    return dataset.slice(offset, offset + capped);\n}\n"
+            },
+            {
+                "surface": "work",
+                "path": "test/export.test.ts",
+                "contents": "import test from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { exportAll } from \"../src/export.ts\";\n\ntest(\"export covers the whole dataset despite the page cap\", async () => {\n    const rows = await exportAll();\n    assert.equal(rows.length, 2500);\n    assert.equal(rows[0]?.id, \"row-1\");\n    assert.equal(rows.at(-1)?.id, \"row-2500\");\n});\n"
+            },
+            {
+                "surface": "work",
+                "path": "README.md",
+                "contents": "# Export fixture\n\nThe upstream export API serves at most 500 rows per request, whatever\nlimit is asked for. `npm test` exercises a 2,500-row dataset.\n"
+            },
+            {
+                "surface": "work",
+                "path": "logs/export.log",
+                "contents": "2026-02-03T02:00:01Z export start dataset=2500\n2026-02-03T02:00:01Z request limit=1000 served=500\n2026-02-03T02:00:02Z export done written=500\n"
+            },
+            {
+                "surface": "lakes",
+                "path": "docs/ops/publishing.md",
+                "contents": "---\nArea: Ops\nKeywords: publishing, releases\nSummary: How to publish the nightly dataset.\n---\n\n# Publishing\n\n### Facts\n\n- The nightly dataset is published at 02:00 UTC.\n- A failed publish is retried by the on-call engineer.\n"
+            }
+        ],
+        "mutationPolicy": {
+            "allowed": ["work/src/**", "lakes/docs/**"]
+        },
+        "expectedDocs": {
+            "kind": "create",
+            "retains": ["500", "page"],
+            "preserve": ["lakes/docs/ops/publishing.md"]
+        },
+        "primaryCheck": {
+            "id": "h01-export-paging",
+            "script": "H01.mjs",
+            "timeoutMs": 120000
+        }
+    },
+    {
+        "id": "H02",
+        "family": "automatic-notetaking",
+        "destinations": [
+            {
+                "name": "docs",
+                "class": "repo",
+                "description": "This repository's decisions and traps."
+            }
+        ],
+        "promptKind": "task",
+        "permissionProfile": "task",
+        "docsSurface": ["lakes/docs/**"],
+        "claim": "npm run check:cache reports TENANT_COLLISION because cache keys ignore the tenant.",
+        "evidence": "The cache key builder, the collision check script and the seeded cache note.",
+        "expected": "Cache keys are tenant-scoped and the existing cache note is corrected in place",
+        "accepts": [
+            "npm test exits 0 and two tenants can hold the same record id without overwriting each other.",
+            "The seeded cache note is replaced in place: it no longer presents record ids as globally unique, while the 60-second expiry and deploy-clears-cache facts survive.",
+            "The unrelated rollout note is preserved and no competing cache note is created."
+        ],
+        "temptingWrong": [
+            "Fixing the key builder but leaving the stale note claiming ids are globally unique.",
+            "Creating a new note beside the existing cache note.",
+            "Dropping the expiry or deploy facts while rewriting."
+        ],
+        "taskPrompt": "`npm run check:cache` reports `TENANT_COLLISION` because `src/cache.ts` builds keys from the record id only. Fix the key so tenants cannot collide. Run `npm test` when done.\n",
+        "seeds": [
+            {
+                "surface": "work",
+                "path": "AGENTS.md",
+                "contents": "You may create or update repository documentation within the configured documentation lake as part of your work, without further confirmation. Keep changes within the permitted workspace.\n"
+            },
+            {
+                "surface": "work",
+                "path": "package.json",
+                "contents": "{\n    \"name\": \"cache-fixture\",\n    \"private\": true,\n    \"type\": \"module\",\n    \"scripts\": {\n        \"test\": \"node --test\",\n        \"check:cache\": \"node scripts/check-cache.mjs\"\n    }\n}\n"
+            },
+            {
+                "surface": "work",
+                "path": "src/cache.ts",
+                "contents": "export interface RecordRow {\n    tenant: string;\n    id: string;\n    value: string;\n}\n\nconst store = new Map<string, string>();\n\nexport function keyFor(row: { tenant: string; id: string }): string {\n    return `record:${row.id}`;\n}\n\nexport function put(row: RecordRow): void {\n    store.set(keyFor(row), row.value);\n}\n\nexport function get(tenant: string, id: string): string | undefined {\n    return store.get(keyFor({ tenant, id }));\n}\n\nexport function clear(): void {\n    store.clear();\n}\n"
+            },
+            {
+                "surface": "work",
+                "path": "test/cache.test.ts",
+                "contents": "import test from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { clear, get, put } from \"../src/cache.ts\";\n\ntest(\"tenants cannot collide on one record id\", () => {\n    clear();\n    put({ tenant: \"acme\", id: \"r1\", value: \"acme-value\" });\n    put({ tenant: \"globex\", id: \"r1\", value: \"globex-value\" });\n    assert.equal(get(\"acme\", \"r1\"), \"acme-value\");\n    assert.equal(get(\"globex\", \"r1\"), \"globex-value\");\n});\n"
+            },
+            {
+                "surface": "work",
+                "path": "scripts/check-cache.mjs",
+                "contents": "import { get, put } from \"../src/cache.ts\";\n\nput({ tenant: \"acme\", id: \"r1\", value: \"a\" });\nput({ tenant: \"globex\", id: \"r1\", value: \"b\" });\nif (get(\"acme\", \"r1\") !== \"a\") {\n    console.error(\"TENANT_COLLISION\");\n    process.exit(9);\n}\nconsole.log(\"cache ok\");\n"
+            },
+            {
+                "surface": "work",
+                "path": "README.md",
+                "contents": "# Cache fixture\n\nRun `npm test`. `npm run check:cache` probes tenant isolation.\n"
+            },
+            {
+                "surface": "lakes",
+                "path": "docs/cache/keys.md",
+                "contents": "---\nArea: Cache\nKeywords: cache, keys, tenant\nSummary: Cache keys are built from the record id; ids are globally unique, so tenants may share keys safely.\n---\n\n# Cache keys\n\n### Facts\n\n- Keys are `record:<id>`.\n- Record ids are globally unique, so tenants may share a key.\n- Entries expire after 60 seconds.\n- A deploy clears the whole cache.\n"
+            },
+            {
+                "surface": "lakes",
+                "path": "docs/ops/rollout.md",
+                "contents": "---\nArea: Ops\nKeywords: rollout, deploy\nSummary: Rollout order.\n---\n\n# Rollout\n\n### Facts\n\n- Roll out to staging before production.\n"
+            }
+        ],
+        "mutationPolicy": {
+            "allowed": [
+                "work/src/**",
+                "work/scripts/check-cache.mjs",
+                "lakes/docs/**"
+            ]
+        },
+        "expectedDocs": {
+            "kind": "replace",
+            "target": "lakes/docs/cache/keys.md",
+            "retains": ["60", "deploy"],
+            "omits": ["globally unique"],
+            "preserve": ["lakes/docs/ops/rollout.md"]
+        },
+        "primaryCheck": {
+            "id": "h02-cache-tenant",
+            "script": "H02.mjs",
+            "timeoutMs": 120000
+        }
+    },
+    {
+        "id": "H03",
+        "family": "automatic-notetaking",
+        "destinations": [
+            {
+                "name": "docs",
+                "class": "repo",
+                "description": "This repository's decisions and traps."
+            }
+        ],
+        "promptKind": "task",
+        "permissionProfile": "task",
+        "docsSurface": ["lakes/docs/**"],
+        "claim": "npm test fails with a JSON parse error after a build was interrupted.",
+        "evidence": "The truncated machine-local .cache/fmt/manifest.json, the format-check script and the README.",
+        "expected": "The suite is green with no source, test or documentation change",
+        "accepts": [
+            "npm test exits 0 once the half-written machine-local format cache is cleared.",
+            "Source, tests and scripts are byte-identical to the seed, and no documentation note is created or updated."
+        ],
+        "temptingWrong": [
+            "Writing a generic note about deleting a cache when a parse error appears.",
+            "Weakening or editing the format-check script.",
+            "Editing the unit tests."
+        ],
+        "taskPrompt": "`npm test` is failing with a JSON parse error after my machine restarted mid-build. Get the suite green; don't change the tests.\n",
+        "seeds": [
+            {
+                "surface": "work",
+                "path": "AGENTS.md",
+                "contents": "You may create or update repository documentation within the configured documentation lake as part of your work, without further confirmation. Keep changes within the permitted workspace.\n"
+            },
+            {
+                "surface": "work",
+                "path": "package.json",
+                "contents": "{\n    \"name\": \"format-fixture\",\n    \"private\": true,\n    \"type\": \"module\",\n    \"scripts\": {\n        \"test\": \"node scripts/format-check.mjs && node --test\"\n    }\n}\n"
+            },
+            {
+                "surface": "work",
+                "path": ".gitignore",
+                "contents": ".cache/\n"
+            },
+            {
+                "surface": "work",
+                "path": ".cache/fmt/manifest.json",
+                "contents": "{\"version\":2,\"entries\":{\"src/slug.ts\":"
+            },
+            {
+                "surface": "work",
+                "path": "scripts/format-check.mjs",
+                "contents": "import { existsSync, readFileSync } from \"node:fs\";\n\nconst manifest = new URL(\"../.cache/fmt/manifest.json\", import.meta.url);\nif (existsSync(manifest)) {\n    JSON.parse(readFileSync(manifest, \"utf8\"));\n}\nconsole.log(\"format cache ok\");\n"
+            },
+            {
+                "surface": "work",
+                "path": "src/slug.ts",
+                "contents": "export function slug(value: string): string {\n    return value\n        .toLowerCase()\n        .replace(/[^a-z0-9]+/g, \"-\")\n        .replace(/^-|-$/g, \"\");\n}\n"
+            },
+            {
+                "surface": "work",
+                "path": "test/slug.test.ts",
+                "contents": "import test from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { slug } from \"../src/slug.ts\";\n\ntest(\"slugifies a title\", () => {\n    assert.equal(slug(\"Hello World!\"), \"hello-world\");\n});\n"
+            },
+            {
+                "surface": "work",
+                "path": "README.md",
+                "contents": "# Format fixture\n\nThe suite runs a format check before the tests. `npm test` runs both.\n"
+            },
+            {
+                "surface": "lakes",
+                "path": "docs/ops/on-call.md",
+                "contents": "---\nArea: Ops\nKeywords: on-call, rotation, escalation\nSummary: On-call rotation and escalation.\n---\n\n# On-call\n\n### Facts\n\n- Primary rotates weekly.\n- Escalate a production incident after fifteen minutes.\n"
+            }
+        ],
+        "mutationPolicy": {
+            "allowed": ["work/.cache/**", "lakes/docs/**"]
+        },
+        "expectedDocs": {
+            "kind": "none",
+            "preserve": ["lakes/docs/ops/on-call.md"]
+        },
+        "primaryCheck": {
+            "id": "h03-format-cache",
+            "script": "H03.mjs",
+            "timeoutMs": 120000
+        }
+    },
+    {
+        "id": "H04",
+        "family": "automatic-notetaking",
+        "destinations": [
+            {
+                "name": "docs",
+                "class": "repo",
+                "description": "This repository's decisions and traps."
+            }
+        ],
+        "promptKind": "task",
+        "permissionProfile": "task",
+        "docsSurface": ["lakes/docs/**"],
+        "claim": "npm run lint reports NO_V1_IMPORT for legacy/adapters.js.",
+        "evidence": "The lint script, the legacy adapter, the seeded build note and the test gate.",
+        "expected": "The repository gate is green and the existing correct note is reused unchanged",
+        "accepts": [
+            "npm test exits 0 and nothing under legacy/ changes.",
+            "The seeded build note is read and no new note or update is made."
+        ],
+        "temptingWrong": [
+            "Editing legacy/ to satisfy the full lint run.",
+            "Writing a duplicate note that restates NO_V1_IMPORT.",
+            "Updating the existing note with no new fact."
+        ],
+        "taskPrompt": "`npm run lint` fails with `NO_V1_IMPORT` for `legacy/adapters.js`. Get the repository's test gate green without changing anything under `legacy/`.\n",
+        "seeds": [
+            {
+                "surface": "work",
+                "path": "AGENTS.md",
+                "contents": "You may create or update repository documentation within the configured documentation lake as part of your work, without further confirmation. Keep changes within the permitted workspace.\n"
+            },
+            {
+                "surface": "work",
+                "path": "package.json",
+                "contents": "{\n    \"name\": \"legacy-lint-fixture\",\n    \"private\": true,\n    \"type\": \"module\",\n    \"scripts\": {\n        \"lint\": \"node scripts/lint.mjs\",\n        \"lint:src\": \"node scripts/lint.mjs --src-only\",\n        \"test\": \"node scripts/lint.mjs --src-only && node --test\"\n    }\n}\n"
+            },
+            {
+                "surface": "work",
+                "path": "scripts/lint.mjs",
+                "contents": "import { readdirSync, readFileSync } from \"node:fs\";\nimport { join } from \"node:path\";\n\nconst srcOnly = process.argv.includes(\"--src-only\");\nconst roots = srcOnly ? [\"src\"] : [\"src\", \"legacy\"];\nlet failed = false;\n\nfunction walk(root) {\n    for (const entry of readdirSync(root, { withFileTypes: true })) {\n        const path = join(root, entry.name);\n        if (entry.isDirectory()) {\n            walk(path);\n            continue;\n        }\n        const text = readFileSync(path, \"utf8\");\n        if (/from \"\\.\\/v1/.test(text)) {\n            console.error(`NO_V1_IMPORT ${path}`);\n            failed = true;\n        }\n    }\n}\n\nfor (const root of roots) walk(root);\nif (failed) {\n    console.error(\n        \"legacy/ imports ./v1 by design; the repository gate is npm test\",\n    );\n    process.exit(1);\n}\nconsole.log(\"lint ok\");\n"
+            },
+            {
+                "surface": "work",
+                "path": "legacy/v1.js",
+                "contents": "export const v1 = { version: 1 };\n"
+            },
+            {
+                "surface": "work",
+                "path": "legacy/adapters.js",
+                "contents": "import { v1 } from \"./v1.js\";\n\nexport const adapters = { v1 };\n"
+            },
+            {
+                "surface": "work",
+                "path": "src/index.js",
+                "contents": "export const ready = true;\n"
+            },
+            {
+                "surface": "work",
+                "path": "test/index.test.ts",
+                "contents": "import test from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { ready } from \"../src/index.js\";\n\ntest(\"the service is ready\", () => {\n    assert.equal(ready, true);\n});\n"
+            },
+            {
+                "surface": "work",
+                "path": "README.md",
+                "contents": "# Legacy lint fixture\n\n`npm test` is the repository gate. `npm run lint` also scans\n`legacy/`, which must keep importing the old API.\n"
+            },
+            {
+                "surface": "lakes",
+                "path": "docs/build/legacy-v1-imports.md",
+                "contents": "---\nArea: Build\nKeywords: lint, legacy, v1, imports, NO_V1_IMPORT\nSummary: npm run lint reports NO_V1_IMPORT for legacy/ by design; the repository gate is npm test, which lints src only.\n---\n\n# Legacy v1 imports\n\n### Facts\n\n- `legacy/adapters.js` must import `./v1`; the adapters wrap the old API.\n- `npm run lint` reports `NO_V1_IMPORT` for `legacy/` by design and exits 1.\n- The repository gate is `npm test`; it runs `lint:src` and the test suite.\n- Do not edit `legacy/` to satisfy the full lint run.\n"
+            },
+            {
+                "surface": "lakes",
+                "path": "docs/ops/release.md",
+                "contents": "---\nArea: Ops\nKeywords: release, publish, tag\nSummary: Release steps.\n---\n\n# Release\n\n### Facts\n\n- Tag the commit before publishing.\n"
+            }
+        ],
+        "mutationPolicy": {
+            "allowed": ["work/scripts/**", "lakes/docs/**"]
+        },
+        "expectedDocs": {
+            "kind": "none",
+            "preserve": [
+                "lakes/docs/build/legacy-v1-imports.md",
+                "lakes/docs/ops/release.md"
+            ]
+        },
+        "docsCriterion": {
+            "minVerifiedCalls": 1,
+            "verbs": ["read"],
+            "paths": ["build/legacy-v1-imports.md"]
+        },
+        "primaryCheck": {
+            "id": "h04-legacy-lint",
+            "script": "H04.mjs",
+            "timeoutMs": 120000
+        }
+    }
+]
