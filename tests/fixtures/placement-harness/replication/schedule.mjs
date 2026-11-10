@@ -49,42 +49,41 @@ export function buildSchedule() {
     return slots;
 }
 
+const pairProblem = (first, second) => {
+    if (!first || !second) return "unpaired final slot";
+    if (first.pair !== second.pair)
+        return `pair split at slots ${first.slot}/${second.slot}`;
+    if (first.arm === second.arm)
+        return `pair ${first.pair} repeats arm ${first.arm}`;
+    const expected =
+        (SCENARIOS.indexOf(first.scenario) + first.repetition) % 2 === 0
+            ? ["A", "B"]
+            : ["B", "A"];
+    return first.arm === expected[0] && second.arm === expected[1]
+        ? null
+        : `pair ${first.pair} order ${first.arm}/${second.arm}, expected ${expected.join("/")}`;
+};
+
+const armProblems = (slots, arm) => {
+    const armSlots = slots.filter((one) => one.arm === arm);
+    if (armSlots.length !== 20) return [`arm ${arm} has ${armSlots.length} slots`];
+    return SCENARIOS.filter(
+        (scenario) =>
+            armSlots.filter((one) => one.scenario === scenario).length !==
+            REPETITIONS,
+    ).map((scenario) => `${arm}/${scenario} does not have five slots`);
+};
+
 /** Verify the invariants the replication depends on. */
 export function verifySchedule(slots) {
     const problems = [];
     if (slots.length !== ARMS.length * SCENARIOS.length * REPETITIONS)
         problems.push(`expected 40 slots, found ${slots.length}`);
     for (let index = 0; index < slots.length; index += 2) {
-        const [first, second] = [slots[index], slots[index + 1]];
-        if (!first || !second) {
-            problems.push(`unpaired slot at ${index + 1}`);
-            continue;
-        }
-        if (first.pair !== second.pair)
-            problems.push(`pair split at slots ${first.slot}/${second.slot}`);
-        if (first.arm === second.arm)
-            problems.push(`pair ${first.pair} repeats arm ${first.arm}`);
-        const expected =
-            (SCENARIOS.indexOf(first.scenario) + first.repetition) % 2 === 0
-                ? ["A", "B"]
-                : ["B", "A"];
-        if (first.arm !== expected[0] || second.arm !== expected[1])
-            problems.push(
-                `pair ${first.pair} order ${first.arm}/${second.arm}, expected ${expected.join("/")}`,
-            );
+        const problem = pairProblem(slots[index], slots[index + 1]);
+        if (problem) problems.push(problem);
     }
-    for (const arm of ARMS) {
-        const armSlots = slots.filter((one) => one.arm === arm);
-        if (armSlots.length !== 20)
-            problems.push(`arm ${arm} has ${armSlots.length} slots`);
-        for (const scenario of SCENARIOS) {
-            const count = armSlots.filter(
-                (one) => one.scenario === scenario,
-            ).length;
-            if (count !== REPETITIONS)
-                problems.push(`${arm}/${scenario} has ${count} slots`);
-        }
-    }
+    for (const arm of ARMS) problems.push(...armProblems(slots, arm));
     return problems;
 }
 

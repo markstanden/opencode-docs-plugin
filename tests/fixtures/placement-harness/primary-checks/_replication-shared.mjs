@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
+/** Refuse when a required file is missing from either tree. */
 export function requireFiles(liveWork, pristineWork, paths) {
     for (const path of paths) {
         for (const root of [liveWork, pristineWork]) {
@@ -19,6 +20,7 @@ export function requireFiles(liveWork, pristineWork, paths) {
     }
 }
 
+/** Copy the live tree, restore the pristine tests, and run `npm test`. */
 export function runSuite(liveWork, pristineWork, label) {
     const root = mkdtempSync(join(tmpdir(), `${label}-`));
     try {
@@ -50,6 +52,7 @@ export function runSuite(liveWork, pristineWork, label) {
     }
 }
 
+/** Emit the verdict, run optional extra assertions, then clean up. */
 export function finish(label, root, status, extra) {
     try {
         extra?.(root);
@@ -63,6 +66,7 @@ export function finish(label, root, status, extra) {
     }
 }
 
+/** Refuse when a protected file differs from its pristine bytes. */
 export function assertUnchanged(root, pristineWork, paths) {
     for (const path of paths) {
         const live = readFileSync(join(root, path));
@@ -74,6 +78,7 @@ export function assertUnchanged(root, pristineWork, paths) {
     }
 }
 
+/** Write a UTF-8 file. */
 export function writeFile(path, contents) {
     writeFileSync(path, contents, "utf8");
 }

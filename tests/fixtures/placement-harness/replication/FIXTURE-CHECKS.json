@@ -5,7 +5,7 @@
     "expected": 1,
     "actual": 1,
     "ok": true,
-    "detail": "✖ parses a vendor file with a UTF-8 BOM (0.901544ms)\n✔ parses plain UTF-8 without a BOM (0.319922ms)\nℹ tests 2\nℹ suites 0\nℹ pass 1\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 140.82016\n\n✖ failing tests:\n\ntest at test/csv.test.ts:6:1\n✖ parses a vendor file with a UTF-8 BOM (0.901544ms)\n  Error: unexpected header: ﻿id\n      at parseCsv (file:///tmp/r01-mNfGYh/src/csv.ts:10:15)\n      at TestContext.<anonymous> (file:///tmp/r01-mNfGYh/test/csv.test.ts:11:20)\n      at Test.runInAsyncScope (node:async_hooks:226:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.start (node:internal/test_runner/test:1262:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)\nnpm notice run test\nnpm notice run node --test\nR01 primary check: fail (exit 1)\n"
+    "detail": "✖ parses a vendor file with a UTF-8 BOM (0.742435ms)\n✔ parses plain UTF-8 without a BOM (0.245541ms)\nℹ tests 2\nℹ suites 0\nℹ pass 1\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 83.858994\n\n✖ failing tests:\n\ntest at test/csv.test.ts:6:1\n✖ parses a vendor file with a UTF-8 BOM (0.742435ms)\n  Error: unexpected header: ﻿id\n      at parseCsv (file:///tmp/r01-sFMTRZ/src/csv.ts:10:15)\n      at TestContext.<anonymous> (file:///tmp/r01-sFMTRZ/test/csv.test.ts:11:20)\n      at Test.runInAsyncScope (node:async_hooks:226:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.start (node:internal/test_runner/test:1262:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)\nnpm notice run test\nnpm notice run node --test\nR01 primary check: fail (exit 1)\n"
   },
   {
     "id": "R01",
@@ -13,7 +13,7 @@
     "expected": 0,
     "actual": 0,
     "ok": true,
-    "detail": "✔ parses a vendor file with a UTF-8 BOM (0.972948ms)\n✔ parses plain UTF-8 without a BOM (0.216477ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 103.805362\nR01 primary check: pass\nnpm notice run test\nnpm notice run node --test\n"
+    "detail": "✔ parses a vendor file with a UTF-8 BOM (0.778874ms)\n✔ parses plain UTF-8 without a BOM (0.160311ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 82.583428\nR01 primary check: pass\nnpm notice run test\nnpm notice run node --test\n"
   },
   {
     "id": "R01",
@@ -21,7 +21,7 @@
     "expected": 1,
     "actual": 1,
     "ok": true,
-    "detail": "✔ parses a vendor file with a UTF-8 BOM (0.889792ms)\n✖ parses plain UTF-8 without a BOM (0.247846ms)\nℹ tests 2\nℹ suites 0\nℹ pass 1\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 120.004579\n\n✖ failing tests:\n\ntest at test/csv.test.ts:16:1\n✖ parses plain UTF-8 without a BOM (0.247846ms)\n  Error: unexpected header: d\n      at parseCsv (file:///tmp/r01-ad9j2z/src/csv.ts:10:15)\n      at TestContext.<anonymous> (file:///tmp/r01-ad9j2z/test/csv.test.ts:17:20)\n      at Test.runInAsyncScope (node:async_hooks:226:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)\n      at Test.postRun (node:internal/test_runner/test:1542:19)\n      at Test.run (node:internal/test_runner/test:1467:12)\n      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)\nnpm notice run test\nnpm notice run node --test\nR01 primary check: fail (exit 1)\n"
+    "detail": "✔ parses a vendor file with a UTF-8 BOM (0.77163ms)\n✖ parses plain UTF-8 without a BOM (0.214493ms)\nℹ tests 2\nℹ suites 0\nℹ pass 1\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 84.295996\n\n✖ failing tests:\n\ntest at test/csv.test.ts:16:1\n✖ parses plain UTF-8 without a BOM (0.214493ms)\n  Error: unexpected header: d\n      at parseCsv (file:///tmp/r01-8fOD78/src/csv.ts:10:15)\n      at TestContext.<anonymous> (file:///tmp/r01-8fOD78/test/csv.test.ts:17:20)\n      at Test.runInAsyncScope (node:async_hooks:226:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)\n      at Test.postRun (node:internal/test_runner/test:1542:19)\n      at Test.run (node:internal/test_runner/test:1467:12)\n      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)\nnpm notice run test\nnpm notice run node --test\nR01 primary check: fail (exit 1)\n"
   },
   {
     "id": "R02",
@@ -29,7 +29,7 @@
     "expected": 1,
     "actual": 1,
     "ok": true,
-    "detail": "✖ requires TLS after the proxy upgrade (1.386255ms)\n✔ pool size and acquire timeout stay at the documented values (0.19176ms)\n✔ migrations run at startup (0.135986ms)\nℹ tests 3\nℹ suites 0\nℹ pass 2\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 99.21143\n\n✖ failing tests:\n\ntest at test/db.test.ts:5:1\n✖ requires TLS after the proxy upgrade (1.386255ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  + actual - expected\n  \n  + 'disable'\n  - 'require'\n  \n      at TestContext.<anonymous> (file:///tmp/r02-3SGm7C/test/db.test.ts:6:12)\n      at Test.runInAsyncScope (node:async_hooks:226:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.start (node:internal/test_runner/test:1262:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: 'disable',\n    expected: 'require',\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\nnpm notice run test\nnpm notice run node --test\nR02 primary check: fail (exit 1)\n"
+    "detail": "✖ requires TLS after the proxy upgrade (1.195286ms)\n✔ pool size and acquire timeout stay at the documented values (0.178255ms)\n✔ migrations run at startup (0.128171ms)\nℹ tests 3\nℹ suites 0\nℹ pass 2\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 88.310959\n\n✖ failing tests:\n\ntest at test/db.test.ts:5:1\n✖ requires TLS after the proxy upgrade (1.195286ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  + actual - expected\n  \n  + 'disable'\n  - 'require'\n  \n      at TestContext.<anonymous> (file:///tmp/r02-mOSaLu/test/db.test.ts:6:12)\n      at Test.runInAsyncScope (node:async_hooks:226:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.start (node:internal/test_runner/test:1262:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: 'disable',\n    expected: 'require',\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\nnpm notice run test\nnpm notice run node --test\nR02 primary check: fail (exit 1)\n"
   },
   {
     "id": "R02",
@@ -37,7 +37,7 @@
     "expected": 0,
     "actual": 0,
     "ok": true,
-    "detail": "✔ requires TLS after the proxy upgrade (1.042729ms)\n✔ pool size and acquire timeout stay at the documented values (0.141215ms)\n✔ migrations run at startup (0.137969ms)\nℹ tests 3\nℹ suites 0\nℹ pass 3\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 109.333749\nR02 primary check: pass\nnpm notice run test\nnpm notice run node --test\n"
+    "detail": "✔ requires TLS after the proxy upgrade (0.608984ms)\n✔ pool size and acquire timeout stay at the documented values (0.111169ms)\n✔ migrations run at startup (0.137438ms)\nℹ tests 3\nℹ suites 0\nℹ pass 3\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 80.703065\nR02 primary check: pass\nnpm notice run test\nnpm notice run node --test\n"
   },
   {
     "id": "R02",
@@ -45,7 +45,7 @@
     "expected": 1,
     "actual": 1,
     "ok": true,
-    "detail": "✔ requires TLS after the proxy upgrade (0.621828ms)\n✖ pool size and acquire timeout stay at the documented values (0.693052ms)\n✔ migrations run at startup (0.153929ms)\nℹ tests 3\nℹ suites 0\nℹ pass 2\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 85.713599\n\n✖ failing tests:\n\ntest at test/db.test.ts:9:1\n✖ pool size and acquire timeout stay at the documented values (0.693052ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  20 !== 10\n  \n      at TestContext.<anonymous> (file:///tmp/r02-voIUEN/test/db.test.ts:10:12)\n      at Test.runInAsyncScope (node:async_hooks:226:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)\n      at Test.postRun (node:internal/test_runner/test:1542:19)\n      at Test.run (node:internal/test_runner/test:1467:12)\n      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: 20,\n    expected: 10,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\nnpm notice run test\nnpm notice run node --test\nR02 primary check: fail (exit 1)\n"
+    "detail": "✔ requires TLS after the proxy upgrade (0.614284ms)\n✖ pool size and acquire timeout stay at the documented values (0.67084ms)\n✔ migrations run at startup (0.129774ms)\nℹ tests 3\nℹ suites 0\nℹ pass 2\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 82.863434\n\n✖ failing tests:\n\ntest at test/db.test.ts:9:1\n✖ pool size and acquire timeout stay at the documented values (0.67084ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  20 !== 10\n  \n      at TestContext.<anonymous> (file:///tmp/r02-fkRW44/test/db.test.ts:10:12)\n      at Test.runInAsyncScope (node:async_hooks:226:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)\n      at Test.postRun (node:internal/test_runner/test:1542:19)\n      at Test.run (node:internal/test_runner/test:1467:12)\n      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: 20,\n    expected: 10,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\nnpm notice run test\nnpm notice run node --test\nR02 primary check: fail (exit 1)\n"
   },
   {
     "id": "R03",
@@ -53,7 +53,7 @@
     "expected": 1,
     "actual": 1,
     "ok": true,
-    "detail": "✖ dev server starts on its unix socket (2.630954ms)\nℹ tests 1\nℹ suites 0\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 104.4537\n\n✖ failing tests:\n\ntest at test/server.test.ts:6:1\n✖ dev server starts on its unix socket (2.630954ms)\n  Error: listen EADDRINUSE: address already in use /tmp/r03-F0cfnI/.tmp/dev.sock\n      at Server.setupListenHandle [as _listen2] (node:net:2368:21)\n      at listenInCluster (node:net:2499:12)\n      at Server.listen (node:net:2641:5)\n      at file:///tmp/r03-F0cfnI/src/server.ts:9:16\n      at new Promise (<anonymous>)\n      at start (file:///tmp/r03-F0cfnI/src/server.ts:7:12)\n      at TestContext.<anonymous> (file:///tmp/r03-F0cfnI/test/server.test.ts:8:24)\n      at Test.runInAsyncScope (node:async_hooks:226:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.start (node:internal/test_runner/test:1262:17) {\n    code: 'EADDRINUSE',\n    errno: -98,\n    syscall: 'listen',\n    address: '/tmp/r03-F0cfnI/.tmp/dev.sock',\n    port: -1\n  }\nnpm notice run test\nnpm notice run node --test\nR03 primary check: fail (exit 1)\n"
+    "detail": "✖ dev server starts on its unix socket (2.658966ms)\nℹ tests 1\nℹ suites 0\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 99.550307\n\n✖ failing tests:\n\ntest at test/server.test.ts:6:1\n✖ dev server starts on its unix socket (2.658966ms)\n  Error: listen EADDRINUSE: address already in use /tmp/r03-1ubgcM/.tmp/dev.sock\n      at Server.setupListenHandle [as _listen2] (node:net:2368:21)\n      at listenInCluster (node:net:2499:12)\n      at Server.listen (node:net:2641:5)\n      at file:///tmp/r03-1ubgcM/src/server.ts:9:16\n      at new Promise (<anonymous>)\n      at start (file:///tmp/r03-1ubgcM/src/server.ts:7:12)\n      at TestContext.<anonymous> (file:///tmp/r03-1ubgcM/test/server.test.ts:8:24)\n      at Test.runInAsyncScope (node:async_hooks:226:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.start (node:internal/test_runner/test:1262:17) {\n    code: 'EADDRINUSE',\n    errno: -98,\n    syscall: 'listen',\n    address: '/tmp/r03-1ubgcM/.tmp/dev.sock',\n    port: -1\n  }\nnpm notice run test\nnpm notice run node --test\nR03 primary check: fail (exit 1)\n"
   },
   {
     "id": "R03",
@@ -61,7 +61,7 @@
     "expected": 0,
     "actual": 0,
     "ok": true,
-    "detail": "✔ dev server starts on its unix socket (2.771798ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 100.63267\nR03 primary check: pass\nnpm notice run test\nnpm notice run node --test\n"
+    "detail": "✔ dev server starts on its unix socket (2.758313ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 99.020392\nR03 primary check: pass\nnpm notice run test\nnpm notice run node --test\n"
   },
   {
     "id": "R03",
@@ -69,7 +69,7 @@
     "expected": 1,
     "actual": 1,
     "ok": true,
-    "detail": "✖ dev server starts on its unix socket (2.699913ms)\nℹ tests 1\nℹ suites 0\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 100.075985\n\n✖ failing tests:\n\ntest at test/server.test.ts:6:1\n✖ dev server starts on its unix socket (2.699913ms)\n  Error: listen EADDRINUSE: address already in use /tmp/r03-7JT0bg/.tmp/dev.sock\n      at Server.setupListenHandle [as _listen2] (node:net:2368:21)\n      at listenInCluster (node:net:2499:12)\n      at Server.listen (node:net:2641:5)\n      at file:///tmp/r03-7JT0bg/src/server.ts:9:16\n      at new Promise (<anonymous>)\n      at start (file:///tmp/r03-7JT0bg/src/server.ts:7:12)\n      at TestContext.<anonymous> (file:///tmp/r03-7JT0bg/test/server.test.ts:8:24)\n      at Test.runInAsyncScope (node:async_hooks:226:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.start (node:internal/test_runner/test:1262:17) {\n    code: 'EADDRINUSE',\n    errno: -98,\n    syscall: 'listen',\n    address: '/tmp/r03-7JT0bg/.tmp/dev.sock',\n    port: -1\n  }\nnpm notice run test\nnpm notice run node --test\nR03 primary check: fail (exit 1)\n"
+    "detail": "✖ dev server starts on its unix socket (2.46989ms)\nℹ tests 1\nℹ suites 0\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 99.302181\n\n✖ failing tests:\n\ntest at test/server.test.ts:6:1\n✖ dev server starts on its unix socket (2.46989ms)\n  Error: listen EADDRINUSE: address already in use /tmp/r03-5X1XLK/.tmp/dev.sock\n      at Server.setupListenHandle [as _listen2] (node:net:2368:21)\n      at listenInCluster (node:net:2499:12)\n      at Server.listen (node:net:2641:5)\n      at file:///tmp/r03-5X1XLK/src/server.ts:9:16\n      at new Promise (<anonymous>)\n      at start (file:///tmp/r03-5X1XLK/src/server.ts:7:12)\n      at TestContext.<anonymous> (file:///tmp/r03-5X1XLK/test/server.test.ts:8:24)\n      at Test.runInAsyncScope (node:async_hooks:226:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.start (node:internal/test_runner/test:1262:17) {\n    code: 'EADDRINUSE',\n    errno: -98,\n    syscall: 'listen',\n    address: '/tmp/r03-5X1XLK/.tmp/dev.sock',\n    port: -1\n  }\nnpm notice run test\nnpm notice run node --test\nR03 primary check: fail (exit 1)\n"
   },
   {
     "id": "R04",
@@ -77,7 +77,7 @@
     "expected": 0,
     "actual": 0,
     "ok": true,
-    "detail": "✔ the generated migration is present (0.656013ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 79.312472\nR04 primary check: pass\nnpm notice run test\nnpm notice run node --test\n"
+    "detail": "✔ the generated migration is present (0.655001ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 78.702005\nR04 primary check: pass\nnpm notice run test\nnpm notice run node --test\n"
   },
   {
     "id": "R04",
@@ -85,7 +85,7 @@
     "expected": 0,
     "actual": 0,
     "ok": true,
-    "detail": "✔ the generated migration is present (0.662164ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 76.625613\nR04 primary check: pass\nnpm notice run test\nnpm notice run node --test\n"
+    "detail": "✔ the generated migration is present (0.63879ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 79.172899\nR04 primary check: pass\nnpm notice run test\nnpm notice run node --test\n"
   },
   {
     "id": "R04",
@@ -93,7 +93,7 @@
     "expected": 1,
     "actual": 1,
     "ok": true,
-    "detail": "missing required file: /tmp/wrong-R04-enLN62/work/migrations/002_add_index.sql\n"
+    "detail": "missing required file: /tmp/wrong-R04-f9aJT6/work/migrations/002_add_index.sql\n"
   },
   {
     "id": "R02-preservation",

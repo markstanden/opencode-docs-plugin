@@ -1,10 +1,9 @@
 // Extract the exact native `docs` description each arm registers and write it
 // byte-for-byte to the replication assets. Read-only over the historical arm
 // worktrees; refuses if a hash does not match the frozen asset.
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
 const here = "/home/mark/tmp/docs-desc-fresh-20261110/audit-main/tests/fixtures/placement-harness/replication";
