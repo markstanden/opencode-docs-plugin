@@ -136,7 +136,31 @@ test("the new fixtures pass every pristine and counterexample check", () => {
 
     // Assert
     assert.equal(result.status, 0, result.stdout + result.stderr);
-    assert.match(result.stdout, /16\/16 checks passed/);
+    assert.match(result.stdout, /22\/22 checks passed/);
+});
+
+test("every case exposes its scored permission boundary in the prompt", () => {
+    // Arrange
+    const cases = JSON.parse(
+        readFileSync(
+            join(replication, "cases.json"),
+            "utf8",
+        ),
+    ) as Array<{ id: string; taskPrompt: string; visibleConstraints?: string[] }>;
+
+    // Act / Assert
+    for (const testCase of cases) {
+        assert.ok(
+            (testCase.visibleConstraints?.length ?? 0) > 0,
+            `${testCase.id} has no visible constraint`,
+        );
+        for (const constraint of testCase.visibleConstraints ?? []) {
+            assert.ok(
+                testCase.taskPrompt.includes(constraint),
+                `${testCase.id} prompt omits: ${constraint}`,
+            );
+        }
+    }
 });
 
 test("the published attempt ledger reconciles the scored and excluded slots", () => {

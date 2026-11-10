@@ -154,6 +154,15 @@ for (const testCase of cases) {
 
     const liveRoot = mkdtempSync(join(tmpdir(), `live-${testCase.id}-`));
     const liveWork = materialise(testCase, liveRoot);
+    for (const constraint of testCase.visibleConstraints ?? []) {
+        record(
+            testCase.id,
+            "permission boundary is visible in the prompt",
+            true,
+            testCase.taskPrompt.includes(constraint),
+            constraint,
+        );
+    }
     if (testCase.id === "R04") premiseChecks.r04(liveWork);
     const seeded = runCheck(testCase, liveWork, pristineWork);
     const seededPasses = testCase.id === "R04";
