@@ -26,7 +26,9 @@ const assertions = (text) =>
         .filter(Boolean);
 
 const claims22 = (text) =>
-    assertions(text).some((assertion) => asserts22(assertion) && !rejects22(assertion));
+    assertions(text).some(
+        (assertion) => asserts22(assertion) && !rejects22(assertion),
+    );
 
 /** The Summary line and `### Facts` bullets of a knowledge document. */
 export function claimSurface(document) {
