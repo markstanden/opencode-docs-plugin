@@ -281,6 +281,177 @@ describe("validateAcJudgement", () => {
     });
 });
 
+describe("R02 preservation assessment", () => {
+    const changed = {
+        documentsChanged: true,
+        createdPaths: [],
+        modifiedPaths: ["docs/db/pool.md"],
+    };
+    const baseInput = {
+        taskPrompt: "Make the pool require TLS.",
+        standingPermission: "You may update documentation.",
+        scenarioTruth: "The pool facts must survive.",
+        beforeDocs: [{ path: "docs/db/pool.md", contents: "before" }],
+        afterDocs: [{ path: "docs/db/pool.md", contents: "after" }],
+        changedPaths: ["lakes/docs/db/pool.md"],
+        primary: { status: "pass", exit: 0, stdout: "ok", stderr: "" },
+        docsOperations: ["completed native replace docs/db/pool.md"],
+        answer: "Updated the note.",
+    };
+    const finding = (state: string, quote: string) => ({ state, quote });
+    const assessment = (overrides = {}) => ({
+        documentationOutcome: "useful-update",
+        documentationReason: "corrected the TLS claim",
+        evidence: ["Connections require TLS."],
+        preservation: {
+            poolSize: finding("retained", "at most 10 connections"),
+            acquireTimeout: finding("retained", "up to 5 seconds"),
+            startupMigrations: finding("retained", "at application startup"),
+            obsoleteTlsClaim: finding("removed", "(absent)"),
+        },
+        ...overrides,
+    });
+
+    it("asks for the preservation entries only when the scenario requires them", () => {
+        // Act
+        const required = buildAcPrompt({
+            ...baseInput,
+            requirePreservation: true,
+        });
+        const optional = buildAcPrompt(baseInput);
+
+        // Assert
+        assert.match(required, /PRESERVATION ASSESSMENT/);
+        assert.match(required, /"obsoleteTlsClaim"/);
+        assert.doesNotMatch(optional, /PRESERVATION ASSESSMENT/);
+    });
+
+    it("accepts a complete evidence-backed assessment", () => {
+        // Act
+        const problems = validateAcJudgement(assessment(), changed, {
+            requirePreservation: true,
+        });
+
+        // Assert
+        assert.deepEqual(problems, []);
+    });
+
+    it("rejects a required assessment that is missing", () => {
+        // Arrange
+        const value = assessment();
+        delete (value as { preservation?: unknown }).preservation;
+
+        // Act
+        const problems = validateAcJudgement(value, changed, {
+            requirePreservation: true,
+        });
+
+        // Assert
+        assert.match(problems.join("; "), /preservation must be an object/);
+    });
+
+    it("rejects an unquoted fact", () => {
+        // Arrange
+        const value = assessment({
+            preservation: {
+                ...assessment().preservation,
+                acquireTimeout: finding("retained", "   "),
+            },
+        });
+
+        // Act
+        const problems = validateAcJudgement(value, changed, {
+            requirePreservation: true,
+        });
+
+        // Assert
+        assert.match(
+            problems.join("; "),
+            /preservation\.acquireTimeout\.quote must be a nonblank string/,
+        );
+    });
+
+    it("rejects lost valid knowledge scored as a useful update", () => {
+        // Arrange
+        const value = assessment({
+            preservation: {
+                ...assessment().preservation,
+                poolSize: finding("lost", "(absent)"),
+            },
+        });
+
+        // Act
+        const problems = validateAcJudgement(value, changed, {
+            requirePreservation: true,
+        });
+
+        // Assert
+        assert.match(problems.join("; "), /lost valid fact \(poolSize\)/);
+    });
+
+    it("accepts lost valid knowledge scored as misleading", () => {
+        // Arrange
+        const value = assessment({
+            documentationOutcome: "misleading",
+            preservation: {
+                ...assessment().preservation,
+                poolSize: finding("lost", "(absent)"),
+            },
+        });
+
+        // Act
+        const problems = validateAcJudgement(value, changed, {
+            requirePreservation: true,
+        });
+
+        // Assert
+        assert.deepEqual(problems, []);
+    });
+
+    it("rejects a lost fact when no document changed", () => {
+        // Arrange
+        const unchanged = {
+            documentsChanged: false,
+            createdPaths: [],
+            modifiedPaths: [],
+        };
+        const value = assessment({
+            documentationOutcome: "misleading",
+            preservation: {
+                ...assessment().preservation,
+                startupMigrations: finding("lost", "(absent)"),
+            },
+        });
+
+        // Act
+        const problems = validateAcJudgement(value, unchanged, {
+            requirePreservation: true,
+        });
+
+        // Assert
+        assert.match(problems.join("; "), /no documentation document changed/);
+    });
+
+    it("leaves a judgement without preservation valid when not required", () => {
+        // Arrange
+        const value = {
+            documentationOutcome: "useful-update",
+            documentationReason: "r",
+            evidence: ["e"],
+        };
+
+        // Act
+        const problems = validateAcJudgement(value, {
+            documentsChanged: true,
+            createdPaths: [],
+            modifiedPaths: ["docs/db/pool.md"],
+        });
+
+        // Assert
+        assert.deepEqual(problems, []);
+    });
+});
+
 describe("documentationScore", () => {
     it("scores every outcome under the default weights", () => {
         // Arrange
