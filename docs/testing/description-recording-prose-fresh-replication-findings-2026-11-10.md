@@ -217,35 +217,35 @@ Removing both replacements leaves **28 retained observations, but not 14
 complete pairs**: the missing A and B observations belong to different pairs.
 **13 pairs are complete**, and two observations are unmatched.
 
-| Complete pair | Scenario | A | B | B − A |
-| --- | --- | --- | --- | --- |
-| 3 | R02 | none 0 | useful-update +5 | +5 |
-| 5 | R03 | none 0 | none 0 | 0 |
-| 11 | R03 | none 0 | transient -1 | -1 |
-| 15 | R01 | none 0 | none 0 | 0 |
-| 17 | R03 | none 0 | transient -1 | -1 |
-| 21 | R01 | none 0 | none 0 | 0 |
-| 23 | R02 | useful-update +5 | none 0 | -5 |
-| 27 | R01 | none 0 | none 0 | 0 |
-| 29 | R02 | none 0 | none 0 | 0 |
-| 31 | R03 | none 0 | none 0 | 0 |
-| 33 | R01 | none 0 | none 0 | 0 |
-| 35 | R02 | none 0 | none 0 | 0 |
-| 37 | R03 | transient -1 | transient -1 | 0 |
+| Complete pair | Scenario | A                | B                | B − A |
+| ------------- | -------- | ---------------- | ---------------- | ----- |
+| 3             | R02      | none 0           | useful-update +5 | +5    |
+| 5             | R03      | none 0           | none 0           | 0     |
+| 11            | R03      | none 0           | transient -1     | -1    |
+| 15            | R01      | none 0           | none 0           | 0     |
+| 17            | R03      | none 0           | transient -1     | -1    |
+| 21            | R01      | none 0           | none 0           | 0     |
+| 23            | R02      | useful-update +5 | none 0           | -5    |
+| 27            | R01      | none 0           | none 0           | 0     |
+| 29            | R02      | none 0           | none 0           | 0     |
+| 31            | R03      | none 0           | none 0           | 0     |
+| 33            | R01      | none 0           | none 0           | 0     |
+| 35            | R02      | none 0           | none 0           | 0     |
+| 37            | R03      | transient -1     | transient -1     | 0     |
 
 Among the 13 complete pairs: B better in 1, A better in 3, tied in 9;
 **B − A = −2** (A ahead by 2).
 
-| Unmatched pair | Present arm | Missing arm | Observation |
-| --- | --- | --- | --- |
-| 1 | B | A | B useful-create +5; A unknown |
-| 9 | A | B | A none 0; B unknown |
+| Unmatched pair | Present arm | Missing arm | Observation                   |
+| -------------- | ----------- | ----------- | ----------------------------- |
+| 1              | B           | A           | B useful-create +5; A unknown |
+| 9              | A           | B           | A none 0; B unknown           |
 
-| Population | A | B | B − A | Basis |
-| --- | --- | --- | --- | --- |
-| Scored partial (with replacements) | 4 | 7 | +3 | 30 observations |
-| Complete pairs only | — | — | −2 | 13 pairs |
-| Unmatched observations | unknown | +5 | — | one each, different pairs |
+| Population                         | A       | B   | B − A | Basis                     |
+| ---------------------------------- | ------- | --- | ----- | ------------------------- |
+| Scored partial (with replacements) | 4       | 7   | +3    | 30 observations           |
+| Complete pairs only                | —       | —   | −2    | 13 pairs                  |
+| Unmatched observations             | unknown | +5  | —     | one each, different pairs |
 
 The all-scored +3 is driven by the unmatched B create; the complete paired
 evidence leans A. The missing cells are unknown, not zero, and no imputation is

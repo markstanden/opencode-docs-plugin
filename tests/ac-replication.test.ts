@@ -142,11 +142,12 @@ test("the new fixtures pass every pristine and counterexample check", () => {
 test("every case exposes its scored permission boundary in the prompt", () => {
     // Arrange
     const cases = JSON.parse(
-        readFileSync(
-            join(replication, "cases.json"),
-            "utf8",
-        ),
-    ) as Array<{ id: string; taskPrompt: string; visibleConstraints?: string[] }>;
+        readFileSync(join(replication, "cases.json"), "utf8"),
+    ) as Array<{
+        id: string;
+        taskPrompt: string;
+        visibleConstraints?: string[];
+    }>;
 
     // Act / Assert
     for (const testCase of cases) {
