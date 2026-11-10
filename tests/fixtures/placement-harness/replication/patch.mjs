@@ -20,8 +20,7 @@ const replaced = source.replace(
         `${before}${JSON.stringify(description)}${after}`,
 );
 writeFileSync(file, replaced, "utf8");
-const hash = (text) =>
-    createHash("sha256").update(text, "utf8").digest("hex");
+const hash = (text) => createHash("sha256").update(text, "utf8").digest("hex");
 console.log(
     `arm ${arm}: description replaced (${[...description].length} chars, ${hash(description)})`,
 );

@@ -8,12 +8,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const replication = join(
-    here,
-    "fixtures",
-    "placement-harness",
-    "replication",
-);
+const replication = join(here, "fixtures", "placement-harness", "replication");
 const hash = (value: string) =>
     createHash("sha256").update(value, "utf8").digest("hex");
 
@@ -140,9 +135,13 @@ test("R02 preservation accepts paraphrase and rejects valid-fact loss", () => {
     `;
 
     // Act
-    const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
-        encoding: "utf8",
-    });
+    const result = spawnSync(
+        process.execPath,
+        ["--input-type=module", "-e", script],
+        {
+            encoding: "utf8",
+        },
+    );
 
     // Assert
     assert.equal(result.status, 0, result.stderr);

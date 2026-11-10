@@ -66,7 +66,8 @@ const pairProblem = (first, second) => {
 
 const armProblems = (slots, arm) => {
     const armSlots = slots.filter((one) => one.arm === arm);
-    if (armSlots.length !== 20) return [`arm ${arm} has ${armSlots.length} slots`];
+    if (armSlots.length !== 20)
+        return [`arm ${arm} has ${armSlots.length} slots`];
     return SCENARIOS.filter(
         (scenario) =>
             armSlots.filter((one) => one.scenario === scenario).length !==
@@ -95,7 +96,8 @@ export function scheduleHash(slots) {
 }
 
 const invokedDirectly =
-    process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href;
+    process.argv[1] &&
+    import.meta.url === new URL(`file://${process.argv[1]}`).href;
 
 if (invokedDirectly) {
     const slots = buildSchedule();
@@ -107,7 +109,10 @@ if (invokedDirectly) {
     const writeIndex = process.argv.indexOf("--write");
     if (writeIndex >= 0) {
         const { writeFileSync } = await import("node:fs");
-        writeFileSync(process.argv[writeIndex + 1], JSON.stringify(slots, null, 2) + "\n");
+        writeFileSync(
+            process.argv[writeIndex + 1],
+            JSON.stringify(slots, null, 2) + "\n",
+        );
         console.log(
             `wrote ${slots.length} slots, sha256 ${scheduleHash(slots)}`,
         );

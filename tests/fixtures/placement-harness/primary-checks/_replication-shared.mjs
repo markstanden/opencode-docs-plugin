@@ -1,7 +1,13 @@
 // Shared runner for the R01–R04 pristine primary checks.
 // Copies the live work tree, restores the pristine tests and package.json, and
 // runs the suite in isolation. The live tree is never modified.
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+    cpSync,
+    mkdtempSync,
+    readFileSync,
+    rmSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";

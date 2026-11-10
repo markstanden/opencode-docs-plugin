@@ -1,11 +1,7 @@
 #!/usr/bin/env node
 // Pristine primary check for R01: both the BOM sample and the plain UTF-8
 // sample must parse, with the visible test replaced by the pristine copy.
-import {
-    finish,
-    requireFiles,
-    runSuite,
-} from "./_replication-shared.mjs";
+import { finish, requireFiles, runSuite } from "./_replication-shared.mjs";
 
 const [liveWork, pristineWork] = process.argv.slice(2);
 if (!liveWork || !pristineWork) {

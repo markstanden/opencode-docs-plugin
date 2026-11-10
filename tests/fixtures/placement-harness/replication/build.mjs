@@ -305,7 +305,8 @@ Summary: Release steps.
         claim: "npm test fails with EADDRINUSE because a stale .tmp/dev.sock was left by a killed dev server.",
         evidence:
             "The socket test, the stale machine-local socket file and the README.",
-        expected: "The suite is green with no source, test or documentation change",
+        expected:
+            "The suite is green with no source, test or documentation change",
         accepts: [
             "npm test exits 0 once the stale .tmp/dev.sock is removed.",
             "Source and tests are byte-identical to the seed, and no documentation note is created or updated.",
@@ -359,7 +360,11 @@ test("dev server starts on its unix socket", async () => {
 });
 `,
             ),
-            seed("work", ".tmp/dev.sock", "stale socket from a killed dev server\n"),
+            seed(
+                "work",
+                ".tmp/dev.sock",
+                "stale socket from a killed dev server\n",
+            ),
             seed(
                 "work",
                 "README.md",
@@ -534,4 +539,6 @@ const truth = {
 
 writeFileSync(join(here, "cases.json"), JSON.stringify(cases, null, 2) + "\n");
 writeFileSync(join(here, "truth.json"), JSON.stringify(truth, null, 2) + "\n");
-console.log(`wrote ${cases.length} cases and ${Object.keys(truth).length} truth entries`);
+console.log(
+    `wrote ${cases.length} cases and ${Object.keys(truth).length} truth entries`,
+);

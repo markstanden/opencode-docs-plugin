@@ -36,11 +36,7 @@ const materialise = (testCase, root) => {
 const runCheck = (testCase, liveWork, pristineWork) => {
     const result = spawnSync(
         process.execPath,
-        [
-            join(checksDir, testCase.primaryCheck.script),
-            liveWork,
-            pristineWork,
-        ],
+        [join(checksDir, testCase.primaryCheck.script), liveWork, pristineWork],
         { encoding: "utf8", timeout: 120000 },
     );
     return {
@@ -88,7 +84,10 @@ const fixes = {
             const path = join(work, "src/db.ts");
             writeFileSync(
                 path,
-                readFileSync(path, "utf8").replace('ssl: "disable"', 'ssl: "require"'),
+                readFileSync(path, "utf8").replace(
+                    'ssl: "disable"',
+                    'ssl: "require"',
+                ),
             );
         },
         wrong(work) {
@@ -110,8 +109,8 @@ const fixes = {
             writeFileSync(
                 path,
                 readFileSync(path, "utf8").replace(
-                    'const stop = await start(socket);',
-                    'let stop: () => void = () => {};\n    try { stop = await start(socket); } catch { stop = () => {}; }',
+                    "const stop = await start(socket);",
+                    "let stop: () => void = () => {};\n    try { stop = await start(socket); } catch { stop = () => {}; }",
                 ),
             );
         },
@@ -129,7 +128,9 @@ const fixes = {
 };
 
 for (const testCase of cases) {
-    const pristineRoot = mkdtempSync(join(tmpdir(), `pristine-${testCase.id}-`));
+    const pristineRoot = mkdtempSync(
+        join(tmpdir(), `pristine-${testCase.id}-`),
+    );
     const pristineWork = materialise(testCase, pristineRoot);
 
     const liveRoot = mkdtempSync(join(tmpdir(), `live-${testCase.id}-`));
@@ -185,10 +186,21 @@ const expectations = {
 };
 for (const [label, document] of Object.entries(examples)) {
     const verdict = preservationVerdict(document);
-    record("R02-preservation", label, expectations[label], verdict.accepted, JSON.stringify(verdict));
+    record(
+        "R02-preservation",
+        label,
+        expectations[label],
+        verdict.accepted,
+        JSON.stringify(verdict),
+    );
 }
 
 const failed = report.filter((one) => !one.ok);
-writeFileSync(join(here, "FIXTURE-CHECKS.json"), JSON.stringify(report, null, 2) + "\n");
-console.log(`\n${report.length - failed.length}/${report.length} checks passed`);
+writeFileSync(
+    join(here, "FIXTURE-CHECKS.json"),
+    JSON.stringify(report, null, 2) + "\n",
+);
+console.log(
+    `\n${report.length - failed.length}/${report.length} checks passed`,
+);
 process.exit(failed.length === 0 ? 0 : 1);
