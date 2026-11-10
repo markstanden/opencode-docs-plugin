@@ -1,7 +1,7 @@
 ---
 Area: Testing
 Keywords: description-prose, replication, r01, r02, r03, r04, paired-schedule, preservation, policy-breach, fixture-defect
-Summary: Paired 2026-11-10 A/B replication on four newly authored scenarios. R04's premise was proved false by the fixture code, so that scenario was excluded; the remaining 30-session comparison gives B 7 vs A 4 (lead 3, below the frozen 5) with one new B policy breach, so exact B did not replicate.
+Summary: Paired 2026-11-10 A/B replication on four newly authored scenarios, stopped and continued as a three-scenario partial after R04's premise was proved false. The 30 valid trials give B 7 vs A 4 (lead 3, below the frozen 5) with one new B policy breach; exact B is unqualified, but the partial neither replicates nor refutes it.
 ---
 
 # A/B replication findings: stopped partial, 2026-11-10
@@ -23,6 +23,10 @@ with them.
 - R04 was excluded: its task premise ("`npm run lint` reports
   `MIGRATION_ORDER`") was false in the fixture. The repair and premise check
   are committed; a future campaign must use the repaired corpus.
+- The result is **inconclusive, not a failed replication**: 15 trials per arm,
+  three of four scenarios, a lead below the frozen threshold and a policy
+  breach all prevent qualification, but they do not show that B's effect is
+  absent. The earlier “did not replicate” wording overstated the evidence.
 
 ## The R04 integrity failure
 
@@ -60,7 +64,8 @@ executed corpus remains `934f5e68…` and is preserved.
 | ---------------- | ------------------------------------------------------------------- |
 | Arms             | A `624f8c48…` (415), B `796dc59f…` (429)                            |
 | Plugin content   | A `1b2b0319…`, B `04535cf3…` (exact historical)                     |
-| Starts           | 33 model sessions: 30 valid, 2 R04 invalid, 1 aborted               |
+| Trial sessions   | 35 model sessions: 30 valid, 2 R04 invalid, 1 aborted, 1 superseded manual slot 1, 1 debug `test-r01` |
+| Judge calls      | 33 model calls: 30 valid, 2 R04, 1 discarded with the aborted slot 10; one prelaunch launcher failure made no call |
 | Valid population | R01–R03, 5 repetitions × 2 arms = 30                                |
 | Schedule         | Frozen 40-slot hash `8aa0053c…`; R04 pairs skipped after the defect |
 | Model / judge    | `opencode-go/deepseek-v4.1-flash` / `opencode-go/glm-5.3-flash`     |
@@ -68,18 +73,71 @@ executed corpus remains `934f5e68…` and is preserved.
 
 Deviations:
 
-1. R04's premise was false; its two r0 pairs are excluded and its remaining
-   pairs were not run.
-2. One `rr-B-r1-R02` attempt was aborted while stopping the invalid run. Its
+1. R04's premise was false; its two r0 pairs are excluded and its eight
+   remaining slots were never run.
+2. After the stop, the run was continued on R01–R03 only, using the original
+   (pre-repair) corpus `934f5e68…`. The repaired R04 corpus was not used in any
+   session. This is a post-stop continuation, not the frozen 40-slot schedule.
+3. One `rr-B-r1-R02` attempt was aborted while stopping the invalid run. Its
    stale reservation was removed after confirming the owner was gone, and the
-   slot was rerun. No usable judgement was taken from the aborted attempt.
-3. One `rr-A-r4-R03` judgement returned the same verdict twice (plain JSON and
+   slot was rerun. Its trial directory (including the judgement taken on the
+   empty result) was deleted; only the run log line `trial=137` remains. This
+   is the one original attempt not preserved.
+4. One `rr-A-r4-R03` judgement returned the same verdict twice (plain JSON and
    a fenced copy). A deterministic repair selected the identical object; no
-   model retry. Recorded in the attempt's `judgement.json` as
-   `repairedFrom: duplicate identical JSON objects`.
-4. The historical test-only 1400/3100 widening was not applied. Both A and B
+   model retry. The raw `output.jsonl` is preserved and `judgement.json`
+   records `repairedFrom: duplicate identical JSON objects`.
+5. A manual slot-1 trial was run during debugging and superseded by the
+   recorded slot-1 trial; its directory is not separately retained. The debug
+   `test-r01` trial is retained but excluded. These are two extra model trial
+   sessions, not part of the 30.
+6. The slot-1 judge launcher was not executable on a clean checkout; the first
+   judge attempt failed before any model call, the launcher was repaired, and
+   the existing trial was rejudged without rerunning it.
+7. The historical test-only 1400/3100 widening was not applied. Both A and B
    fit the production 600/2100 ceiling (2073/2087), so the cap did not bind;
    the runtime contract is unchanged.
+
+## Complete attempt and judge accounting
+
+| Category | Trial model sessions | Judge model calls | Used in analysis |
+| --- | --- | --- | --- |
+| Valid R01–R03 | 30 | 30 | yes |
+| R04 r0 invalid | 2 | 2 | no — fixture artefact |
+| Aborted `rr-B-r1-R02` | 1 | 1 | no — deleted with the stale reservation |
+| Superseded manual slot 1 | 1 | 0 | no |
+| Debug `test-r01` | 1 | 0 | no |
+| **Replication subtotal** | **35** | **33** | **30** |
+| Delivery probes | 2 | 0 | no — readiness |
+| Pre-model launch failures | 0 | 0 | no — 2 trial + 1 judge launch failures |
+| **Total model calls this task** | **37** | **33** | |
+
+Historical campaign, for completeness: 88 scored trial sessions, 88 judge
+calls, 6 A01 controls, 1 delivery probe and 1 pre-model probe failure. Those
+are separate from the replication counts.
+
+The aborted slot-10 judgement is counted as a model call but not as evidence;
+the deterministic duplicate-JSON repair made no extra call.
+
+## Continuation and rerun deviations
+
+The first run stopped at 12:12:19Z after the R04 r0 pair, before any R04 r1–r4
+slot. The schedule was not restarted; it was resumed at 12:15:12Z with
+`--skip-scenario R04`, so:
+
+- R01–R03 pairs r0–r4 completed as 15 adjacent, parity-correct pairs between
+  12:06:45Z and 12:28:30Z.
+- R04 pairs r1–r4 were never started. The R04 r0 pair is retained as invalid.
+- The resumed slots used the pre-repair corpus `934f5e68…`; the repaired corpus
+  `2e0c3679…` exists only in the audit branch and was not executed.
+- The `rr-B-r1-R02` pair is split in the record: its A slot completed at
+  12:13:02Z, its B slot was aborted, then rerun at 12:15:12Z.
+- The pause between 12:12:19Z and 12:15:12Z was used to prove and repair the
+  R04 premise; no scored session ran in that window.
+
+This is a **continuation of the same paired run**, not a second campaign and
+not the frozen 40-session design. The 30 valid trials are internally paired by
+scenario and repetition, but the four-scenario population is incomplete.
 
 ## Valid results (R01–R03, 15 per arm)
 
@@ -181,18 +239,21 @@ lead of 3 is below the frozen 5-point threshold.
 | Valid trials     | 30             | 329,675  | 24,675   | 16,731    | 1,736,960  |
 | Valid judges     | 30             | 50,926   | 9,132    | 4,545     | 0          |
 | Readiness probes | 2              | unknown  | unknown  | unknown   | unknown    |
-| Invalid/aborted  | 3              | excluded | excluded | excluded  | excluded   |
+| Excluded trials  | 5              | excluded | excluded | excluded  | excluded   |
+| Excluded judges  | 3              | excluded | excluded | excluded  | excluded   |
 
 Actual billing is unknown; the table is provider-reported token accounting, not
 an invoice.
 
 ## Decision
 
-**Exact B did not replicate.** The partial 30-trial comparison is
-directionally positive (+3), but below the frozen 5-point threshold, on 15
-trials per arm rather than 20, with a new non-compensable policy breach by B,
-and with one of the four scenarios excluded as defective. It does not merit a
-production review and does not establish production reliability.
+**Exact B is unqualified; the replication is incomplete and inconclusive.**
+The partial 30-trial comparison is directionally positive (+3), but below the
+frozen 5-point threshold, on 15 trials per arm rather than 20, with a new
+non-compensable policy breach by B, and with one of the four scenarios excluded
+as defective. Those facts prevent a production recommendation. They do **not**
+show that B's effect is absent; the earlier “did not replicate” conclusion
+was an overstatement and is withdrawn.
 
 The historical preservation blocker against B is withdrawn (see the derived
 audit); the replication blocker is different and independent: a policy breach
