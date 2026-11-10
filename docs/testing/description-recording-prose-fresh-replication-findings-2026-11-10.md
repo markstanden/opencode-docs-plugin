@@ -60,16 +60,16 @@ executed corpus remains `934f5e68…` and is preserved.
 
 ## Execution and deviations
 
-| Item             | Actual                                                              |
-| ---------------- | ------------------------------------------------------------------- |
-| Arms             | A `624f8c48…` (415), B `796dc59f…` (429)                            |
-| Plugin content   | A `1b2b0319…`, B `04535cf3…` (exact historical)                     |
-| Trial sessions   | 35 model sessions: 30 valid, 2 R04 invalid, 1 aborted, 1 superseded manual slot 1, 1 debug `test-r01` |
+| Item             | Actual                                                                                                             |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Arms             | A `624f8c48…` (415), B `796dc59f…` (429)                                                                           |
+| Plugin content   | A `1b2b0319…`, B `04535cf3…` (exact historical)                                                                    |
+| Trial sessions   | 35 model sessions: 30 valid, 2 R04 invalid, 1 aborted, 1 superseded manual slot 1, 1 debug `test-r01`              |
 | Judge calls      | 33 model calls: 30 valid, 2 R04, 1 discarded with the aborted slot 10; one prelaunch launcher failure made no call |
-| Valid population | R01–R03, 5 repetitions × 2 arms = 30                                |
-| Schedule         | Frozen 40-slot hash `8aa0053c…`; R04 pairs skipped after the defect |
-| Model / judge    | `opencode-go/deepseek-v4.1-flash` / `opencode-go/glm-5.3-flash`     |
-| Runtime          | OpenCode `v2.2.6`, Node `v26.13.0`, image `58505eac…`               |
+| Valid population | R01–R03, 5 repetitions × 2 arms = 30                                                                               |
+| Schedule         | Frozen 40-slot hash `8aa0053c…`; R04 pairs skipped after the defect                                                |
+| Model / judge    | `opencode-go/deepseek-v4.1-flash` / `opencode-go/glm-5.3-flash`                                                    |
+| Runtime          | OpenCode `v2.2.6`, Node `v26.13.0`, image `58505eac…`                                                              |
 
 Deviations:
 
@@ -100,17 +100,17 @@ Deviations:
 
 ## Complete attempt and judge accounting
 
-| Category | Trial model sessions | Judge model calls | Used in analysis |
-| --- | --- | --- | --- |
-| Valid R01–R03 | 30 | 30 | yes |
-| R04 r0 invalid | 2 | 2 | no — fixture artefact |
-| Aborted `rr-B-r1-R02` | 1 | 1 | no — deleted with the stale reservation |
-| Superseded manual slot 1 | 1 | 0 | no |
-| Debug `test-r01` | 1 | 0 | no |
-| **Replication subtotal** | **35** | **33** | **30** |
-| Delivery probes | 2 | 0 | no — readiness |
-| Pre-model launch failures | 0 | 0 | no — 2 trial + 1 judge launch failures |
-| **Total model calls this task** | **37** | **33** | |
+| Category                        | Trial model sessions | Judge model calls | Used in analysis                        |
+| ------------------------------- | -------------------- | ----------------- | --------------------------------------- |
+| Valid R01–R03                   | 30                   | 30                | yes                                     |
+| R04 r0 invalid                  | 2                    | 2                 | no — fixture artefact                   |
+| Aborted `rr-B-r1-R02`           | 1                    | 1                 | no — deleted with the stale reservation |
+| Superseded manual slot 1        | 1                    | 0                 | no                                      |
+| Debug `test-r01`                | 1                    | 0                 | no                                      |
+| **Replication subtotal**        | **35**               | **33**            | **30**                                  |
+| Delivery probes                 | 2                    | 0                 | no — readiness                          |
+| Pre-model launch failures       | 0                    | 0                 | no — 2 trial + 1 judge launch failures  |
+| **Total model calls this task** | **37**               | **33**            |                                         |
 
 Historical campaign, for completeness: 88 scored trial sessions, 88 judge
 calls, 6 A01 controls, 1 delivery probe and 1 pre-model probe failure. Those
