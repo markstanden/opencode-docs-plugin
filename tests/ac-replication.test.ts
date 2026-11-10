@@ -180,10 +180,7 @@ test("the published attempt ledger reconciles the scored and excluded slots", ()
         statuses.filter((status) => status === "invalid-r04-premise").length,
         ledger.accounting.r04Invalid.trials,
     );
-    assert.equal(
-        statuses.filter((status) => status === "not-run").length,
-        8,
-    );
+    assert.equal(statuses.filter((status) => status === "not-run").length, 8);
     assert.equal(ledger.accounting.totals.trialModelSessions, 37);
     assert.equal(ledger.accounting.totals.judgeModelCalls, 33);
 });

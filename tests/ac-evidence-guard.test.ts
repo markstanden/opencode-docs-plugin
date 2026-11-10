@@ -18,13 +18,7 @@ import {
 } from "./fixtures/placement-harness/ac/evidence-guard.mts";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const runner = join(
-    here,
-    "fixtures",
-    "placement-harness",
-    "ac",
-    "run.mjs",
-);
+const runner = join(here, "fixtures", "placement-harness", "ac", "run.mjs");
 const temp = () => mkdtempSync(join(tmpdir(), "evidence-guard-"));
 
 test("clearing a reservation removes only the lock marker", () => {
@@ -72,7 +66,10 @@ test("claiming an existing attempt directory never overwrites it", () => {
 
     // Assert
     assert.equal(result.ok, false);
-    assert.equal(readFileSync(join(attempt, "output.jsonl"), "utf8"), "original\n");
+    assert.equal(
+        readFileSync(join(attempt, "output.jsonl"), "utf8"),
+        "original\n",
+    );
     rmSync(parent, { recursive: true, force: true });
 });
 
@@ -142,13 +139,20 @@ test("judge refuses a stamp with no recorded trial result", () => {
         [
             runner,
             "judge",
-            "--base", base,
-            "--stamp", "missing-stamp",
-            "--case", "R01",
-            "--truth", truth,
-            "--launcher", "/bin/false",
-            "--model", "unused/model",
-            "--workdir", join(base, "runs"),
+            "--base",
+            base,
+            "--stamp",
+            "missing-stamp",
+            "--case",
+            "R01",
+            "--truth",
+            truth,
+            "--launcher",
+            "/bin/false",
+            "--model",
+            "unused/model",
+            "--workdir",
+            join(base, "runs"),
         ],
         { encoding: "utf8" },
     );
@@ -176,13 +180,20 @@ test("judge refuses an existing attempt without a judgement", () => {
         [
             runner,
             "judge",
-            "--base", base,
-            "--stamp", "stamp",
-            "--case", "R01",
-            "--truth", truth,
-            "--launcher", "/bin/false",
-            "--model", "unused/model",
-            "--workdir", join(base, "runs"),
+            "--base",
+            base,
+            "--stamp",
+            "stamp",
+            "--case",
+            "R01",
+            "--truth",
+            truth,
+            "--launcher",
+            "/bin/false",
+            "--model",
+            "unused/model",
+            "--workdir",
+            join(base, "runs"),
         ],
         { encoding: "utf8" },
     );
@@ -190,6 +201,9 @@ test("judge refuses an existing attempt without a judgement", () => {
     // Assert
     assert.equal(result.status, 1);
     assert.match(result.stderr, /refusing to overwrite existing attempt/);
-    assert.equal(readFileSync(join(attempt, "output.jsonl"), "utf8"), "original\n");
+    assert.equal(
+        readFileSync(join(attempt, "output.jsonl"), "utf8"),
+        "original\n",
+    );
     rmSync(base, { recursive: true, force: true });
 });

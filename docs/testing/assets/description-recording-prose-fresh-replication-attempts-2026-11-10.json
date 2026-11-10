@@ -1,1086 +1,1083 @@
 {
-  "schemaVersion": 1,
-  "campaign": "description-recording-prose-fresh-replication-2026-11-10",
-  "frozenScheduleHash": "8aa0053c7a27265e7772db7f476eca22683fdc26681c16f4218daea752bbe2b4",
-  "validPopulation": "R01-R03, 5 repetitions x 2 arms",
-  "slots": [
-    {
-      "slot": 1,
-      "pair": 1,
-      "repetition": 0,
-      "scenario": "R01",
-      "arm": "A",
-      "stamp": "rr-A-r0-R01",
-      "startedAt": "2026-11-10T12:06:45.741Z",
-      "finishedAt": "2026-11-10T12:07:24.767Z",
-      "trial": {
-        "launched": true,
-        "status": "replacement",
-        "evidenceSurvives": true,
-        "reason": "manual slot-1 trial superseded by this recorded trial; manual evidence not retained"
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "none",
-        "evidenceSurvives": true,
-        "usedInComparison": false
-      },
-      "primary": "pass"
+    "schemaVersion": 1,
+    "campaign": "description-recording-prose-fresh-replication-2026-11-10",
+    "frozenScheduleHash": "8aa0053c7a27265e7772db7f476eca22683fdc26681c16f4218daea752bbe2b4",
+    "validPopulation": "R01-R03, 5 repetitions x 2 arms",
+    "slots": [
+        {
+            "slot": 1,
+            "pair": 1,
+            "repetition": 0,
+            "scenario": "R01",
+            "arm": "A",
+            "stamp": "rr-A-r0-R01",
+            "startedAt": "2026-11-10T12:06:45.741Z",
+            "finishedAt": "2026-11-10T12:07:24.767Z",
+            "trial": {
+                "launched": true,
+                "status": "replacement",
+                "evidenceSurvives": true,
+                "reason": "manual slot-1 trial superseded by this recorded trial; manual evidence not retained"
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "none",
+                "evidenceSurvives": true,
+                "usedInComparison": false
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 2,
+            "pair": 1,
+            "repetition": 0,
+            "scenario": "R01",
+            "arm": "B",
+            "stamp": "rr-B-r0-R01",
+            "startedAt": "2026-11-10T12:08:37.903Z",
+            "finishedAt": "2026-11-10T12:08:58.839Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "useful-create",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 3,
+            "pair": 3,
+            "repetition": 0,
+            "scenario": "R02",
+            "arm": "B",
+            "stamp": "rr-B-r0-R02",
+            "startedAt": "2026-11-10T12:09:08.502Z",
+            "finishedAt": "2026-11-10T12:09:27.939Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "useful-update",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 4,
+            "pair": 3,
+            "repetition": 0,
+            "scenario": "R02",
+            "arm": "A",
+            "stamp": "rr-A-r0-R02",
+            "startedAt": "2026-11-10T12:09:36.015Z",
+            "finishedAt": "2026-11-10T12:09:45.704Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "none",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 5,
+            "pair": 5,
+            "repetition": 0,
+            "scenario": "R03",
+            "arm": "A",
+            "stamp": "rr-A-r0-R03",
+            "startedAt": "2026-11-10T12:09:52.453Z",
+            "finishedAt": "2026-11-10T12:10:26.000Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "none",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 6,
+            "pair": 5,
+            "repetition": 0,
+            "scenario": "R03",
+            "arm": "B",
+            "stamp": "rr-B-r0-R03",
+            "startedAt": "2026-11-10T12:10:33.054Z",
+            "finishedAt": "2026-11-10T12:11:06.658Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "none",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 7,
+            "pair": 7,
+            "repetition": 0,
+            "scenario": "R04",
+            "arm": "B",
+            "stamp": "rr-B-r0-R04",
+            "startedAt": "2026-11-10T12:11:13.558Z",
+            "finishedAt": "2026-11-10T12:11:39.112Z",
+            "trial": {
+                "launched": true,
+                "status": "invalid-r04-premise",
+                "evidenceSurvives": true,
+                "reason": "R04 lint premise false; excluded from the comparison"
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "misleading",
+                "evidenceSurvives": true,
+                "usedInComparison": false
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 8,
+            "pair": 7,
+            "repetition": 0,
+            "scenario": "R04",
+            "arm": "A",
+            "stamp": "rr-A-r0-R04",
+            "startedAt": "2026-11-10T12:11:51.526Z",
+            "finishedAt": "2026-11-10T12:12:15.315Z",
+            "trial": {
+                "launched": true,
+                "status": "invalid-r04-premise",
+                "evidenceSurvives": true,
+                "reason": "R04 lint premise false; excluded from the comparison"
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "none",
+                "evidenceSurvives": true,
+                "usedInComparison": false
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 9,
+            "pair": 9,
+            "repetition": 1,
+            "scenario": "R02",
+            "arm": "A",
+            "stamp": "rr-A-r1-R02",
+            "startedAt": "2026-11-10T12:12:20.096Z",
+            "finishedAt": "2026-11-10T12:12:55.764Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "none",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 10,
+            "pair": 9,
+            "repetition": 1,
+            "scenario": "R02",
+            "arm": "B",
+            "stamp": "rr-B-r1-R02",
+            "startedAt": "2026-11-10T12:15:13.603Z",
+            "finishedAt": "2026-11-10T12:15:22.725Z",
+            "trial": {
+                "launched": true,
+                "status": "replacement",
+                "evidenceSurvives": true,
+                "reason": "aborted slot-10 trial superseded by this recorded trial; aborted evidence deleted"
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "none",
+                "evidenceSurvives": true,
+                "usedInComparison": false
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 11,
+            "pair": 11,
+            "repetition": 1,
+            "scenario": "R03",
+            "arm": "B",
+            "stamp": "rr-B-r1-R03",
+            "startedAt": "2026-11-10T12:15:29.999Z",
+            "finishedAt": "2026-11-10T12:16:27.418Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "transient",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 12,
+            "pair": 11,
+            "repetition": 1,
+            "scenario": "R03",
+            "arm": "A",
+            "stamp": "rr-A-r1-R03",
+            "startedAt": "2026-11-10T12:16:35.244Z",
+            "finishedAt": "2026-11-10T12:16:52.044Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "none",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 13,
+            "pair": 13,
+            "repetition": 1,
+            "scenario": "R04",
+            "arm": "A",
+            "stamp": "rr-A-r1-R04",
+            "startedAt": null,
+            "finishedAt": null,
+            "trial": {
+                "launched": false,
+                "status": "not-run",
+                "evidenceSurvives": false,
+                "reason": "R04 lint premise false; excluded from the comparison"
+            },
+            "judge": {
+                "callRecorded": false,
+                "status": null,
+                "outcome": null,
+                "evidenceSurvives": false,
+                "usedInComparison": false
+            },
+            "primary": null
+        },
+        {
+            "slot": 14,
+            "pair": 13,
+            "repetition": 1,
+            "scenario": "R04",
+            "arm": "B",
+            "stamp": "rr-B-r1-R04",
+            "startedAt": null,
+            "finishedAt": null,
+            "trial": {
+                "launched": false,
+                "status": "not-run",
+                "evidenceSurvives": false,
+                "reason": "R04 lint premise false; excluded from the comparison"
+            },
+            "judge": {
+                "callRecorded": false,
+                "status": null,
+                "outcome": null,
+                "evidenceSurvives": false,
+                "usedInComparison": false
+            },
+            "primary": null
+        },
+        {
+            "slot": 15,
+            "pair": 15,
+            "repetition": 1,
+            "scenario": "R01",
+            "arm": "B",
+            "stamp": "rr-B-r1-R01",
+            "startedAt": "2026-11-10T12:16:59.486Z",
+            "finishedAt": "2026-11-10T12:17:20.693Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "none",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 16,
+            "pair": 15,
+            "repetition": 1,
+            "scenario": "R01",
+            "arm": "A",
+            "stamp": "rr-A-r1-R01",
+            "startedAt": "2026-11-10T12:17:26.473Z",
+            "finishedAt": "2026-11-10T12:17:55.916Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "none",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 17,
+            "pair": 17,
+            "repetition": 2,
+            "scenario": "R03",
+            "arm": "A",
+            "stamp": "rr-A-r2-R03",
+            "startedAt": "2026-11-10T12:18:02.728Z",
+            "finishedAt": "2026-11-10T12:18:24.675Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "none",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 18,
+            "pair": 17,
+            "repetition": 2,
+            "scenario": "R03",
+            "arm": "B",
+            "stamp": "rr-B-r2-R03",
+            "startedAt": "2026-11-10T12:18:30.351Z",
+            "finishedAt": "2026-11-10T12:19:07.344Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "transient",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 19,
+            "pair": 19,
+            "repetition": 2,
+            "scenario": "R04",
+            "arm": "B",
+            "stamp": "rr-B-r2-R04",
+            "startedAt": null,
+            "finishedAt": null,
+            "trial": {
+                "launched": false,
+                "status": "not-run",
+                "evidenceSurvives": false,
+                "reason": "R04 lint premise false; excluded from the comparison"
+            },
+            "judge": {
+                "callRecorded": false,
+                "status": null,
+                "outcome": null,
+                "evidenceSurvives": false,
+                "usedInComparison": false
+            },
+            "primary": null
+        },
+        {
+            "slot": 20,
+            "pair": 19,
+            "repetition": 2,
+            "scenario": "R04",
+            "arm": "A",
+            "stamp": "rr-A-r2-R04",
+            "startedAt": null,
+            "finishedAt": null,
+            "trial": {
+                "launched": false,
+                "status": "not-run",
+                "evidenceSurvives": false,
+                "reason": "R04 lint premise false; excluded from the comparison"
+            },
+            "judge": {
+                "callRecorded": false,
+                "status": null,
+                "outcome": null,
+                "evidenceSurvives": false,
+                "usedInComparison": false
+            },
+            "primary": null
+        },
+        {
+            "slot": 21,
+            "pair": 21,
+            "repetition": 2,
+            "scenario": "R01",
+            "arm": "A",
+            "stamp": "rr-A-r2-R01",
+            "startedAt": "2026-11-10T12:19:16.215Z",
+            "finishedAt": "2026-11-10T12:19:29.463Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "none",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 22,
+            "pair": 21,
+            "repetition": 2,
+            "scenario": "R01",
+            "arm": "B",
+            "stamp": "rr-B-r2-R01",
+            "startedAt": "2026-11-10T12:19:36.387Z",
+            "finishedAt": "2026-11-10T12:20:08.224Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "none",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 23,
+            "pair": 23,
+            "repetition": 2,
+            "scenario": "R02",
+            "arm": "B",
+            "stamp": "rr-B-r2-R02",
+            "startedAt": "2026-11-10T12:20:14.750Z",
+            "finishedAt": "2026-11-10T12:20:24.271Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "none",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 24,
+            "pair": 23,
+            "repetition": 2,
+            "scenario": "R02",
+            "arm": "A",
+            "stamp": "rr-A-r2-R02",
+            "startedAt": "2026-11-10T12:20:31.854Z",
+            "finishedAt": "2026-11-10T12:20:55.874Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "useful-update",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 25,
+            "pair": 25,
+            "repetition": 3,
+            "scenario": "R04",
+            "arm": "A",
+            "stamp": "rr-A-r3-R04",
+            "startedAt": null,
+            "finishedAt": null,
+            "trial": {
+                "launched": false,
+                "status": "not-run",
+                "evidenceSurvives": false,
+                "reason": "R04 lint premise false; excluded from the comparison"
+            },
+            "judge": {
+                "callRecorded": false,
+                "status": null,
+                "outcome": null,
+                "evidenceSurvives": false,
+                "usedInComparison": false
+            },
+            "primary": null
+        },
+        {
+            "slot": 26,
+            "pair": 25,
+            "repetition": 3,
+            "scenario": "R04",
+            "arm": "B",
+            "stamp": "rr-B-r3-R04",
+            "startedAt": null,
+            "finishedAt": null,
+            "trial": {
+                "launched": false,
+                "status": "not-run",
+                "evidenceSurvives": false,
+                "reason": "R04 lint premise false; excluded from the comparison"
+            },
+            "judge": {
+                "callRecorded": false,
+                "status": null,
+                "outcome": null,
+                "evidenceSurvives": false,
+                "usedInComparison": false
+            },
+            "primary": null
+        },
+        {
+            "slot": 27,
+            "pair": 27,
+            "repetition": 3,
+            "scenario": "R01",
+            "arm": "B",
+            "stamp": "rr-B-r3-R01",
+            "startedAt": "2026-11-10T12:21:01.641Z",
+            "finishedAt": "2026-11-10T12:21:18.085Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "none",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 28,
+            "pair": 27,
+            "repetition": 3,
+            "scenario": "R01",
+            "arm": "A",
+            "stamp": "rr-A-r3-R01",
+            "startedAt": "2026-11-10T12:21:24.778Z",
+            "finishedAt": "2026-11-10T12:21:43.628Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "none",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 29,
+            "pair": 29,
+            "repetition": 3,
+            "scenario": "R02",
+            "arm": "A",
+            "stamp": "rr-A-r3-R02",
+            "startedAt": "2026-11-10T12:21:49.839Z",
+            "finishedAt": "2026-11-10T12:22:11.585Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "none",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 30,
+            "pair": 29,
+            "repetition": 3,
+            "scenario": "R02",
+            "arm": "B",
+            "stamp": "rr-B-r3-R02",
+            "startedAt": "2026-11-10T12:22:19.784Z",
+            "finishedAt": "2026-11-10T12:22:35.004Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "none",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 31,
+            "pair": 31,
+            "repetition": 3,
+            "scenario": "R03",
+            "arm": "B",
+            "stamp": "rr-B-r3-R03",
+            "startedAt": "2026-11-10T12:22:42.445Z",
+            "finishedAt": "2026-11-10T12:23:18.919Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "none",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 32,
+            "pair": 31,
+            "repetition": 3,
+            "scenario": "R03",
+            "arm": "A",
+            "stamp": "rr-A-r3-R03",
+            "startedAt": "2026-11-10T12:23:24.741Z",
+            "finishedAt": "2026-11-10T12:23:51.769Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "none",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 33,
+            "pair": 33,
+            "repetition": 4,
+            "scenario": "R01",
+            "arm": "A",
+            "stamp": "rr-A-r4-R01",
+            "startedAt": "2026-11-10T12:23:57.223Z",
+            "finishedAt": "2026-11-10T12:24:22.919Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "none",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 34,
+            "pair": 33,
+            "repetition": 4,
+            "scenario": "R01",
+            "arm": "B",
+            "stamp": "rr-B-r4-R01",
+            "startedAt": "2026-11-10T12:24:32.344Z",
+            "finishedAt": "2026-11-10T12:24:42.669Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "none",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 35,
+            "pair": 35,
+            "repetition": 4,
+            "scenario": "R02",
+            "arm": "B",
+            "stamp": "rr-B-r4-R02",
+            "startedAt": "2026-11-10T12:24:51.478Z",
+            "finishedAt": "2026-11-10T12:25:01.217Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "none",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 36,
+            "pair": 35,
+            "repetition": 4,
+            "scenario": "R02",
+            "arm": "A",
+            "stamp": "rr-A-r4-R02",
+            "startedAt": "2026-11-10T12:25:08.461Z",
+            "finishedAt": "2026-11-10T12:25:18.317Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "none",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 37,
+            "pair": 37,
+            "repetition": 4,
+            "scenario": "R03",
+            "arm": "A",
+            "stamp": "rr-A-r4-R03",
+            "startedAt": "2026-11-10T12:25:25.835Z",
+            "finishedAt": "2026-11-10T12:26:19.032Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "transient",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 38,
+            "pair": 37,
+            "repetition": 4,
+            "scenario": "R03",
+            "arm": "B",
+            "stamp": "rr-B-r4-R03",
+            "startedAt": "2026-11-10T12:27:58.215Z",
+            "finishedAt": "2026-11-10T12:28:30.282Z",
+            "trial": {
+                "launched": true,
+                "status": "valid",
+                "evidenceSurvives": true,
+                "reason": null
+            },
+            "judge": {
+                "callRecorded": true,
+                "status": "judged",
+                "outcome": "transient",
+                "evidenceSurvives": true,
+                "usedInComparison": true
+            },
+            "primary": "pass"
+        },
+        {
+            "slot": 39,
+            "pair": 39,
+            "repetition": 4,
+            "scenario": "R04",
+            "arm": "B",
+            "stamp": "rr-B-r4-R04",
+            "startedAt": null,
+            "finishedAt": null,
+            "trial": {
+                "launched": false,
+                "status": "not-run",
+                "evidenceSurvives": false,
+                "reason": "R04 lint premise false; excluded from the comparison"
+            },
+            "judge": {
+                "callRecorded": false,
+                "status": null,
+                "outcome": null,
+                "evidenceSurvives": false,
+                "usedInComparison": false
+            },
+            "primary": null
+        },
+        {
+            "slot": 40,
+            "pair": 39,
+            "repetition": 4,
+            "scenario": "R04",
+            "arm": "A",
+            "stamp": "rr-A-r4-R04",
+            "startedAt": null,
+            "finishedAt": null,
+            "trial": {
+                "launched": false,
+                "status": "not-run",
+                "evidenceSurvives": false,
+                "reason": "R04 lint premise false; excluded from the comparison"
+            },
+            "judge": {
+                "callRecorded": false,
+                "status": null,
+                "outcome": null,
+                "evidenceSurvives": false,
+                "usedInComparison": false
+            },
+            "primary": null
+        }
+    ],
+    "extraAttempts": [
+        {
+            "stamp": "test-r01",
+            "kind": "debug trial",
+            "launched": true,
+            "judgeCalls": 0,
+            "evidenceSurvives": true,
+            "reason": "Readiness/debug harness run; excluded from the comparison."
+        },
+        {
+            "stamp": "rr-A-r0-R01 (manual)",
+            "kind": "superseded manual trial",
+            "launched": true,
+            "judgeCalls": 0,
+            "evidenceSurvives": false,
+            "reason": "Superseded by the recorded slot-1 trial; directory overwritten and not separately retained."
+        },
+        {
+            "stamp": "rr-B-r1-R02 (aborted)",
+            "kind": "aborted trial",
+            "launched": true,
+            "judgeCalls": 1,
+            "evidenceSurvives": false,
+            "reason": "Trial exit 137 while stopping the invalid run; directory and its empty-result judgement deleted to clear an abandoned reservation. Only the run-log line remains."
+        },
+        {
+            "stamp": "pair 1 launch 1",
+            "kind": "pre-model launch failure",
+            "launched": false,
+            "judgeCalls": 0,
+            "evidenceSurvives": false,
+            "reason": "PLACEMENT_IMAGE made host-side describe believe it was containerised; no model call."
+        },
+        {
+            "stamp": "pair 1 launch 2",
+            "kind": "pre-model launch failure",
+            "launched": false,
+            "judgeCalls": 0,
+            "evidenceSurvives": false,
+            "reason": "Same PLACEMENT_IMAGE defect; no model call."
+        },
+        {
+            "stamp": "rr-A-r0-R01 judge 1",
+            "kind": "pre-model judge failure",
+            "launched": false,
+            "judgeCalls": 0,
+            "evidenceSurvives": false,
+            "reason": "Judge launcher was not executable on a clean checkout; no model call. The existing trial was rejudged."
+        },
+        {
+            "stamp": "rr-A-r4-R03 judge",
+            "kind": "deterministic judge repair",
+            "launched": true,
+            "judgeCalls": 0,
+            "evidenceSurvives": true,
+            "reason": "The same verdict appeared twice in one answer; the identical object was selected. Raw output.jsonl is preserved."
+        }
+    ],
+    "accounting": {
+        "validFirstAttempt": {
+            "trials": 28,
+            "judges": 28,
+            "used": 28
+        },
+        "replacementScored": {
+            "trials": 2,
+            "judges": 2,
+            "used": 2
+        },
+        "r04Invalid": {
+            "trials": 2,
+            "judges": 2,
+            "used": 0
+        },
+        "aborted": {
+            "trials": 1,
+            "judges": 1,
+            "used": 0
+        },
+        "supersededManual": {
+            "trials": 1,
+            "judges": 0,
+            "used": 0
+        },
+        "debug": {
+            "trials": 1,
+            "judges": 0,
+            "used": 0
+        },
+        "replacementObservations": {
+            "trials": 2,
+            "stamps": ["rr-A-r0-R01", "rr-B-r1-R02"],
+            "note": "Both recorded replacements scored none; excluding them leaves 28 complete observations and two unknown cells (A R01 r0 and B R02 r1)."
+        },
+        "deliveryProbes": {
+            "trials": 2,
+            "judges": 0,
+            "used": 0
+        },
+        "preModelLaunchFailures": {
+            "trialLaunches": 2,
+            "judgeLaunches": 1,
+            "modelCalls": 0
+        },
+        "totals": {
+            "trialModelSessions": 37,
+            "judgeModelCalls": 33,
+            "usedInComparison": 30
+        }
     },
-    {
-      "slot": 2,
-      "pair": 1,
-      "repetition": 0,
-      "scenario": "R01",
-      "arm": "B",
-      "stamp": "rr-B-r0-R01",
-      "startedAt": "2026-11-10T12:08:37.903Z",
-      "finishedAt": "2026-11-10T12:08:58.839Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "useful-create",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 3,
-      "pair": 3,
-      "repetition": 0,
-      "scenario": "R02",
-      "arm": "B",
-      "stamp": "rr-B-r0-R02",
-      "startedAt": "2026-11-10T12:09:08.502Z",
-      "finishedAt": "2026-11-10T12:09:27.939Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "useful-update",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 4,
-      "pair": 3,
-      "repetition": 0,
-      "scenario": "R02",
-      "arm": "A",
-      "stamp": "rr-A-r0-R02",
-      "startedAt": "2026-11-10T12:09:36.015Z",
-      "finishedAt": "2026-11-10T12:09:45.704Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "none",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 5,
-      "pair": 5,
-      "repetition": 0,
-      "scenario": "R03",
-      "arm": "A",
-      "stamp": "rr-A-r0-R03",
-      "startedAt": "2026-11-10T12:09:52.453Z",
-      "finishedAt": "2026-11-10T12:10:26.000Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "none",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 6,
-      "pair": 5,
-      "repetition": 0,
-      "scenario": "R03",
-      "arm": "B",
-      "stamp": "rr-B-r0-R03",
-      "startedAt": "2026-11-10T12:10:33.054Z",
-      "finishedAt": "2026-11-10T12:11:06.658Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "none",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 7,
-      "pair": 7,
-      "repetition": 0,
-      "scenario": "R04",
-      "arm": "B",
-      "stamp": "rr-B-r0-R04",
-      "startedAt": "2026-11-10T12:11:13.558Z",
-      "finishedAt": "2026-11-10T12:11:39.112Z",
-      "trial": {
-        "launched": true,
-        "status": "invalid-r04-premise",
-        "evidenceSurvives": true,
-        "reason": "R04 lint premise false; excluded from the comparison"
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "misleading",
-        "evidenceSurvives": true,
-        "usedInComparison": false
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 8,
-      "pair": 7,
-      "repetition": 0,
-      "scenario": "R04",
-      "arm": "A",
-      "stamp": "rr-A-r0-R04",
-      "startedAt": "2026-11-10T12:11:51.526Z",
-      "finishedAt": "2026-11-10T12:12:15.315Z",
-      "trial": {
-        "launched": true,
-        "status": "invalid-r04-premise",
-        "evidenceSurvives": true,
-        "reason": "R04 lint premise false; excluded from the comparison"
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "none",
-        "evidenceSurvives": true,
-        "usedInComparison": false
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 9,
-      "pair": 9,
-      "repetition": 1,
-      "scenario": "R02",
-      "arm": "A",
-      "stamp": "rr-A-r1-R02",
-      "startedAt": "2026-11-10T12:12:20.096Z",
-      "finishedAt": "2026-11-10T12:12:55.764Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "none",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 10,
-      "pair": 9,
-      "repetition": 1,
-      "scenario": "R02",
-      "arm": "B",
-      "stamp": "rr-B-r1-R02",
-      "startedAt": "2026-11-10T12:15:13.603Z",
-      "finishedAt": "2026-11-10T12:15:22.725Z",
-      "trial": {
-        "launched": true,
-        "status": "replacement",
-        "evidenceSurvives": true,
-        "reason": "aborted slot-10 trial superseded by this recorded trial; aborted evidence deleted"
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "none",
-        "evidenceSurvives": true,
-        "usedInComparison": false
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 11,
-      "pair": 11,
-      "repetition": 1,
-      "scenario": "R03",
-      "arm": "B",
-      "stamp": "rr-B-r1-R03",
-      "startedAt": "2026-11-10T12:15:29.999Z",
-      "finishedAt": "2026-11-10T12:16:27.418Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "transient",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 12,
-      "pair": 11,
-      "repetition": 1,
-      "scenario": "R03",
-      "arm": "A",
-      "stamp": "rr-A-r1-R03",
-      "startedAt": "2026-11-10T12:16:35.244Z",
-      "finishedAt": "2026-11-10T12:16:52.044Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "none",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 13,
-      "pair": 13,
-      "repetition": 1,
-      "scenario": "R04",
-      "arm": "A",
-      "stamp": "rr-A-r1-R04",
-      "startedAt": null,
-      "finishedAt": null,
-      "trial": {
-        "launched": false,
-        "status": "not-run",
-        "evidenceSurvives": false,
-        "reason": "R04 lint premise false; excluded from the comparison"
-      },
-      "judge": {
-        "callRecorded": false,
-        "status": null,
-        "outcome": null,
-        "evidenceSurvives": false,
-        "usedInComparison": false
-      },
-      "primary": null
-    },
-    {
-      "slot": 14,
-      "pair": 13,
-      "repetition": 1,
-      "scenario": "R04",
-      "arm": "B",
-      "stamp": "rr-B-r1-R04",
-      "startedAt": null,
-      "finishedAt": null,
-      "trial": {
-        "launched": false,
-        "status": "not-run",
-        "evidenceSurvives": false,
-        "reason": "R04 lint premise false; excluded from the comparison"
-      },
-      "judge": {
-        "callRecorded": false,
-        "status": null,
-        "outcome": null,
-        "evidenceSurvives": false,
-        "usedInComparison": false
-      },
-      "primary": null
-    },
-    {
-      "slot": 15,
-      "pair": 15,
-      "repetition": 1,
-      "scenario": "R01",
-      "arm": "B",
-      "stamp": "rr-B-r1-R01",
-      "startedAt": "2026-11-10T12:16:59.486Z",
-      "finishedAt": "2026-11-10T12:17:20.693Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "none",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 16,
-      "pair": 15,
-      "repetition": 1,
-      "scenario": "R01",
-      "arm": "A",
-      "stamp": "rr-A-r1-R01",
-      "startedAt": "2026-11-10T12:17:26.473Z",
-      "finishedAt": "2026-11-10T12:17:55.916Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "none",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 17,
-      "pair": 17,
-      "repetition": 2,
-      "scenario": "R03",
-      "arm": "A",
-      "stamp": "rr-A-r2-R03",
-      "startedAt": "2026-11-10T12:18:02.728Z",
-      "finishedAt": "2026-11-10T12:18:24.675Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "none",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 18,
-      "pair": 17,
-      "repetition": 2,
-      "scenario": "R03",
-      "arm": "B",
-      "stamp": "rr-B-r2-R03",
-      "startedAt": "2026-11-10T12:18:30.351Z",
-      "finishedAt": "2026-11-10T12:19:07.344Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "transient",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 19,
-      "pair": 19,
-      "repetition": 2,
-      "scenario": "R04",
-      "arm": "B",
-      "stamp": "rr-B-r2-R04",
-      "startedAt": null,
-      "finishedAt": null,
-      "trial": {
-        "launched": false,
-        "status": "not-run",
-        "evidenceSurvives": false,
-        "reason": "R04 lint premise false; excluded from the comparison"
-      },
-      "judge": {
-        "callRecorded": false,
-        "status": null,
-        "outcome": null,
-        "evidenceSurvives": false,
-        "usedInComparison": false
-      },
-      "primary": null
-    },
-    {
-      "slot": 20,
-      "pair": 19,
-      "repetition": 2,
-      "scenario": "R04",
-      "arm": "A",
-      "stamp": "rr-A-r2-R04",
-      "startedAt": null,
-      "finishedAt": null,
-      "trial": {
-        "launched": false,
-        "status": "not-run",
-        "evidenceSurvives": false,
-        "reason": "R04 lint premise false; excluded from the comparison"
-      },
-      "judge": {
-        "callRecorded": false,
-        "status": null,
-        "outcome": null,
-        "evidenceSurvives": false,
-        "usedInComparison": false
-      },
-      "primary": null
-    },
-    {
-      "slot": 21,
-      "pair": 21,
-      "repetition": 2,
-      "scenario": "R01",
-      "arm": "A",
-      "stamp": "rr-A-r2-R01",
-      "startedAt": "2026-11-10T12:19:16.215Z",
-      "finishedAt": "2026-11-10T12:19:29.463Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "none",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 22,
-      "pair": 21,
-      "repetition": 2,
-      "scenario": "R01",
-      "arm": "B",
-      "stamp": "rr-B-r2-R01",
-      "startedAt": "2026-11-10T12:19:36.387Z",
-      "finishedAt": "2026-11-10T12:20:08.224Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "none",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 23,
-      "pair": 23,
-      "repetition": 2,
-      "scenario": "R02",
-      "arm": "B",
-      "stamp": "rr-B-r2-R02",
-      "startedAt": "2026-11-10T12:20:14.750Z",
-      "finishedAt": "2026-11-10T12:20:24.271Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "none",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 24,
-      "pair": 23,
-      "repetition": 2,
-      "scenario": "R02",
-      "arm": "A",
-      "stamp": "rr-A-r2-R02",
-      "startedAt": "2026-11-10T12:20:31.854Z",
-      "finishedAt": "2026-11-10T12:20:55.874Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "useful-update",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 25,
-      "pair": 25,
-      "repetition": 3,
-      "scenario": "R04",
-      "arm": "A",
-      "stamp": "rr-A-r3-R04",
-      "startedAt": null,
-      "finishedAt": null,
-      "trial": {
-        "launched": false,
-        "status": "not-run",
-        "evidenceSurvives": false,
-        "reason": "R04 lint premise false; excluded from the comparison"
-      },
-      "judge": {
-        "callRecorded": false,
-        "status": null,
-        "outcome": null,
-        "evidenceSurvives": false,
-        "usedInComparison": false
-      },
-      "primary": null
-    },
-    {
-      "slot": 26,
-      "pair": 25,
-      "repetition": 3,
-      "scenario": "R04",
-      "arm": "B",
-      "stamp": "rr-B-r3-R04",
-      "startedAt": null,
-      "finishedAt": null,
-      "trial": {
-        "launched": false,
-        "status": "not-run",
-        "evidenceSurvives": false,
-        "reason": "R04 lint premise false; excluded from the comparison"
-      },
-      "judge": {
-        "callRecorded": false,
-        "status": null,
-        "outcome": null,
-        "evidenceSurvives": false,
-        "usedInComparison": false
-      },
-      "primary": null
-    },
-    {
-      "slot": 27,
-      "pair": 27,
-      "repetition": 3,
-      "scenario": "R01",
-      "arm": "B",
-      "stamp": "rr-B-r3-R01",
-      "startedAt": "2026-11-10T12:21:01.641Z",
-      "finishedAt": "2026-11-10T12:21:18.085Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "none",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 28,
-      "pair": 27,
-      "repetition": 3,
-      "scenario": "R01",
-      "arm": "A",
-      "stamp": "rr-A-r3-R01",
-      "startedAt": "2026-11-10T12:21:24.778Z",
-      "finishedAt": "2026-11-10T12:21:43.628Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "none",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 29,
-      "pair": 29,
-      "repetition": 3,
-      "scenario": "R02",
-      "arm": "A",
-      "stamp": "rr-A-r3-R02",
-      "startedAt": "2026-11-10T12:21:49.839Z",
-      "finishedAt": "2026-11-10T12:22:11.585Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "none",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 30,
-      "pair": 29,
-      "repetition": 3,
-      "scenario": "R02",
-      "arm": "B",
-      "stamp": "rr-B-r3-R02",
-      "startedAt": "2026-11-10T12:22:19.784Z",
-      "finishedAt": "2026-11-10T12:22:35.004Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "none",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 31,
-      "pair": 31,
-      "repetition": 3,
-      "scenario": "R03",
-      "arm": "B",
-      "stamp": "rr-B-r3-R03",
-      "startedAt": "2026-11-10T12:22:42.445Z",
-      "finishedAt": "2026-11-10T12:23:18.919Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "none",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 32,
-      "pair": 31,
-      "repetition": 3,
-      "scenario": "R03",
-      "arm": "A",
-      "stamp": "rr-A-r3-R03",
-      "startedAt": "2026-11-10T12:23:24.741Z",
-      "finishedAt": "2026-11-10T12:23:51.769Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "none",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 33,
-      "pair": 33,
-      "repetition": 4,
-      "scenario": "R01",
-      "arm": "A",
-      "stamp": "rr-A-r4-R01",
-      "startedAt": "2026-11-10T12:23:57.223Z",
-      "finishedAt": "2026-11-10T12:24:22.919Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "none",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 34,
-      "pair": 33,
-      "repetition": 4,
-      "scenario": "R01",
-      "arm": "B",
-      "stamp": "rr-B-r4-R01",
-      "startedAt": "2026-11-10T12:24:32.344Z",
-      "finishedAt": "2026-11-10T12:24:42.669Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "none",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 35,
-      "pair": 35,
-      "repetition": 4,
-      "scenario": "R02",
-      "arm": "B",
-      "stamp": "rr-B-r4-R02",
-      "startedAt": "2026-11-10T12:24:51.478Z",
-      "finishedAt": "2026-11-10T12:25:01.217Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "none",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 36,
-      "pair": 35,
-      "repetition": 4,
-      "scenario": "R02",
-      "arm": "A",
-      "stamp": "rr-A-r4-R02",
-      "startedAt": "2026-11-10T12:25:08.461Z",
-      "finishedAt": "2026-11-10T12:25:18.317Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "none",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 37,
-      "pair": 37,
-      "repetition": 4,
-      "scenario": "R03",
-      "arm": "A",
-      "stamp": "rr-A-r4-R03",
-      "startedAt": "2026-11-10T12:25:25.835Z",
-      "finishedAt": "2026-11-10T12:26:19.032Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "transient",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 38,
-      "pair": 37,
-      "repetition": 4,
-      "scenario": "R03",
-      "arm": "B",
-      "stamp": "rr-B-r4-R03",
-      "startedAt": "2026-11-10T12:27:58.215Z",
-      "finishedAt": "2026-11-10T12:28:30.282Z",
-      "trial": {
-        "launched": true,
-        "status": "valid",
-        "evidenceSurvives": true,
-        "reason": null
-      },
-      "judge": {
-        "callRecorded": true,
-        "status": "judged",
-        "outcome": "transient",
-        "evidenceSurvives": true,
-        "usedInComparison": true
-      },
-      "primary": "pass"
-    },
-    {
-      "slot": 39,
-      "pair": 39,
-      "repetition": 4,
-      "scenario": "R04",
-      "arm": "B",
-      "stamp": "rr-B-r4-R04",
-      "startedAt": null,
-      "finishedAt": null,
-      "trial": {
-        "launched": false,
-        "status": "not-run",
-        "evidenceSurvives": false,
-        "reason": "R04 lint premise false; excluded from the comparison"
-      },
-      "judge": {
-        "callRecorded": false,
-        "status": null,
-        "outcome": null,
-        "evidenceSurvives": false,
-        "usedInComparison": false
-      },
-      "primary": null
-    },
-    {
-      "slot": 40,
-      "pair": 39,
-      "repetition": 4,
-      "scenario": "R04",
-      "arm": "A",
-      "stamp": "rr-A-r4-R04",
-      "startedAt": null,
-      "finishedAt": null,
-      "trial": {
-        "launched": false,
-        "status": "not-run",
-        "evidenceSurvives": false,
-        "reason": "R04 lint premise false; excluded from the comparison"
-      },
-      "judge": {
-        "callRecorded": false,
-        "status": null,
-        "outcome": null,
-        "evidenceSurvives": false,
-        "usedInComparison": false
-      },
-      "primary": null
-    }
-  ],
-  "extraAttempts": [
-    {
-      "stamp": "test-r01",
-      "kind": "debug trial",
-      "launched": true,
-      "judgeCalls": 0,
-      "evidenceSurvives": true,
-      "reason": "Readiness/debug harness run; excluded from the comparison."
-    },
-    {
-      "stamp": "rr-A-r0-R01 (manual)",
-      "kind": "superseded manual trial",
-      "launched": true,
-      "judgeCalls": 0,
-      "evidenceSurvives": false,
-      "reason": "Superseded by the recorded slot-1 trial; directory overwritten and not separately retained."
-    },
-    {
-      "stamp": "rr-B-r1-R02 (aborted)",
-      "kind": "aborted trial",
-      "launched": true,
-      "judgeCalls": 1,
-      "evidenceSurvives": false,
-      "reason": "Trial exit 137 while stopping the invalid run; directory and its empty-result judgement deleted to clear an abandoned reservation. Only the run-log line remains."
-    },
-    {
-      "stamp": "pair 1 launch 1",
-      "kind": "pre-model launch failure",
-      "launched": false,
-      "judgeCalls": 0,
-      "evidenceSurvives": false,
-      "reason": "PLACEMENT_IMAGE made host-side describe believe it was containerised; no model call."
-    },
-    {
-      "stamp": "pair 1 launch 2",
-      "kind": "pre-model launch failure",
-      "launched": false,
-      "judgeCalls": 0,
-      "evidenceSurvives": false,
-      "reason": "Same PLACEMENT_IMAGE defect; no model call."
-    },
-    {
-      "stamp": "rr-A-r0-R01 judge 1",
-      "kind": "pre-model judge failure",
-      "launched": false,
-      "judgeCalls": 0,
-      "evidenceSurvives": false,
-      "reason": "Judge launcher was not executable on a clean checkout; no model call. The existing trial was rejudged."
-    },
-    {
-      "stamp": "rr-A-r4-R03 judge",
-      "kind": "deterministic judge repair",
-      "launched": true,
-      "judgeCalls": 0,
-      "evidenceSurvives": true,
-      "reason": "The same verdict appeared twice in one answer; the identical object was selected. Raw output.jsonl is preserved."
-    }
-  ],
-  "accounting": {
-    "validFirstAttempt": {
-      "trials": 28,
-      "judges": 28,
-      "used": 28
-    },
-    "replacementScored": {
-      "trials": 2,
-      "judges": 2,
-      "used": 2
-    },
-    "r04Invalid": {
-      "trials": 2,
-      "judges": 2,
-      "used": 0
-    },
-    "aborted": {
-      "trials": 1,
-      "judges": 1,
-      "used": 0
-    },
-    "supersededManual": {
-      "trials": 1,
-      "judges": 0,
-      "used": 0
-    },
-    "debug": {
-      "trials": 1,
-      "judges": 0,
-      "used": 0
-    },
-    "replacementObservations": {
-      "trials": 2,
-      "stamps": [
-        "rr-A-r0-R01",
-        "rr-B-r1-R02"
-      ],
-      "note": "Both recorded replacements scored none; excluding them leaves 28 complete observations and two unknown cells (A R01 r0 and B R02 r1)."
-    },
-    "deliveryProbes": {
-      "trials": 2,
-      "judges": 0,
-      "used": 0
-    },
-    "preModelLaunchFailures": {
-      "trialLaunches": 2,
-      "judgeLaunches": 1,
-      "modelCalls": 0
-    },
-    "totals": {
-      "trialModelSessions": 37,
-      "judgeModelCalls": 33,
-      "usedInComparison": 30
-    }
-  },
-  "notPreserved": [
-    "rr-B-r1-R02 aborted trial and its empty-result judgement were deleted with an abandoned reservation.",
-    "The manual rr-A-r0-R01 trial was overwritten by the recorded slot-1 trial.",
-    "The first rr-A-r0-R01 judge attempt was removed after a pre-model launcher failure."
-  ]
+    "notPreserved": [
+        "rr-B-r1-R02 aborted trial and its empty-result judgement were deleted with an abandoned reservation.",
+        "The manual rr-A-r0-R01 trial was overwritten by the recorded slot-1 trial.",
+        "The first rr-A-r0-R01 judge attempt was removed after a pre-model launcher failure."
+    ]
 }
