@@ -215,8 +215,9 @@ function primaryEvidence(record) {
  * @param truth The scenario-truth map.
  * @returns The packet text and the mutation facts behind it.
  */
-function packetFor(base, stamp, caseId, truth) {
+function packetFor(base, stamp, caseId, truth, scoringSpec) {
     const caseDir = join(base, "results", stamp, caseId);
+    const caseSpec = scoringSpec?.[caseId] ?? {};
     const beforeDocs = lakeDocs(join(base, "fixtures", caseId, "lakes/docs"));
     const afterDocs = lakeDocs(join(caseDir, "live/lakes/docs"));
     const state = docChanges(beforeDocs, afterDocs);
@@ -234,7 +235,15 @@ function packetFor(base, stamp, caseId, truth) {
             join(caseDir, "docs-operations.jsonl"),
         ),
         answer: readText(join(caseDir, "final.md")),
-        requirePreservation: caseId === PRESERVATION_CASE,
+        requirePreservation:
+            caseId === PRESERVATION_CASE &&
+            caseSpec.preservation === undefined,
+        ...(caseSpec.preservation === undefined
+            ? {}
+            : { preservationSpec: caseSpec.preservation }),
+        ...(caseSpec.retrieval === undefined
+            ? {}
+            : { retrievalSpec: caseSpec.retrieval }),
     });
     return { caseDir, prompt, state };
 }
@@ -266,12 +275,21 @@ function spawnJudge({ launcher, model, stamp, prompt, runDir, timeout }) {
 }
 
 /** The stored judgement payload for one parsed answer. */
-function judgementPayload(parsed, state, caseId) {
+function judgementPayload(parsed, state, caseId, scoringSpec) {
+    const caseSpec = scoringSpec?.[caseId] ?? {};
     const problems =
         parsed.value === undefined
             ? parsed.problems
             : validateAcJudgement(parsed.value, state, {
-                  requirePreservation: caseId === PRESERVATION_CASE,
+                  requirePreservation:
+                      caseId === PRESERVATION_CASE &&
+                      caseSpec.preservation === undefined,
+                  ...(caseSpec.preservation === undefined
+                      ? {}
+                      : { preservationSpec: caseSpec.preservation }),
+                  ...(caseSpec.retrieval === undefined
+                      ? {}
+                      : { retrieval: true }),
               });
     return {
         problems,
@@ -287,7 +305,15 @@ function judgementPayload(parsed, state, caseId) {
 }
 
 /** Record a judge attempt's evidence and return its terminal status. */
-function recordJudgement(attemptDir, result, state, model, stamp, caseId) {
+function recordJudgement(
+    attemptDir,
+    result,
+    state,
+    model,
+    stamp,
+    caseId,
+    scoringSpec,
+) {
     const started = readJson(join(attemptDir, "meta.json"));
     writeFileSync(
         join(attemptDir, "output.jsonl"),
@@ -317,7 +343,7 @@ function recordJudgement(attemptDir, result, state, model, stamp, caseId) {
         return 1;
     }
     const parsed = parseAcJudgement(answer);
-    const judgement = judgementPayload(parsed, state, caseId);
+    const judgement = judgementPayload(parsed, state, caseId, scoringSpec);
     writeJson(join(attemptDir, "judgement.json"), judgement.value);
     return judgement.problems.length === 0 ? 0 : 1;
 }
@@ -411,7 +437,10 @@ function judge(args) {
         );
         return 1;
     }
-    const { prompt, state } = packetFor(base, stamp, caseId, truth);
+    const scoringSpec = args.get("--spec")
+        ? JSON.parse(readFileSync(need(args, "--spec"), "utf8"))
+        : undefined;
+    const { prompt, state } = packetFor(base, stamp, caseId, truth, scoringSpec);
     const leaks = labelLeaks(prompt);
     if (leaks.length > 0) {
         console.error(
@@ -446,11 +475,19 @@ function judge(args) {
         runDir,
         timeout: Number(args.get("--timeout") ?? 240000),
     });
-    return recordJudgement(attemptDir, result, state, model, stamp, caseId);
+    return recordJudgement(
+        attemptDir,
+        result,
+        state,
+        model,
+        stamp,
+        caseId,
+        scoringSpec,
+    );
 }
 
 /** Resolve one parse-failed attempt, or report that it is not resolvable. */
-function resolveAttempt(attemptDir, judgement) {
+function resolveAttempt(attemptDir, judgement, scoringSpec) {
     if (!judgement.problems?.includes("verdict is not valid JSON")) {
         return "refused";
     }
@@ -464,8 +501,17 @@ function resolveAttempt(attemptDir, judgement) {
     if (extracted !== undefined) {
         try {
             const parsed = JSON.parse(extracted);
+            const caseSpec = scoringSpec?.[meta.caseId] ?? {};
             const problems = validateAcJudgement(parsed, meta.state, {
-                requirePreservation: meta.caseId === PRESERVATION_CASE,
+                requirePreservation:
+                    meta.caseId === PRESERVATION_CASE &&
+                    caseSpec.preservation === undefined,
+                ...(caseSpec.preservation === undefined
+                    ? {}
+                    : { preservationSpec: caseSpec.preservation }),
+                ...(caseSpec.retrieval === undefined
+                    ? {}
+                    : { retrieval: true }),
             });
             if (problems.length === 0) {
                 record.status = "judged";
@@ -493,6 +539,9 @@ function resolveAttempt(attemptDir, judgement) {
  */
 function resolve(args) {
     const base = need(args, "--base");
+    const scoringSpec = args.get("--spec")
+        ? JSON.parse(readFileSync(need(args, "--spec"), "utf8"))
+        : undefined;
     let refused = 0;
     const visit = (dir) => {
         for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -510,7 +559,7 @@ function resolve(args) {
             const attemptDir = path.slice(0, -"judgement.json".length);
             const judgement = JSON.parse(readFileSync(path, "utf8"));
             if (judgement.status === "invalid-verdict") {
-                if (resolveAttempt(attemptDir, judgement) === "refused")
+                if (resolveAttempt(attemptDir, judgement, scoringSpec) === "refused")
                     refused += 1;
             }
         }

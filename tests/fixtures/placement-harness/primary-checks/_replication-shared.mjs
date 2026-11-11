@@ -28,10 +28,26 @@ export function requireFiles(liveWork, pristineWork, paths) {
 
 /** Copy the live tree, restore the pristine tests, and run `npm test`. */
 export function runSuite(liveWork, pristineWork, label) {
+    return runRestoredSuite(liveWork, pristineWork, label, [
+        "test",
+        "package.json",
+    ]);
+}
+
+/**
+ * Copy the live tree, restore an explicit set of pristine paths, and run
+ * `npm test` in isolation.
+ * @param liveWork The trial's live work tree.
+ * @param pristineWork The pristine fixture work tree.
+ * @param label Temporary-directory and report label.
+ * @param restore Paths to restore from the pristine tree.
+ * @returns The temporary root and the suite's exit status.
+ */
+export function runRestoredSuite(liveWork, pristineWork, label, restore) {
     const root = mkdtempSync(join(tmpdir(), `${label}-`));
     try {
         cpSync(liveWork, root, { recursive: true });
-        for (const relative of ["test", "package.json"]) {
+        for (const relative of restore) {
             rmSync(join(root, relative), { recursive: true, force: true });
             cpSync(join(pristineWork, relative), join(root, relative), {
                 recursive: true,

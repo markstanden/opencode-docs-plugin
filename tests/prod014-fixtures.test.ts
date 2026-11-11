@@ -1,0 +1,132 @@
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const fixtureDir = join(
+    here,
+    "fixtures",
+    "placement-harness",
+    "prod014",
+);
+const checksDir = join(
+    here,
+    "fixtures",
+    "placement-harness",
+    "primary-checks",
+);
+const readJson = (name) =>
+    JSON.parse(readFileSync(join(fixtureDir, name), "utf8"));
+
+const cases = readJson("cases.json");
+const truth = readJson("truth.json");
+const measurement = readJson("measurement.json");
+
+describe("0.14.0 productivity-trial fixtures", () => {
+    it("carries one case per scheduled pair, in pair order", () => {
+        // Arrange
+        const expected = [
+            "R01",
+            "S02",
+            "R02",
+            "R03",
+            "S05",
+            "S06",
+            "S07",
+            "R04",
+        ];
+
+        // Act
+        const ids = cases.map((entry) => entry.id);
+
+        // Assert
+        assert.deepEqual(ids, expected);
+        assert.equal(new Set(ids).size, expected.length);
+    });
+
+    it("gives every case a runnable primary check and a truth entry", () => {
+        // Act
+        const missing = cases.filter(
+            (entry) =>
+                !existsSync(
+                    join(checksDir, entry.primaryCheck?.script ?? ""),
+                ) || typeof truth[entry.id] !== "string",
+        );
+
+        // Assert
+        assert.deepEqual(missing.map((entry) => entry.id), []);
+    });
+
+    it("keeps every seeded expectation on a declared seed path", () => {
+        // Act
+        const problems = [];
+        for (const entry of cases) {
+            const seeded = new Set(
+                (entry.seeds ?? []).map(
+                    (seed) => `${seed.surface}/${seed.path}`,
+                ),
+            );
+            const expectedDocs = entry.expectedDocs ?? {};
+            const paths = [
+                expectedDocs.target,
+                ...(expectedDocs.preserve ?? []),
+            ].filter((path) => typeof path === "string");
+            for (const path of paths) {
+                if (!seeded.has(path) && !seeded.has(`work/${path}`)) {
+                    problems.push(`${entry.id}: ${path}`);
+                }
+            }
+        }
+
+        // Assert
+        assert.deepEqual(problems, []);
+    });
+
+    it("declares the planned recording and retrieval opportunities", () => {
+        // Assert
+        assert.deepEqual(measurement.recordingOpportunities, [
+            "R01",
+            "R02",
+            "S05",
+            "S07",
+        ]);
+        assert.deepEqual(measurement.retrievalOpportunities, [
+            "S02",
+            "R02",
+            "S06",
+            "S07",
+            "R04",
+        ]);
+    });
+
+    it("carries a retrieval finding for every retrieval opportunity", () => {
+        // Act
+        const missing = measurement.retrievalOpportunities.filter(
+            (id) =>
+                typeof measurement.scenarios[id]?.retrieval?.note !==
+                    "string" ||
+                typeof measurement.scenarios[id]?.retrieval?.detail !==
+                    "string",
+        );
+
+        // Assert
+        assert.deepEqual(missing, []);
+    });
+
+    it("declares the correction inventory for the upgrade scenario", () => {
+        // Act
+        const facts = measurement.scenarios.S07?.preservation?.facts ?? [];
+
+        // Assert
+        assert.deepEqual(
+            facts.map((fact) => fact.id),
+            ["snapshot", "rollback", "legacyCondition"],
+        );
+        assert.equal(
+            facts.find((fact) => fact.id === "legacyCondition")?.obsolete,
+            true,
+        );
+    });
+});
