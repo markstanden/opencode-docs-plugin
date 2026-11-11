@@ -421,7 +421,7 @@ function gate(args) {
  * Judge one completed trial once, validating the answer against the recorded
  * mutation facts. A judge failure is recorded; it is never retried.
  * @param args `--base`, `--stamp`, `--case`, `--truth`, `--model`,
- *   `--launcher`, `--workdir`, optional `--timeout`.
+ *   `--launcher`, `--workdir`, optional `--timeout` and `--attempt`.
  * @returns 0 when a usable judgement landed, 1 when it did not.
  */
 function judge(args) {
@@ -430,13 +430,18 @@ function judge(args) {
     const caseId = need(args, "--case");
     const truth = JSON.parse(readFileSync(need(args, "--truth"), "utf8"));
     const model = need(args, "--model");
+    const attemptId = args.get("--attempt") ?? "attempt-001";
+    if (!/^attempt-\d{3}$/.test(attemptId)) {
+        console.error(`invalid --attempt ${JSON.stringify(attemptId)}`);
+        return 1;
+    }
     const attemptDir = join(
         base,
         "results",
         stamp,
         caseId,
         "ac",
-        "attempt-001",
+        attemptId,
     );
     if (existsSync(join(attemptDir, "judgement.json"))) return 0;
     if (existsSync(attemptDir)) {

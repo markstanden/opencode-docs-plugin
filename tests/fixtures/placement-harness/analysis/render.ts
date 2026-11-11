@@ -13,6 +13,7 @@ import type {
     UtilityWeights,
 } from "../ac-scoring.mts";
 import type { AccountingCounts } from "./accounting.ts";
+import type { MeasuresReport } from "./measures.ts";
 import type { Interval } from "./bounds.ts";
 import type { DecisionResult } from "./decision.ts";
 import type { GuardrailArmSummary } from "./guardrails.ts";
@@ -142,6 +143,8 @@ export interface AnalysisResult {
     arms: Record<string, AnalysisArmReport>;
     /** Per-arm, per-scenario accounting. */
     scenarios: Record<string, Record<string, AccountingCounts>>;
+    /** The recording and retrieval opportunity measures, and the personal-trial screen. */
+    measures: MeasuresReport;
     /** The whole measured population. */
     totals: AccountingCounts;
     /** The pairing summary. */
@@ -641,6 +644,7 @@ export function renderReport(result: AnalysisResult): string {
         "",
         setupSection(result),
         accountingSection(result),
+        measuresSection(result),
         scenarioSection(result),
         pairSection(result),
         guardrailSection(result),
@@ -651,6 +655,76 @@ export function renderReport(result: AnalysisResult): string {
     ]
         .filter((section) => section !== "")
         .join("\n");
+}
+
+/**
+ * Render the opportunity measures and the personal-trial screen.
+ * @param result The analysis result.
+ * @returns Markdown.
+ */
+function measuresSection(result: AnalysisResult): string {
+    const measures = result.measures;
+    const header = [
+        "## Opportunity measures",
+        "",
+        `Declaration: ${escapeCell(measures.status)}${measures.declarationSha256 === null ? "" : ` (sha256 ${measures.declarationSha256})`}.`,
+        "",
+    ];
+    const arms = Object.keys(measures.arms).sort();
+    const counts = table(
+        ["Arm", "Recording", "Recording unknown", "Retrieval", "Retrieval unknown"],
+        arms.map((arm) => {
+            const one = measures.arms[arm];
+            return [
+                arm,
+                `${String(one?.recording.success ?? 0)}/${String(one?.recording.planned ?? 0)}`,
+                String(one?.recording.unknown ?? 0),
+                `${String(one?.retrieval.applied ?? 0)}/${String(one?.retrieval.planned ?? 0)}`,
+                String(one?.retrieval.unknown ?? 0),
+            ];
+        }),
+    );
+    const eligible = measures.trials.filter(
+        (trial) => trial.recording.eligible || trial.retrieval.eligible,
+    );
+    const rows = eligible.map((trial) => [
+        trial.stamp,
+        trial.scenario,
+        trial.arm,
+        trial.recording.eligible
+            ? `${trial.recording.success ? "success" : "miss"} (${trial.recording.disposition})`
+            : "—",
+        trial.retrieval.eligible
+            ? `${trial.retrieval.state}${trial.retrieval.read ? " (read)" : " (no read)"}`
+            : "—",
+        [...trial.recording.evidence, ...trial.retrieval.evidence].join(" ") ||
+            "—",
+    ]);
+    const screen = measures.personalTrial;
+    return [
+        ...header,
+        counts,
+        "",
+        "### Eligible trials",
+        "",
+        table(
+            ["Stamp", "Scenario", "Arm", "Recording", "Retrieval", "Evidence"],
+            rows,
+        ),
+        "",
+        "### Personal-trial screen",
+        "",
+        `Recommendation: **${screen.recommendation}**.`,
+        "",
+        ...screen.reasons.map((reason) => `- ${reason}`),
+        "",
+        `Utility threshold (one component, not the recommendation): ${screen.utilityThreshold.status}; lead ${num(screen.utilityThreshold.lead)}; interval ${
+            screen.utilityThreshold.interval === null
+                ? "—"
+                : `${String(screen.utilityThreshold.interval.low)}..${String(screen.utilityThreshold.interval.high)}`
+        }. ${screen.utilityThreshold.note}`,
+        "",
+    ].join("\n");
 }
 
 /**
