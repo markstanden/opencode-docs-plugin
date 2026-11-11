@@ -56,6 +56,58 @@ export interface PairingSummary {
     problems: string[];
 }
 
+/** Captured token usage, with explicit measured/unknown counts. */
+export interface UsageSummary {
+    /** Input tokens over measured trials, or null when none was measured. */
+    input: number | null;
+    /** Output tokens over measured trials, or null when none was measured. */
+    output: number | null;
+    /** Reasoning tokens over measured trials, or null when none was measured. */
+    reasoning: number | null;
+    /** Cache-read tokens over measured trials, or null when none was measured. */
+    cacheRead: number | null;
+    /** Recorded steps over measured trials, or null when none was measured. */
+    steps: number | null;
+    /** Trials with readable token telemetry. */
+    measured: number;
+    /** Trials without readable token telemetry. */
+    unknown: number;
+}
+
+/** Cost availability: token telemetry is not a monetary cost. */
+export interface CostSummary {
+    /** Whether a recorded cost exists; this analyser records none. */
+    available: false;
+    /** Why the cost is unavailable. */
+    note: string;
+}
+
+/** The reconciled attempt-ledger summary. */
+export interface LedgerSummary {
+    /** The ledger's stable root-relative reference. */
+    reference: string;
+    /** Whether the ledger was readable. */
+    state: "available" | "missing" | "malformed";
+    /** Event counts keyed by recorded event name. */
+    events: Record<string, number>;
+    /** Scheduled slots the campaign declared. */
+    scheduled: number;
+    /** Scheduled slots with a recorded launch. */
+    launched: number;
+    /** Scheduled slots with a recorded judge attempt. */
+    judged: number;
+    /** Scheduled slots with no recorded launch. */
+    missingLaunches: string[];
+    /** Scheduled slots with no recorded judge attempt. */
+    missingJudgeAttempts: string[];
+    /** Ledger stamps outside the declared schedule. */
+    unknownStamps: string[];
+    /** Stamps with more than one recorded launch. */
+    duplicateLaunches: string[];
+    /** Loading and reconciliation problems. */
+    problems: string[];
+}
+
 /** The structured analysis result: the single source for every rendering. */
 export interface AnalysisResult {
     /** The analysis schema version. */
@@ -103,6 +155,12 @@ export interface AnalysisResult {
         sources: Array<{ reference: string; sha256: string }>;
         judgedBy: string[];
     };
+    /** Captured token usage; never an invented zero. */
+    usage: UsageSummary;
+    /** Monetary cost availability. */
+    cost: CostSummary;
+    /** The reconciled attempt ledger, when the campaign declared one. */
+    ledger: LedgerSummary | null;
     /** Explicit limitations, rendered verbatim. */
     limitations: string[];
 }
@@ -119,8 +177,12 @@ export interface AnalysisReceipt {
     policyId: string;
     /** The injected rendering timestamp. */
     renderedAt: string;
-    /** Every hashed input source, sorted. */
-    inputs: Array<{ reference: string; sha256: string }>;
+    /** Every consumed input with its identity and explicit state, sorted. */
+    inputs: Array<{
+        reference: string;
+        sha256: string | null;
+        state: "available" | "missing";
+    }>;
 }
 
 /**
@@ -377,8 +439,8 @@ function screeningSection(result: AnalysisResult): string {
         .slice(0, 40)
         .map((finding) => [
             finding.ruleId,
-            finding.category,
-            finding.authority,
+            finding.trial.stamp,
+            finding.role,
             finding.source.reference,
             finding.excerpt === "" ? "(no excerpt)" : finding.excerpt,
             finding.explanation,
@@ -391,14 +453,7 @@ function screeningSection(result: AnalysisResult): string {
         rows.length === 0
             ? "No findings."
             : table(
-                  [
-                      "Rule",
-                      "Category",
-                      "Authority",
-                      "Source",
-                      "Excerpt",
-                      "Explanation",
-                  ],
+                  ["Rule", "Trial", "Role", "Source", "Excerpt", "Explanation"],
                   rows,
               ),
         "",
@@ -434,16 +489,86 @@ function sensitivitySection(result: AnalysisResult): string {
 }
 
 /**
- * Render the provenance and integrity section.
+ * Render one ledger summary line, or an explicit absence.
+ * @param ledger The ledger summary, when one was declared.
+ * @returns Markdown lines.
+ */
+function ledgerLines(ledger: LedgerSummary | null): string[] {
+    if (ledger === null) {
+        return ["Attempt ledger: not declared."];
+    }
+    if (ledger.state !== "available") {
+        return [
+            `Attempt ledger ${ledger.reference}: ${ledger.state}. Launch and judge-attempt coverage is unknown, not clean.`,
+        ];
+    }
+    const events = Object.entries(ledger.events)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([event, count]) => `${event} ${count}`)
+        .join(", ");
+    const lines = [
+        `Attempt ledger ${ledger.reference}: ${String(ledger.scheduled)} scheduled, ${String(ledger.launched)} launched, ${String(ledger.judged)} judge-attempted; events: ${events}.`,
+    ];
+    if (ledger.missingLaunches.length > 0) {
+        lines.push(`Missing launches: ${ledger.missingLaunches.join(", ")}.`);
+    }
+    if (ledger.missingJudgeAttempts.length > 0) {
+        lines.push(
+            `Missing judge attempts: ${ledger.missingJudgeAttempts.join(", ")}.`,
+        );
+    }
+    if (ledger.unknownStamps.length > 0) {
+        lines.push(
+            `Unknown ledger stamps: ${ledger.unknownStamps.join(", ")}.`,
+        );
+    }
+    if (ledger.duplicateLaunches.length > 0) {
+        lines.push(
+            `Duplicate launches: ${ledger.duplicateLaunches.join(", ")}.`,
+        );
+    }
+    for (const problem of ledger.problems) {
+        lines.push(`Ledger problem: ${problem}`);
+    }
+    return lines;
+}
+
+/**
+ * Render the capture, provenance, integrity and cost section.
  * @param result The analysis result.
  * @returns Markdown.
  */
 function integritySection(result: AnalysisResult): string {
+    const usage = result.usage;
     return [
-        "## Judge provenance and integrity",
+        "## Capture, integrity and costs",
         "",
         `Judge models recorded: ${result.integrity.judgedBy.length === 0 ? "Not defined" : result.integrity.judgedBy.join(", ")}.`,
-        `Hashed input sources: ${num(result.integrity.sources.length)}. The full list and the rendering identity are in analysis-receipt.json.`,
+        `Hashed input sources: ${num(result.integrity.sources.length)}. The full consumed-input list and the rendering identity are in analysis-receipt.json.`,
+        "",
+        table(
+            ["Measure", "Captured", "Measured trials", "Unknown trials"],
+            [
+                [
+                    "Tokens (input/output/reasoning/cache-read) and steps",
+                    usage.measured === 0
+                        ? "—"
+                        : `${num(usage.input)}/${num(usage.output)}/${num(usage.reasoning)}/${num(usage.cacheRead)} tokens, ${num(usage.steps)} steps`,
+                    num(usage.measured),
+                    num(usage.unknown),
+                ],
+                [
+                    "Monetary cost",
+                    "—",
+                    "0",
+                    num(usage.measured + usage.unknown),
+                ],
+            ],
+        ),
+        "",
+        `Cost telemetry: ${result.cost.available ? "recorded" : "unavailable"}. ${result.cost.note}`,
+        "",
+        ...ledgerLines(result.ledger),
         "",
     ].join("\n");
 }

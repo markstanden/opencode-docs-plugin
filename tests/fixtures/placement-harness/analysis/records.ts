@@ -24,6 +24,7 @@ import type { SelectionPolicy } from "./model.ts";
 export type Loaded<T> =
     | { state: "available"; value: T; source: string }
     | { state: "missing"; source: string }
+    | { state: "not-a-directory"; source: string }
     | { state: "malformed"; source: string; problems: string[] }
     | { state: "unsupported-loaded"; source: string; reason: string };
 
@@ -213,7 +214,10 @@ function loadLines(reader: EvidenceReader, path: string): Loaded<string[]> {
 }
 
 /**
- * Walk a directory tree collecting Markdown documents, path-sorted.
+ * Walk a directory tree collecting Markdown documents, path-sorted. A
+ * non-Markdown name is inspected as a possible directory; a plain file such as
+ * `README.txt` answers `not-a-directory` and is skipped, never treated as an
+ * empty directory.
  * @param reader The evidence reader.
  * @param dir The directory to walk, relative to the evidence root.
  * @param prefix The display prefix already accumulated.
@@ -228,7 +232,12 @@ function walkMarkdown(
     problems: string[],
 ): void {
     const entries = reader.readDirectoryEntries(dir);
-    if (entries.state !== "available") return;
+    // A file is not a lake subtree: skip it. Any other failure stays a problem.
+    if (entries.state === "not-a-directory") return;
+    if (entries.state !== "available") {
+        problems.push(`${dir}: directory unreadable (${entries.state})`);
+        return;
+    }
     for (const name of entries.value) {
         if (name.startsWith(".")) continue;
         const child = joinPath(dir, name);
@@ -434,6 +443,12 @@ function primaryOf(parsed: Loaded<unknown>): {
     problems: string[];
 } {
     if (parsed.state === "missing") return { status: "unknown", problems: [] };
+    if (parsed.state === "not-a-directory") {
+        return {
+            status: "unknown",
+            problems: ["primary record is a directory, not a file"],
+        };
+    }
     if (parsed.state !== "available") {
         return {
             status: "unknown",

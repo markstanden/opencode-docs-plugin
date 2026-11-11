@@ -268,14 +268,64 @@ describe("parseManifest", () => {
         assert.ok(traversal.problems.some((p) => p.includes("traversal")));
     });
 
-    it("refuses the rr-ledger layout without its ledger input", () => {
+    it("accepts a declared mutation policy and a named attempt ledger", () => {
         // Act
         const parsed = parseOf((manifest) => {
-            manifest.evidence.layout = "rr-ledger-v1";
+            manifest.scenarios[0]!.mutationPolicy = {
+                allowed: ["work/.tmp/**", "lakes/docs/**"],
+                visibleConstraints: [
+                    "Do not modify tracked project files outside the knowledge lake.",
+                ],
+            };
+            manifest.evidence.inputs = {
+                attempts: "evidence/ATTEMPTS.jsonl",
+            };
         });
 
         // Assert
-        assert.ok(parsed.problems.some((p) => p.includes("ledger")));
+        assert.deepEqual(parsed.problems, []);
+        assert.deepEqual(parsed.value?.scenarios[0]?.mutationPolicy?.allowed, [
+            "work/.tmp/**",
+            "lakes/docs/**",
+        ]);
+        assert.equal(
+            parsed.value?.evidence.inputs?.attempts,
+            "evidence/ATTEMPTS.jsonl",
+        );
+    });
+
+    it("refuses a malformed mutation policy", () => {
+        // Act
+        const parsed = parseOf((manifest) => {
+            manifest.scenarios[0]!.mutationPolicy = {
+                allowed: [],
+                visibleConstraints: [],
+            };
+        });
+
+        // Assert
+        assert.ok(
+            parsed.problems.some((problem) =>
+                problem.includes("mutationPolicy.allowed"),
+            ),
+        );
+        assert.ok(
+            parsed.problems.some((problem) =>
+                problem.includes("visibleConstraints"),
+            ),
+        );
+    });
+
+    it("rejects the unadapted rr-ledger layout instead of ignoring its inputs", () => {
+        // Act
+        const parsed = parseOf((manifest) => {
+            manifest.evidence.layout = "rr-ledger-v1" as EvidenceLayout;
+            manifest.evidence.inputs = { ledger: "evidence/ATTEMPTS.jsonl" };
+        });
+
+        // Assert
+        assert.ok(parsed.problems.some((p) => p.includes("layout")));
+        assert.equal(parsed.value, undefined);
     });
 
     it("refuses unknown assessment selection policies", () => {

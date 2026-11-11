@@ -433,7 +433,14 @@ describe("evaluateDecision", () => {
         // Act
         const decision = evaluateDecision(
             selection(),
-            { A: counts(), B: counts({ utilityTotal: 106 }) },
+            {
+                A: counts(),
+                B: counts({
+                    utilityTotal: 106,
+                    utilityLow: 106,
+                    utilityHigh: 106,
+                }),
+            },
             [guardrailSummary("clean")],
         );
 
@@ -450,8 +457,18 @@ describe("evaluateDecision", () => {
         const decision = evaluateDecision(
             selection(),
             {
-                A: counts({ utilityTotal: 29 }),
-                B: counts({ utilityTotal: 26, documented: 19, assessed: 19 }),
+                A: counts({
+                    utilityTotal: 29,
+                    utilityLow: 29,
+                    utilityHigh: 29,
+                }),
+                B: counts({
+                    utilityTotal: 26,
+                    utilityLow: 26,
+                    utilityHigh: 26,
+                    documented: 19,
+                    assessed: 19,
+                }),
             },
             [guardrailSummary("clean")],
         );
@@ -468,7 +485,14 @@ describe("evaluateDecision", () => {
         // Act
         const decision = evaluateDecision(
             selection(),
-            { A: counts(), B: counts({ utilityTotal: 103 }) },
+            {
+                A: counts(),
+                B: counts({
+                    utilityTotal: 103,
+                    utilityLow: 103,
+                    utilityHigh: 103,
+                }),
+            },
             [guardrailSummary("clean")],
         );
 
@@ -481,7 +505,14 @@ describe("evaluateDecision", () => {
         // Act
         const decision = evaluateDecision(
             selection(),
-            { A: counts(), B: counts({ utilityTotal: 200 }) },
+            {
+                A: counts(),
+                B: counts({
+                    utilityTotal: 200,
+                    utilityLow: 200,
+                    utilityHigh: 200,
+                }),
+            },
             [guardrailSummary("breached")],
         );
 
@@ -494,7 +525,14 @@ describe("evaluateDecision", () => {
         // Act
         const decision = evaluateDecision(
             selection(),
-            { A: counts(), B: counts({ utilityTotal: 106 }) },
+            {
+                A: counts(),
+                B: counts({
+                    utilityTotal: 106,
+                    utilityLow: 106,
+                    utilityHigh: 106,
+                }),
+            },
             [guardrailSummary("unresolved")],
         );
 
@@ -521,6 +559,103 @@ describe("evaluateDecision", () => {
         assert.equal(decision.threshold.status, "not-defined");
         assert.equal(decision.threshold.lead, null);
         assert.equal(decision.guardrails.status, "not-defined");
+    });
+
+    it("qualifies only when the full-population interval clears the threshold", () => {
+        // Arrange — every missing-data completion of B leads A by at least 6.
+        const decision = evaluateDecision(
+            selection({ threshold: 5 }),
+            {
+                A: counts({ utilityLow: 96, utilityHigh: 104 }),
+                B: counts({
+                    utilityTotal: 112,
+                    utilityLow: 110,
+                    utilityHigh: 118,
+                }),
+            },
+            [guardrailSummary("clean")],
+        );
+
+        // Assert
+        assert.equal(decision.coverage.status, "pass");
+        assert.equal(decision.threshold.status, "pass");
+        assert.equal(decision.overall, "qualified");
+        assert.deepEqual(decision.threshold.interval, { low: 6, high: 22 });
+        assert.equal(decision.threshold.lead, 12);
+    });
+
+    it("fails when no full-population completion reaches the threshold", () => {
+        // Act
+        const decision = evaluateDecision(
+            selection({ threshold: 5 }),
+            {
+                A: counts(),
+                B: counts({
+                    utilityTotal: 95,
+                    utilityLow: 95,
+                    utilityHigh: 97,
+                }),
+            },
+            [guardrailSummary("clean")],
+        );
+
+        // Assert
+        assert.deepEqual(decision.threshold.interval, { low: -5, high: -3 });
+        assert.equal(decision.threshold.status, "fail");
+        assert.equal(decision.overall, "not-qualified");
+    });
+
+    it("is inconclusive when the full-population interval crosses the threshold", () => {
+        // Arrange — the confirmation's observed −3 and bounds −13..+7 vs +5.
+        const decision = evaluateDecision(
+            selection({ threshold: 5 }),
+            {
+                A: counts({
+                    utilityTotal: 29,
+                    utilityLow: 24,
+                    utilityHigh: 34,
+                }),
+                B: counts({
+                    utilityTotal: 26,
+                    utilityLow: 21,
+                    utilityHigh: 31,
+                    documented: 19,
+                    assessed: 19,
+                }),
+            },
+            [guardrailSummary("clean")],
+        );
+
+        // Assert
+        assert.equal(decision.threshold.lead, -3);
+        assert.deepEqual(decision.threshold.interval, { low: -13, high: 7 });
+        assert.equal(decision.threshold.status, "inconclusive");
+        assert.equal(decision.overall, "inconclusive");
+    });
+
+    it("lets a non-compensable breach decide even when the threshold interval crosses", () => {
+        // Act
+        const decision = evaluateDecision(
+            selection({ threshold: 5 }),
+            {
+                A: counts({
+                    utilityTotal: 29,
+                    utilityLow: 24,
+                    utilityHigh: 34,
+                }),
+                B: counts({
+                    utilityTotal: 26,
+                    utilityLow: 21,
+                    utilityHigh: 31,
+                }),
+            },
+            [guardrailSummary("breached")],
+        );
+
+        // Assert
+        assert.equal(decision.threshold.status, "inconclusive");
+        assert.equal(decision.guardrails.status, "breached");
+        assert.equal(decision.overall, "not-qualified");
     });
 
     it("reports an incomparable threshold as inconclusive, not a failure", () => {
@@ -606,9 +741,15 @@ describe("decision compatibility with finalistQualifies", () => {
             const decision = evaluateDecision(
                 selection({ threshold: one.threshold }),
                 {
-                    A: counts({ utilityTotal: one.control.total }),
+                    A: counts({
+                        utilityTotal: one.control.total,
+                        utilityLow: one.control.total,
+                        utilityHigh: one.control.total,
+                    }),
                     B: counts({
                         utilityTotal: one.candidate.total,
+                        utilityLow: one.candidate.total,
+                        utilityHigh: one.candidate.total,
                         assessed: one.candidate.assessed,
                         documented: one.candidate.assessed,
                         planned: one.candidate.planned,
@@ -645,9 +786,15 @@ describe("decision compatibility with finalistQualifies", () => {
         const decision = evaluateDecision(
             selection(),
             {
-                A: counts({ utilityTotal: 29 }),
+                A: counts({
+                    utilityTotal: 29,
+                    utilityLow: 29,
+                    utilityHigh: 29,
+                }),
                 B: counts({
                     utilityTotal: 26,
+                    utilityLow: 26,
+                    utilityHigh: 26,
                     assessed: 19,
                     documented: 19,
                 }),

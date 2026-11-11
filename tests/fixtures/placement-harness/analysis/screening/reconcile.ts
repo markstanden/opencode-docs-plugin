@@ -6,7 +6,7 @@
  * distinct. Exact-text reference is deliberately conservative — a paraphrase
  * counts as not referenced, and a short excerpt cannot establish anything.
  */
-import type { Finding } from "./rules.ts";
+import type { EvidenceRole, Finding, TrialIdentity } from "./rules.ts";
 
 /** The judge text a reconciliation reads. */
 export interface JudgementText {
@@ -22,7 +22,11 @@ export interface ReconcileRow {
     ruleId: string;
     /** The finding's inventory fact id, when present. */
     factId: string | undefined;
-    /** The finding's source reference. */
+    /** The trial the finding came from. */
+    trial: TrialIdentity;
+    /** The evidence role the finding cites. */
+    role: EvidenceRole;
+    /** The finding's root-relative source reference. */
     source: string;
     /** Whether the judge text references the finding's excerpt. */
     status: "referenced" | "not-referenced" | "unresolved";
@@ -54,6 +58,8 @@ export function reconcileFindings(
     const rows = findings.map((finding) => ({
         ruleId: finding.ruleId,
         factId: finding.factId,
+        trial: finding.trial,
+        role: finding.role,
         source: finding.source.reference,
         status: "unresolved" as ReconcileRow["status"],
     }));

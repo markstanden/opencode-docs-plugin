@@ -723,23 +723,27 @@ export interface SensitivityCell {
 
 /**
  * Re-score every arm under the requested weight grid, holding the other
- * penalties fixed. This explores preferences; it is not nine experiments.
+ * penalties fixed at the campaign's declared weights. This explores
+ * preferences; it is not nine experiments.
  * @param arms The planned trials, keyed by arm.
  * @param usefulWeights The useful create/update rewards to try.
  * @param transientPenalties The transient penalties to try, as positive
  *   magnitudes applied as negative scores.
+ * @param baseWeights The campaign's non-grid weights; defaults to the
+ *   prospective defaults so legacy callers keep their frozen baseline.
  * @returns One cell per combination, with totals and the resulting ranking.
  */
 export function sensitivity(
     arms: Record<string, ScoredTrial[]>,
     usefulWeights: number[],
     transientPenalties: number[],
+    baseWeights: UtilityWeights = DEFAULT_WEIGHTS,
 ): SensitivityCell[] {
     const cells: SensitivityCell[] = [];
     for (const useful of usefulWeights) {
         for (const transient of transientPenalties) {
             const weights: UtilityWeights = {
-                ...DEFAULT_WEIGHTS,
+                ...baseWeights,
                 useful,
                 transient: -Math.abs(transient),
             };

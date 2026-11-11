@@ -397,6 +397,9 @@
         "resultRoots": {
             "A": "gen/a/results",
             "B": "gen/b/results"
+        },
+        "inputs": {
+            "attempts": "evidence/ATTEMPTS.jsonl"
         }
     },
     "assessment": {

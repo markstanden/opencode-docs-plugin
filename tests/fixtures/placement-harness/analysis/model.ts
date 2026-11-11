@@ -17,8 +17,13 @@
 /** The only manifest schema version this framework parses. */
 export const MANIFEST_SCHEMA_VERSION = 1;
 
-/** Evidence layout adapters the loader knows how to read. */
-export const EVIDENCE_LAYOUTS = ["ac-v1", "rr-ledger-v1"] as const;
+/**
+ * Evidence layout adapters the loader knows how to read. The ledger-shaped
+ * `rr-ledger-v1` layout is deliberately absent until an adapter exists: a
+ * manifest declaring an unreadable layout is refused, never accepted and
+ * silently read as ac-v1.
+ */
+export const EVIDENCE_LAYOUTS = ["ac-v1"] as const;
 
 /** A known evidence layout adapter id. */
 export type EvidenceLayout = (typeof EVIDENCE_LAYOUTS)[number];
@@ -84,6 +89,14 @@ export interface PreservationInventorySpec {
     negationCues: string[];
 }
 
+/** A scenario's recorded mutation policy and its visible constraints. */
+export interface MutationPolicySpec {
+    /** Allowed mutation globs, relative to the trial workspace. */
+    allowed: string[];
+    /** Constraints the task prompt communicated, when recorded. */
+    visibleConstraints?: string[] | undefined;
+}
+
 /** One scenario's declared identity and optional measurement configuration. */
 export interface ScenarioIdentity {
     /** Stable scenario id used by schedule slots and evidence. */
@@ -92,6 +105,8 @@ export interface ScenarioIdentity {
     kind?: string | undefined;
     /** The scenario's configured preservation inventory, when it has one. */
     preservationInventory?: PreservationInventorySpec | undefined;
+    /** The scenario's recorded mutation policy, when the campaign declares one. */
+    mutationPolicy?: MutationPolicySpec | undefined;
 }
 
 /** One scheduled trial slot: a declared identity, never an array position. */
@@ -460,6 +475,34 @@ function inventoryProblems(label: string, value: unknown): string[] {
 }
 
 /**
+ * Validate one optional mutation policy.
+ * @param label The dotted field path of the policy.
+ * @param value The raw policy object.
+ * @returns Problems; empty means valid.
+ */
+function mutationPolicyProblems(label: string, value: unknown): string[] {
+    if (!isPlainObject(value)) {
+        return [`${label} must be an object when present`];
+    }
+    const problems: string[] = [];
+    if (!isStringArray(value.allowed) || value.allowed.length === 0) {
+        problems.push(
+            `${label}.allowed must be a nonempty array of path globs`,
+        );
+    }
+    if (
+        value.visibleConstraints !== undefined &&
+        (!isStringArray(value.visibleConstraints) ||
+            value.visibleConstraints.length === 0)
+    ) {
+        problems.push(
+            `${label}.visibleConstraints must be a nonempty array of strings when present`,
+        );
+    }
+    return problems;
+}
+
+/**
  * Validate the scenarios section: unique ids and well-formed inventories.
  * @param value The raw scenarios field.
  * @returns Problems; empty means valid.
@@ -494,6 +537,14 @@ function scenariosProblems(value: unknown): string[] {
                 ...inventoryProblems(
                     `scenarios[${index}].preservationInventory`,
                     scenario.preservationInventory,
+                ),
+            );
+        }
+        if (scenario.mutationPolicy !== undefined) {
+            problems.push(
+                ...mutationPolicyProblems(
+                    `scenarios[${index}].mutationPolicy`,
+                    scenario.mutationPolicy,
                 ),
             );
         }
@@ -755,40 +806,23 @@ function evidenceProblems(value: unknown, armIds: string[]): string[] {
             problems.push(`evidence.resultRoots.${key} is not a declared arm`);
         }
     }
-    problems.push(...inputsProblems(value.layout, value.inputs));
+    problems.push(...inputsProblems(value.inputs));
     return problems;
 }
 
 /**
- * Validate the layout-required inputs for one evidence layout.
- * @param layout The raw layout id.
- * @param inputs The raw inputs record.
- * @returns Problems; empty means the required inputs are present.
- */
-function requiredInputsProblems(
-    layout: unknown,
-    inputs: Record<string, unknown>,
-): string[] {
-    if (layout === "rr-ledger-v1" && !isNonblankString(inputs.ledger)) {
-        return [
-            "evidence.inputs.ledger is required for the rr-ledger-v1 layout",
-        ];
-    }
-    return [];
-}
-
-/**
- * Validate the optional named inputs record.
- * @param layout The raw layout id.
+ * Validate the optional named inputs record. Named inputs are portable,
+ * relative evidence paths; an input this analyser does not read produces no
+ * effect rather than being silently treated as present.
  * @param inputs The raw inputs field.
  * @returns Problems; empty means valid.
  */
-function inputsProblems(layout: unknown, inputs: unknown): string[] {
-    if (inputs === undefined) return requiredInputsProblems(layout, {});
+function inputsProblems(inputs: unknown): string[] {
+    if (inputs === undefined) return [];
     if (!isPlainObject(inputs)) {
         return ["evidence.inputs must be an object keyed by input name"];
     }
-    const problems = requiredInputsProblems(layout, inputs);
+    const problems: string[] = [];
     for (const [name, path] of Object.entries(inputs)) {
         if (!isNonblankString(path)) {
             problems.push(

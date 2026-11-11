@@ -14,6 +14,11 @@ const evidence = (files: Record<string, string>): EvidenceReader => ({
             ? { state: "missing", source: path }
             : { state: "available", value: files[path]!, source: path },
     readDirectoryEntries: (dir) => {
+        // A path that is itself a file answers not-a-directory, exactly as the
+        // filesystem reader maps ENOTDIR.
+        if (files[dir] !== undefined) {
+            return { state: "not-a-directory", source: dir };
+        }
         const prefix = dir.endsWith("/") ? dir : `${dir}/`;
         const children = new Set<string>();
         let exists = false;
@@ -434,6 +439,52 @@ describe("loadTrialRecord", () => {
         assert.deepEqual(
             tree.state === "available" ? tree.value.map((doc) => doc.path) : [],
             ["sub/a.md", "z.md"],
+        );
+    });
+
+    it("skips a plain README.txt beside the notes without an ENOTDIR failure", () => {
+        // Act
+        const tree = readMarkdownTree(
+            evidence({
+                "lake/README.txt": "ordinary prose, not a directory",
+                "lake/notes/one.md": "# One",
+                "lake/notes/two.md": "# Two",
+            }),
+            "lake",
+        );
+
+        // Assert
+        assert.equal(tree.state, "available");
+        assert.deepEqual(
+            tree.state === "available" ? tree.value.map((doc) => doc.path) : [],
+            ["notes/one.md", "notes/two.md"],
+        );
+    });
+
+    it("reports an unreadable directory instead of an empty lake", () => {
+        // Arrange
+        const reader: EvidenceReader = {
+            readTextFile: (path) => ({ state: "missing", source: path }),
+            readDirectoryEntries: (dir) =>
+                dir === "lake/broken"
+                    ? {
+                          state: "malformed",
+                          source: dir,
+                          problems: ["EACCES"],
+                      }
+                    : dir === "lake"
+                      ? { state: "available", value: ["broken"], source: dir }
+                      : { state: "not-a-directory", source: dir },
+        };
+
+        // Act
+        const tree = readMarkdownTree(reader, "lake");
+
+        // Assert
+        assert.equal(tree.state, "malformed");
+        assert.match(
+            tree.state === "malformed" ? tree.problems.join(" ") : "",
+            /lake\/broken/,
         );
     });
 

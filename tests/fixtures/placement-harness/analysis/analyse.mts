@@ -14,12 +14,18 @@
  * overwritten without `--rerender`, and INTERPRETATION.md is never written.
  */
 import {
+    closeSync,
     existsSync,
+    lstatSync,
     mkdirSync,
+    openSync,
     readFileSync,
     readdirSync,
     realpathSync,
-    writeFileSync,
+    renameSync,
+    statSync,
+    unlinkSync,
+    writeSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
@@ -47,9 +53,11 @@ import {
 } from "./model.ts";
 import { pairObservations, pairedComparison } from "./pairing.ts";
 import {
+    loadLaunchLedger,
     loadTrialRecord,
     readMarkdownTree,
     type EvidenceReader,
+    type LaunchRecord,
     type Loaded,
     type TrialRecord,
 } from "./records.ts";
@@ -67,7 +75,9 @@ import {
     renderReport,
     type AnalysisResult,
     type AnalysisArmReport,
+    type LedgerSummary,
     type PairingSummary,
+    type UsageSummary,
 } from "./render.ts";
 import type { AccountingCounts } from "./accounting.ts";
 
@@ -91,32 +101,86 @@ interface CliRun {
     messages: string[];
 }
 
+/** One evidence input observed at the reader boundary. */
+interface ConsumedInput {
+    /** The stable root-relative identity. */
+    reference: string;
+    /** SHA-256 of the exact bytes, or null when unavailable. */
+    sha256: string | null;
+    /** Whether the input was readable. */
+    state: "available" | "missing";
+}
+
 /**
- * Read the filesystem through the analyser's evidence-reader boundary.
+ * Read the filesystem through the analyser's evidence-reader boundary,
+ * recording every text file consumed so the receipt binds to the evidence that
+ * determined the result. Directory reads are not inputs: they yield no bytes.
  * @param root The evidence root.
+ * @param consumed The trace collecting every consumed text file.
  * @returns The reader.
  */
-function fsReader(root: string): EvidenceReader {
+function fsReader(
+    root: string,
+    consumed: Map<string, ConsumedInput>,
+): EvidenceReader {
     return {
         readTextFile: (path) => {
             const full = join(root, path);
-            return existsSync(full)
-                ? {
-                      state: "available",
-                      value: readFileSync(full, "utf8"),
-                      source: path,
-                  }
-                : { state: "missing", source: path };
+            let text: string;
+            try {
+                text = readFileSync(full, "utf8");
+            } catch (error) {
+                if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+                    throw error;
+                }
+                consumed.set(path, {
+                    reference: path,
+                    sha256: null,
+                    state: "missing",
+                });
+                return { state: "missing", source: path };
+            }
+            consumed.set(path, {
+                reference: path,
+                sha256: sha256OfText(text),
+                state: "available",
+            });
+            return { state: "available", value: text, source: path };
         },
         readDirectoryEntries: (path) => {
             const full = join(root, path);
-            return existsSync(full)
-                ? {
-                      state: "available",
-                      value: readdirSync(full).sort(),
-                      source: path,
-                  }
-                : { state: "missing", source: path };
+            let stats;
+            try {
+                stats = statSync(full);
+            } catch (error) {
+                if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+                    return {
+                        state: "malformed",
+                        source: path,
+                        problems: [
+                            `directory state unreadable (${String(error)})`,
+                        ],
+                    };
+                }
+                return { state: "missing", source: path };
+            }
+            // An ordinary file where a directory was expected — a README.txt
+            // beside the notes, say — is a skip, never an empty directory.
+            if (!stats.isDirectory())
+                return { state: "not-a-directory", source: path };
+            try {
+                return {
+                    state: "available",
+                    value: readdirSync(full).sort(),
+                    source: path,
+                };
+            } catch (error) {
+                return {
+                    state: "malformed",
+                    source: path,
+                    problems: [`directory unreadable (${String(error)})`],
+                };
+            }
         },
     };
 }
@@ -230,21 +294,6 @@ function readManifest(path: string): {
         manifest: parsedManifest.value,
         problems: parsedManifest.problems,
     };
-}
-
-/**
- * Extract changed paths from a recorded writes report.
- * @param writesText The report text.
- * @returns The changed paths.
- */
-function changedPathsOf(writesText: string): string[] {
-    return writesText
-        .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line !== "" && line !== "none")
-        .map((line) =>
-            line.replace(/^[a-z]+: /, "").replace(/ \([a-z]+\)$/, ""),
-        );
 }
 
 /**
@@ -409,16 +458,12 @@ function sensitivityOf(
         }).trial;
         arms[slot.arm] = [...(arms[slot.arm] ?? []), trial];
     }
-    return sensitivity(arms, grid.usefulWeights, grid.transientPenalties);
-}
-
-/**
- * Text of a loaded artefact, or an empty string when unavailable.
- * @param loaded The loaded text.
- * @returns The text or an empty string.
- */
-function textOf(loaded: Loaded<string>): string {
-    return loaded.state === "available" ? loaded.value : "";
+    return sensitivity(
+        arms,
+        grid.usefulWeights,
+        grid.transientPenalties,
+        manifest.policy.weights,
+    );
 }
 
 /**
@@ -474,19 +519,30 @@ function screenOne(
     );
     const before = readMarkdownTree(reader, beforeDir);
     const after = readMarkdownTree(reader, afterDir);
-    const writesText = textOf(record.artefacts.writesText);
+    const trialDir = join(resultRoot, slot.stamp, slot.scenario);
     const result = screenTrial({
-        scenario: slot.scenario,
-        taskPrompt: textOf(record.artefacts.promptText),
-        finalAnswer: textOf(record.artefacts.finalAnswer),
-        beforeDocs: before.state === "available" ? before.value : [],
-        afterDocs: after.state === "available" ? after.value : [],
-        writesText,
-        changedPaths: changedPathsOf(writesText),
+        trial: {
+            stamp: slot.stamp,
+            arm: slot.arm,
+            scenario: slot.scenario,
+        },
+        taskPrompt: record.artefacts.promptText,
+        finalAnswer: record.artefacts.finalAnswer,
+        beforeDocs: before,
+        afterDocs: after,
+        writesText: record.artefacts.writesText,
+        paths: {
+            prompt: join(trialDir, "prompt.md"),
+            finalAnswer: join(trialDir, "final.md"),
+            writes: join(trialDir, "writes.txt"),
+            beforeRoot: beforeDir,
+            afterRoot: afterDir,
+        },
         inventory: scenario?.preservationInventory,
         transientPatterns: manifest.policy.screening?.transientWordingPatterns,
         durableCounterexamples:
             manifest.policy.screening?.durableCounterexamplePatterns,
+        mutationPolicy: scenario?.mutationPolicy,
     });
     return {
         findings: result.findings,
@@ -548,6 +604,272 @@ function screenCampaign(
 }
 
 /**
+ * Sum recorded token usage, keeping absent telemetry unknown rather than zero.
+ * @param records The loaded trial records.
+ * @returns The usage summary with measured/unknown counts.
+ */
+function usageOf(records: readonly TrialRecord[]): UsageSummary {
+    let measured = 0;
+    let unknown = 0;
+    const totals = {
+        input: 0,
+        output: 0,
+        reasoning: 0,
+        cacheRead: 0,
+        steps: 0,
+    };
+    for (const record of records) {
+        if (record.tokens.state === "available") {
+            measured += 1;
+            totals.input += record.tokens.value.input;
+            totals.output += record.tokens.value.output;
+            totals.reasoning += record.tokens.value.reasoning;
+            totals.cacheRead += record.tokens.value.cacheRead;
+            totals.steps += record.tokens.value.steps;
+        } else {
+            unknown += 1;
+        }
+    }
+    if (measured === 0) {
+        return {
+            input: null,
+            output: null,
+            reasoning: null,
+            cacheRead: null,
+            steps: null,
+            measured,
+            unknown,
+        };
+    }
+    return { ...totals, measured, unknown };
+}
+
+/** Per-event and per-stamp counts read from one attempt ledger. */
+interface LedgerCounts {
+    /** Event counts keyed by event name. */
+    events: Record<string, number>;
+    /** Launch counts keyed by stamp. */
+    launches: Map<string, number>;
+    /** Judge-attempt counts keyed by stamp. */
+    judgeAttempts: Map<string, number>;
+    /** Every stamp the ledger mentions. */
+    stamps: Set<string>;
+}
+
+/**
+ * Count one readable ledger's events and per-stamp launches.
+ * @param records The ledger events.
+ * @returns The counts.
+ */
+function countLedger(records: readonly LaunchRecord[]): LedgerCounts {
+    const events: Record<string, number> = {};
+    const launches = new Map<string, number>();
+    const judgeAttempts = new Map<string, number>();
+    const stamps = new Set<string>();
+    for (const event of records) {
+        events[event.event] = (events[event.event] ?? 0) + 1;
+        if (event.stamp === null) continue;
+        stamps.add(event.stamp);
+        const counter =
+            event.event === "launch"
+                ? launches
+                : event.event === "judge-launch"
+                  ? judgeAttempts
+                  : undefined;
+        if (counter !== undefined) {
+            counter.set(event.stamp, (counter.get(event.stamp) ?? 0) + 1);
+        }
+    }
+    return { events, launches, judgeAttempts, stamps };
+}
+
+/**
+ * Reconcile a declared attempt ledger against the frozen schedule.
+ * @param manifest The validated manifest.
+ * @param ledger The loaded ledger.
+ * @returns The ledger summary, or null when none was declared.
+ */
+function ledgerSummaryOf(
+    manifest: CampaignManifest,
+    ledger: Loaded<LaunchRecord[]>,
+): LedgerSummary | null {
+    const reference = manifest.evidence.inputs?.attempts;
+    if (reference === undefined) return null;
+    const scheduled = manifest.schedule.slots.map((slot) => slot.stamp);
+    if (ledger.state !== "available") {
+        return {
+            reference,
+            state: ledger.state === "missing" ? "missing" : "malformed",
+            events: {},
+            scheduled: scheduled.length,
+            launched: 0,
+            judged: 0,
+            missingLaunches: [],
+            missingJudgeAttempts: [],
+            unknownStamps: [],
+            duplicateLaunches: [],
+            problems: ledger.state === "malformed" ? ledger.problems : [],
+        };
+    }
+    const counted = countLedger(ledger.value);
+    const declared = new Set(scheduled);
+    return {
+        reference,
+        state: "available",
+        events: counted.events,
+        scheduled: scheduled.length,
+        launched: scheduled.filter((stamp) => counted.launches.has(stamp))
+            .length,
+        judged: scheduled.filter((stamp) => counted.judgeAttempts.has(stamp))
+            .length,
+        missingLaunches: scheduled.filter(
+            (stamp) => !counted.launches.has(stamp),
+        ),
+        missingJudgeAttempts: scheduled.filter(
+            (stamp) => !counted.judgeAttempts.has(stamp),
+        ),
+        unknownStamps: [...counted.stamps]
+            .filter((stamp) => !declared.has(stamp))
+            .sort(),
+        duplicateLaunches: [...counted.launches]
+            .filter(([, count]) => count > 1)
+            .map(([stamp]) => stamp)
+            .sort(),
+        problems: [],
+    };
+}
+
+/**
+ * Render one ledger limitation line, or none when the ledger is clean.
+ * @param ledger The ledger summary, when one was declared.
+ * @returns One limitation, or undefined.
+ */
+function ledgerLimitation(ledger: LedgerSummary | null): string | undefined {
+    if (ledger === null) return undefined;
+    if (ledger.state !== "available") {
+        return `Attempt ledger ${ledger.reference} is ${ledger.state}; launch and judge-attempt coverage stays unknown.`;
+    }
+    const problems = [
+        ledger.missingLaunches.length > 0
+            ? `${String(ledger.missingLaunches.length)} scheduled stamp(s) with no recorded launch`
+            : undefined,
+        ledger.missingJudgeAttempts.length > 0
+            ? `${String(ledger.missingJudgeAttempts.length)} scheduled stamp(s) with no recorded judge attempt`
+            : undefined,
+        ledger.unknownStamps.length > 0
+            ? `${String(ledger.unknownStamps.length)} ledger stamp(s) outside the schedule`
+            : undefined,
+        ledger.duplicateLaunches.length > 0
+            ? `${String(ledger.duplicateLaunches.length)} stamp(s) launched more than once`
+            : undefined,
+    ].filter((problem): problem is string => problem !== undefined);
+    if (problems.length === 0) return undefined;
+    return `Attempt ledger ${ledger.reference}: ${problems.join("; ")}.`;
+}
+
+/**
+ * Collect the distinct recorded judge model identities.
+ * @param records The loaded records.
+ * @returns The sorted model ids.
+ */
+function judgeModelsOf(records: readonly TrialRecord[]): string[] {
+    return [
+        ...new Set(
+            records
+                .map((record) =>
+                    record.judgeModel.state === "available"
+                        ? record.judgeModel.value
+                        : undefined,
+                )
+                .filter((model): model is string => model !== undefined),
+        ),
+    ].sort();
+}
+
+/**
+ * Load and reconcile the declared attempt ledger, when the manifest names one.
+ * @param manifest The validated manifest.
+ * @param reader The evidence reader.
+ * @returns The ledger summary, or null when none was declared.
+ */
+function ledgerOf(
+    manifest: CampaignManifest,
+    reader: EvidenceReader,
+): LedgerSummary | null {
+    const path = manifest.evidence.inputs?.attempts;
+    if (path === undefined) return null;
+    return ledgerSummaryOf(manifest, loadLaunchLedger(reader, path));
+}
+
+/**
+ * Build the campaign identity block.
+ * @param manifest The validated manifest.
+ * @returns The campaign identity.
+ */
+function campaignIdentityOf(manifest: CampaignManifest): {
+    id: string;
+    question: string | null;
+} {
+    return {
+        id: manifest.campaign.id,
+        question: manifest.campaign.question ?? null,
+    };
+}
+
+/**
+ * Build the screening report block from one screen result.
+ * @param manifest The validated manifest.
+ * @param screen The campaign screen.
+ * @returns The screening block.
+ */
+function screeningReportOf(
+    manifest: CampaignManifest,
+    screen: ReturnType<typeof screenCampaign>,
+): AnalysisResult["screening"] {
+    return {
+        rulesVersion: manifest.policy.screening?.rulesVersion ?? "not-defined",
+        findings: screen.findings,
+        reconciliation: screen.reconciliation,
+    };
+}
+
+/**
+ * Build the explicit limitations list.
+ * @param records The loaded records.
+ * @param screen The screening result.
+ * @param totals The whole-population accounting.
+ * @param usage The token usage summary.
+ * @param ledger The ledger summary, when declared.
+ * @returns The limitations, rendered verbatim.
+ */
+function limitationsOf(
+    records: readonly TrialRecord[],
+    screen: ReturnType<typeof screenCampaign>,
+    totals: AccountingCounts,
+    usage: UsageSummary,
+    ledger: LedgerSummary | null,
+): string[] {
+    const ledgerLine = ledgerLimitation(ledger);
+    return [
+        "Worst-case bounds are missing-data intervals, not confidence intervals.",
+        `Documented coverage: ${totals.documented}/${totals.planned} planned slots.`,
+        "Static-screen findings are advisory and were generated independently of the judge; reconciliation counts only exact excerpt references.",
+        screen.missingSnapshots > 0
+            ? `Screening read missing before/after lake snapshots for ${String(screen.missingSnapshots)} trial(s).`
+            : "Every screened trial had readable before/after lake snapshots.",
+        `Token telemetry was measured for ${String(usage.measured)} and unknown for ${String(usage.unknown)} trial(s).`,
+        ...(ledgerLine === undefined ? [] : [ledgerLine]),
+        ...records.flatMap((record) =>
+            record.attempt.problems
+                .concat(record.primary.problems)
+                .concat(record.assessment.problems)
+                .map((problem) => `${record.identity.stamp}: ${problem}`),
+        ),
+        "This analysis made no model calls and executed no campaign-supplied code.",
+    ];
+}
+
+/**
  * Assemble the structured analysis result.
  * @param manifest The validated manifest.
  * @param manifestText The manifest's exact bytes.
@@ -578,45 +900,27 @@ function assemble(
               );
     const candidateGuardrails =
         selection === null ? [] : (guardrails[selection.candidateArm] ?? []);
+    const delta = deltaIntervalOf(selection, counts);
     const decision: DecisionResult = evaluateDecision(
         manifest.policy.selection,
         counts,
         candidateGuardrails,
     );
+    const ledgerSummary = ledgerOf(manifest, reader);
+    const usage = usageOf(records);
     const screen = screenCampaign(manifest, reader, records);
-    const judgedBy = [
-        ...new Set(
-            records
-                .map((record) =>
-                    record.judgeModel.state === "available"
-                        ? record.judgeModel.value
-                        : undefined,
-                )
-                .filter((model): model is string => model !== undefined),
-        ),
-    ].sort();
+    const judgedBy = judgeModelsOf(records);
     const totals = accountTrials(scored, slots.length);
-    const limitations = [
-        "Worst-case bounds are missing-data intervals, not confidence intervals.",
-        `Documented coverage: ${totals.documented}/${totals.planned} planned slots.`,
-        `Static-screen findings are advisory and were generated independently of the judge; reconciliation counts only exact excerpt references.`,
-        screen.missingSnapshots > 0
-            ? `Screening read missing before/after lake snapshots for ${String(screen.missingSnapshots)} trial(s).`
-            : "Every screened trial had readable before/after lake snapshots.",
-        ...records.flatMap((record) =>
-            record.attempt.problems
-                .concat(record.primary.problems)
-                .concat(record.assessment.problems)
-                .map((problem) => `${record.identity.stamp}: ${problem}`),
-        ),
-        "This analysis made no model calls and executed no campaign-supplied code.",
-    ];
+    const limitations = limitationsOf(
+        records,
+        screen,
+        totals,
+        usage,
+        ledgerSummary,
+    );
     return {
         analysisVersion: ANALYSER_VERSION,
-        campaign: {
-            id: manifest.campaign.id,
-            question: manifest.campaign.question ?? null,
-        },
+        campaign: campaignIdentityOf(manifest),
         manifestSha256: sha256OfText(manifestText),
         layout: manifest.evidence.layout,
         selectionPolicy: manifest.assessment.selectionPolicy,
@@ -629,19 +933,20 @@ function assemble(
         totals,
         pairing: pairingSummaryOf(pairing),
         paired,
-        bounds: { delta: deltaIntervalOf(selection, counts) },
+        bounds: { delta },
         decision,
         sensitivity: sensitivityOf(manifest, records),
-        screening: {
-            rulesVersion:
-                manifest.policy.screening?.rulesVersion ?? "not-defined",
-            findings: screen.findings,
-            reconciliation: screen.reconciliation,
-        },
+        screening: screeningReportOf(manifest, screen),
         integrity: {
             sources: screen.sources,
             judgedBy,
         },
+        usage,
+        cost: {
+            available: false,
+            note: "No monetary cost was recorded; token and step totals are reported without an invented price.",
+        },
+        ledger: ledgerSummary,
         limitations,
     };
 }
@@ -653,6 +958,174 @@ function assemble(
  */
 function sha256OfText(text: string): string {
     return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
+/** The fixed output set one run publishes. */
+const OUTPUT_NAMES = [
+    "analysis.json",
+    "REPORT.md",
+    "SCREENING.json",
+    "analysis-receipt.json",
+] as const;
+
+/**
+ * Write every byte through the descriptor, never a reopened pathname.
+ * @param fd The exclusive-create descriptor.
+ * @param contents The full contents.
+ */
+function writeFullSync(fd: number, contents: string): void {
+    const buffer = Buffer.from(contents, "utf8");
+    let offset = 0;
+    while (offset < buffer.length) {
+        const written = writeSync(fd, buffer, offset, buffer.length - offset);
+        if (written <= 0) {
+            throw new Error(
+                `write stalled after ${String(offset)} of ${String(buffer.length)} bytes`,
+            );
+        }
+        offset += written;
+    }
+}
+
+/**
+ * Refuse an output name that is a symlink, a non-file, or an alias of a
+ * protected input. Checked before any publication, so a refusal changes
+ * nothing.
+ * @param target The absolute output path.
+ * @param protectedPaths The real paths of inputs a write must never touch.
+ * @returns A refusal message, or undefined when the target is safe.
+ */
+function publicTargetProblem(
+    target: string,
+    protectedPaths: ReadonlySet<string>,
+): string | undefined {
+    let stats;
+    try {
+        stats = lstatSync(target);
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT")
+            return undefined;
+        return `cannot inspect output ${target}: ${String(error)}`;
+    }
+    if (stats.isSymbolicLink()) {
+        return `refusing to write ${target}: the output name is a symlink`;
+    }
+    if (!stats.isFile()) {
+        return `refusing to write ${target}: the output name is not a regular file`;
+    }
+    const real = realpathSync(target);
+    if (protectedPaths.has(real)) {
+        return `refusing to write ${target}: it aliases protected input ${real}`;
+    }
+    return undefined;
+}
+
+/**
+ * Collect the real paths of every input a publication must never overwrite:
+ * the campaign manifest, authored interpretation and every consumed evidence
+ * file.
+ * @param options The CLI options.
+ * @param consumed The reader trace.
+ * @returns The protected real paths.
+ */
+function protectedPathsOf(
+    options: CliOptions,
+    consumed: ReadonlyMap<string, ConsumedInput>,
+): Set<string> {
+    const protectedPaths = new Set<string>();
+    const add = (path: string): void => {
+        try {
+            protectedPaths.add(realpathSync(path));
+        } catch {
+            // A path that does not exist cannot be aliased by an output.
+        }
+    };
+    add(options.campaign);
+    add(join(options.out, "INTERPRETATION.md"));
+    for (const reference of consumed.keys()) {
+        add(join(options.evidenceRoot, reference));
+    }
+    return protectedPaths;
+}
+
+/** One exclusively created publication temp. */
+interface OwnedTemp {
+    /** The exclusive-create descriptor. */
+    fd: number;
+    /** The temp's path, for the atomic rename. */
+    temp: string;
+}
+
+/**
+ * Create one exclusive publication temp beside the target. A foreign object
+ * at a candidate name — including a seeded symlink — makes the create fail
+ * without touching it, and the bounded retry moves to a fresh name.
+ * @param target The absolute target path.
+ * @param nextCounter The fresh-name counter.
+ * @returns The owned temp, or null when every candidate was occupied.
+ */
+function acquireTemp(
+    target: string,
+    nextCounter: () => number,
+): OwnedTemp | null {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+        const candidate = `${target}.${String(process.pid)}.${String(nextCounter())}.tmp`;
+        try {
+            return { fd: openSync(candidate, "wx"), temp: candidate };
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        }
+    }
+    return null;
+}
+
+/**
+ * Publish the whole output set: every exclusive temp is created and fully
+ * written before any rename, so a failed publication leaves the previous
+ * outputs untouched. A seeded symlink or foreign object at a temp name is
+ * never followed or removed.
+ * @param out The output directory.
+ * @param contents The fixed output names and their bytes.
+ */
+function publishOutputs(
+    out: string,
+    contents: ReadonlyMap<string, string>,
+): void {
+    let counter = 0;
+    const nextCounter = (): number => {
+        counter += 1;
+        return counter;
+    };
+    const temps: Array<{ temp: string; target: string }> = [];
+    try {
+        for (const [name, content] of contents) {
+            const target = join(out, name);
+            const owned = acquireTemp(target, nextCounter);
+            if (owned === null) {
+                throw new Error(
+                    `every candidate temp name for ${target} was occupied; nothing was changed`,
+                );
+            }
+            temps.push({ temp: owned.temp, target });
+            try {
+                writeFullSync(owned.fd, content);
+            } finally {
+                closeSync(owned.fd);
+            }
+        }
+        for (const { temp, target } of temps) {
+            renameSync(temp, target);
+        }
+    } catch (error) {
+        for (const { temp } of temps) {
+            try {
+                unlinkSync(temp);
+            } catch {
+                // A temp already renamed into place owns the target's bytes.
+            }
+        }
+        throw error;
+    }
 }
 
 /**
@@ -683,7 +1156,8 @@ export function runAnalysis(argv: readonly string[]): CliRun {
     if (prepared !== undefined) {
         return { status: 1, messages: [`analyse: ${prepared}`] };
     }
-    const reader = fsReader(options.evidenceRoot);
+    const consumed = new Map<string, ConsumedInput>();
+    const reader = fsReader(options.evidenceRoot, consumed);
     const loaded = loadCampaign(manifest, reader);
     const manifestText = readFileSync(options.campaign, "utf8");
     const result = assemble(
@@ -701,33 +1175,45 @@ export function runAnalysis(argv: readonly string[]): CliRun {
         policyId: result.policyId,
         renderedAt,
         inputs: [
-            { reference: "manifest", sha256: result.manifestSha256 },
-            ...result.integrity.sources,
+            {
+                reference: "campaign-manifest",
+                sha256: result.manifestSha256,
+                state: "available" as const,
+            },
+            ...[...consumed.values()].sort((left, right) =>
+                left.reference.localeCompare(right.reference),
+            ),
         ],
     };
-    writeFileSync(
-        join(options.out, "analysis.json"),
-        renderAnalysisJson(result),
-        "utf8",
-    );
-    writeFileSync(join(options.out, "REPORT.md"), renderReport(result), "utf8");
-    writeFileSync(
-        join(options.out, "SCREENING.json"),
-        `${JSON.stringify(
-            {
-                rulesVersion: result.screening.rulesVersion,
-                findings: result.screening.findings,
-                reconciliation: result.screening.reconciliation,
-            },
-            null,
-            2,
-        )}\n`,
-        "utf8",
-    );
-    writeFileSync(
-        join(options.out, "analysis-receipt.json"),
-        renderReceipt(receipt),
-        "utf8",
+    const protectedPaths = protectedPathsOf(options, consumed);
+    for (const name of OUTPUT_NAMES) {
+        const problem = publicTargetProblem(
+            join(options.out, name),
+            protectedPaths,
+        );
+        if (problem !== undefined) {
+            return { status: 1, messages: [`analyse: ${problem}`] };
+        }
+    }
+    publishOutputs(
+        options.out,
+        new Map<string, string>([
+            ["analysis.json", renderAnalysisJson(result)],
+            ["REPORT.md", renderReport(result)],
+            [
+                "SCREENING.json",
+                `${JSON.stringify(
+                    {
+                        rulesVersion: result.screening.rulesVersion,
+                        findings: result.screening.findings,
+                        reconciliation: result.screening.reconciliation,
+                    },
+                    null,
+                    2,
+                )}\n`,
+            ],
+            ["analysis-receipt.json", renderReceipt(receipt)],
+        ]),
     );
     return {
         status: 0,

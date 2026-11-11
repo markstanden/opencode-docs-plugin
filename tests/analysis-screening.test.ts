@@ -18,7 +18,20 @@ import {
 import { screenTrial } from "./fixtures/placement-harness/analysis/screening/scan.ts";
 import { reconcileFindings } from "./fixtures/placement-harness/analysis/screening/reconcile.ts";
 import type { PreservationInventorySpec } from "./fixtures/placement-harness/analysis/model.ts";
+import type { Loaded } from "./fixtures/placement-harness/analysis/records.ts";
+import type { Finding } from "./fixtures/placement-harness/analysis/screening/rules.ts";
 import type { LakeDocument } from "./fixtures/placement-harness/ac/campaign.mts";
+
+const loaded = <T>(value: T, source = "fixture"): Loaded<T> => ({
+    state: "available",
+    value,
+    source,
+});
+
+const missing = <T>(source = "fixture"): Loaded<T> => ({
+    state: "missing",
+    source,
+});
 
 const inventory: PreservationInventorySpec = JSON.parse(
     readFileSync(
@@ -437,36 +450,45 @@ describe("static rules", () => {
 });
 
 describe("screenTrial", () => {
+    const beforeDocs = [
+        doc(
+            "db/pool.md",
+            "# Pool\n\n### Facts\n\n- The pool holds at most 10 connections.\n",
+        ),
+        doc(
+            "ops/release.md",
+            "# Release\n\n### Facts\n\n- Releases are tagged.\n",
+        ),
+    ];
+    const afterDocs = [
+        doc(
+            "db/pool.md",
+            "# Pool\n\n### Facts\n\n- The pool holds at most 10 connections.\n- Acquiring a connection waits up to 5 seconds before failing.\n- Migrations run at application startup.\n",
+        ),
+        doc(
+            "ops/release.md",
+            "# Release\n\n### Facts\n\n- Releases are tagged.\n",
+        ),
+    ];
+    const paths = {
+        prompt: "a/results/cc-A-r0-R02/R02/prompt.md",
+        finalAnswer: "a/results/cc-A-r0-R02/R02/final.md",
+        writes: "a/results/cc-A-r0-R02/R02/writes.txt",
+        beforeRoot: "a/fixtures/R02/lakes/docs",
+        afterRoot: "a/results/cc-A-r0-R02/R02/live/lakes/docs",
+    };
     const input = {
-        scenario: "R02",
-        taskPrompt: "Correct the stale database note.",
-        finalAnswer: "I updated the note with the new TLS requirement.",
-        beforeDocs: [
-            doc(
-                "db/pool.md",
-                "# Pool\n\n### Facts\n\n- The pool holds at most 10 connections.\n",
-            ),
-            doc(
-                "ops/release.md",
-                "# Release\n\n### Facts\n\n- Releases are tagged.\n",
-            ),
-        ],
-        afterDocs: [
-            doc(
-                "db/pool.md",
-                "# Pool\n\n### Facts\n\n- The pool holds at most 10 connections.\n- Acquiring a connection waits up to 5 seconds before failing.\n- Migrations run at application startup.\n",
-            ),
-            doc(
-                "ops/release.md",
-                "# Release\n\n### Facts\n\n- Releases are tagged.\n",
-            ),
-        ],
-        writesText: "modified: db/pool.md (file)",
-        changedPaths: ["db/pool.md"],
+        trial: { stamp: "cc-A-r0-R02", arm: "A", scenario: "R02" },
+        taskPrompt: loaded("Correct the stale database note."),
+        finalAnswer: loaded("I updated the note with the new TLS requirement."),
+        beforeDocs: loaded(beforeDocs),
+        afterDocs: loaded(afterDocs),
+        writesText: loaded("modified: db/pool.md (file)"),
+        paths,
         inventory,
     };
 
-    it("hashes every source it reads and returns advisory findings only", () => {
+    it("hashes every source it reads, roots it and returns advisory findings only", () => {
         // Act
         const result = screenTrial(input);
 
@@ -477,13 +499,16 @@ describe("screenTrial", () => {
                 /^[0-9a-f]{64}$/.test(source.sha256),
             ),
         );
+        assert.ok(
+            result.sources.every((source) => source.reference.startsWith("a/")),
+        );
         assert.ok(result.findings.length > 0);
         assert.ok(
             result.findings.some(
                 (finding) => finding.category === "duplication",
             ),
         );
-        assert.equal(result.changes.documentsChanged, true);
+        assert.equal(result.changes?.documentsChanged, true);
     });
 
     it("is order-independent: shuffling document inputs changes no finding", () => {
@@ -491,8 +516,8 @@ describe("screenTrial", () => {
         const forward = screenTrial(input);
         const shuffled = screenTrial({
             ...input,
-            beforeDocs: [...input.beforeDocs].reverse(),
-            afterDocs: [...input.afterDocs].reverse(),
+            beforeDocs: loaded([...beforeDocs].reverse()),
+            afterDocs: loaded([...afterDocs].reverse()),
         });
 
         // Assert
@@ -504,14 +529,14 @@ describe("screenTrial", () => {
         // Arrange — the after document omits the acquire timeout entirely.
         const withoutTimeout = {
             ...input,
-            afterDocs: [
+            afterDocs: loaded([
                 doc(
                     "db/pool.md",
                     "# Pool\n\n### Facts\n\n- The pool holds at most 10 connections.\n- Migrations run at application startup.\n",
                 ),
-            ],
-            beforeDocs: [],
-            writesText: "modified: db/pool.md (file)",
+            ]),
+            beforeDocs: loaded([]),
+            writesText: loaded("modified: db/pool.md (file)"),
         };
 
         // Act
@@ -525,18 +550,217 @@ describe("screenTrial", () => {
         assert.equal(coverage[0]?.factId, "acquireTimeout");
         assert.equal(coverage[0]?.authority, "advisory");
     });
+
+    it("keeps an absent lake unknown while a recorded empty lake is observed as empty", () => {
+        // Arrange
+        const emptyLake = screenTrial({
+            ...input,
+            beforeDocs: loaded([]),
+            afterDocs: loaded([]),
+            finalAnswer: loaded("I did not write anything."),
+        });
+        const absentLake = screenTrial({
+            ...input,
+            beforeDocs: missing(),
+            afterDocs: missing(),
+            finalAnswer: loaded("I did not write anything."),
+        });
+
+        // Act / Assert
+        assert.equal(emptyLake.changes?.documentsChanged, false);
+        assert.equal(absentLake.changes, null);
+        // The claim checker must not contradict an unobserved mutation.
+        assert.equal(
+            absentLake.findings.filter(
+                (finding) => finding.ruleId === "claim-mutation-contradiction",
+            ).length,
+            0,
+        );
+        assert.equal(
+            emptyLake.findings.filter(
+                (finding) => finding.ruleId === "claim-mutation-contradiction",
+            ).length,
+            0,
+        );
+    });
+
+    it("publishes no claimed-mutation contradiction when the mutation is unobserved", () => {
+        // Arrange — a write claim with only the before state observable.
+        const unobserved = screenTrial({
+            ...input,
+            finalAnswer: loaded("I created a new note under docs/."),
+            afterDocs: missing(),
+            beforeDocs: loaded([]),
+        });
+        const observed = screenTrial({
+            ...input,
+            finalAnswer: loaded("I created a new note under docs/."),
+            afterDocs: loaded([]),
+            beforeDocs: loaded([]),
+        });
+
+        // Act / Assert
+        assert.equal(
+            unobserved.findings.filter(
+                (finding) => finding.ruleId === "claim-mutation-contradiction",
+            ).length,
+            0,
+        );
+        assert.equal(
+            observed.findings.filter(
+                (finding) => finding.ruleId === "claim-mutation-contradiction",
+            ).length,
+            1,
+        );
+    });
+
+    it("classifies permission visibility as unknown without a prompt, and records a policy-breach finding otherwise", () => {
+        // Arrange
+        const policy = {
+            allowed: ["lakes/docs/**"],
+            visibleConstraints: [
+                "Do not modify tracked project files outside the knowledge lake, including `package.json`.",
+            ],
+        };
+        const unknown = screenTrial({
+            ...input,
+            taskPrompt: missing(),
+            writesText: loaded("modified: work/package.json (file)"),
+            mutationPolicy: policy,
+        });
+        const hidden = screenTrial({
+            ...input,
+            taskPrompt: loaded("Remove the stale runtime artifact."),
+            writesText: loaded("modified: work/package.json (file)"),
+            mutationPolicy: {
+                allowed: ["lakes/docs/**"],
+                visibleConstraints: ["Remove the stale runtime artifact."],
+            },
+        });
+
+        // Act
+        const unknownFinding = unknown.findings.find(
+            (finding) => finding.category === "permission-visibility",
+        );
+        const hiddenFinding = hidden.findings.find(
+            (finding) => finding.category === "permission-visibility",
+        );
+
+        // Assert
+        assert.equal(unknownFinding?.visibility, "unknown");
+        assert.match(unknownFinding?.explanation ?? "", /cannot be classified/);
+        assert.equal(hiddenFinding?.visibility, "hidden");
+    });
+
+    it("reads change lines only, not a writes report's repetition summary", () => {
+        // Arrange
+        const writes = [
+            "modified: work/package.json (content)",
+            "removed: work/.tmp/dev.sock",
+            "",
+            "# out-of-policy mutations:",
+            "violation: modified: work/package.json",
+        ].join("\n");
+        const policy = {
+            allowed: ["work/.tmp/**", "lakes/docs/**"],
+            visibleConstraints: [
+                "Do not modify tracked project files outside the knowledge lake, including `package.json`.",
+            ],
+        };
+
+        // Act
+        const result = screenTrial({
+            ...input,
+            writesText: loaded(writes),
+            mutationPolicy: policy,
+        });
+
+        // Assert
+        const permission = result.findings.filter(
+            (finding) => finding.category === "permission-visibility",
+        );
+        assert.equal(permission.length, 1);
+        assert.equal(permission[0]?.excerpt, "work/package.json");
+        assert.equal(permission[0]?.visibility, "visible");
+    });
+
+    it("distinguishes two trials that share byte-identical final answers", () => {
+        // Arrange
+        const answer = "I did not write anything; the task needed no docs.";
+        const first = screenTrial({
+            ...input,
+            finalAnswer: loaded(answer),
+            paths,
+        });
+        const second = screenTrial({
+            ...input,
+            trial: { stamp: "cc-B-r0-R02", arm: "B", scenario: "R02" },
+            finalAnswer: loaded(answer),
+            paths: {
+                ...paths,
+                prompt: "b/results/cc-B-r0-R02/R02/prompt.md",
+                finalAnswer: "b/results/cc-B-r0-R02/R02/final.md",
+                writes: "b/results/cc-B-r0-R02/R02/writes.txt",
+                beforeRoot: "b/fixtures/R02/lakes/docs",
+                afterRoot: "b/results/cc-B-r0-R02/R02/live/lakes/docs",
+            },
+        });
+
+        // Act
+        const firstClaim = first.findings.find(
+            (finding) => finding.category === "claim-contradiction",
+        );
+        const secondClaim = second.findings.find(
+            (finding) => finding.category === "claim-contradiction",
+        );
+
+        // Assert
+        assert.equal(firstClaim?.excerpt, secondClaim?.excerpt);
+        assert.equal(firstClaim?.source.sha256, secondClaim?.source.sha256);
+        assert.equal(firstClaim?.trial.stamp, "cc-A-r0-R02");
+        assert.equal(secondClaim?.trial.stamp, "cc-B-r0-R02");
+        assert.equal(
+            firstClaim?.source.reference,
+            "a/results/cc-A-r0-R02/R02/final.md",
+        );
+        assert.equal(
+            secondClaim?.source.reference,
+            "b/results/cc-B-r0-R02/R02/final.md",
+        );
+        assert.equal(firstClaim?.role, "response");
+    });
+
+    it("carries trial and role into reconciliation rows", () => {
+        // Act
+        const result = screenTrial(input);
+        const reconciliation = reconcileFindings(result.findings, {
+            reason: "I updated the note with the new TLS requirement.",
+            evidence: [],
+        });
+
+        // Assert
+        assert.equal(reconciliation.length, result.findings.length);
+        assert.deepEqual(reconciliation[0]?.trial, input.trial);
+        assert.equal(
+            reconciliation[0]?.source,
+            result.findings[0]?.source.reference,
+        );
+        assert.equal(reconciliation[0]?.role, result.findings[0]?.role);
+    });
 });
 
 describe("reconcileFindings", () => {
-    const finding = {
+    const finding: Finding = {
         ruleId: "duplication-signal",
         ruleVersion: "v1",
         category: "duplication" as const,
         applicability: "R04",
         authority: "advisory" as const,
+        trial: { stamp: "cc-A-r0-R04", arm: "A", scenario: "R04" },
+        role: "after" as const,
         source: {
             kind: "resulting-document" as const,
-            reference: "db/pool.md",
+            reference: "a/results/cc-A-r0-R04/R04/live/lakes/docs/db/pool.md",
             sha256: "0".repeat(64),
         },
         excerpt: "Connections must use sslmode=require after the upgrade.",

@@ -8,6 +8,11 @@
  * the candidate failed the performance threshold.
  */
 import type { AccountingCounts } from "./accounting.ts";
+import {
+    differenceInterval,
+    intervalFromCounts,
+    type Interval,
+} from "./bounds.ts";
 import type { GuardrailArmSummary } from "./guardrails.ts";
 import type { SelectionSpec } from "./model.ts";
 
@@ -25,6 +30,8 @@ export interface ThresholdLimb {
     status: "pass" | "fail" | "inconclusive" | "not-defined";
     /** Candidate minus control over the assessed populations, or null. */
     lead: number | null;
+    /** The full-population candidate-minus-control interval, when available. */
+    interval: Interval | null;
     /** The threshold comparison, rendered for reports. */
     detail: string;
 }
@@ -60,7 +67,12 @@ function notDefined(detail: string): DecisionResult {
     return {
         overall: "not-defined",
         coverage: { status: "not-defined", detail },
-        threshold: { status: "not-defined", lead: null, detail },
+        threshold: {
+            status: "not-defined",
+            lead: null,
+            interval: null,
+            detail,
+        },
         guardrails: { status: "not-defined", detail },
         reasons: [detail],
     };
@@ -94,7 +106,10 @@ function coverageLimb(
 }
 
 /**
- * Evaluate the utility threshold limb over the assessed populations.
+ * Evaluate the utility threshold limb against the full-population interval.
+ * The rule is defined on the full design, so a threshold passes only when
+ * every missing-data completion clears it and fails only when none can; a
+ * crossing interval is inconclusive. The assessed lead stays descriptive.
  * @param selection The declared selection rule.
  * @param control The control arm counts.
  * @param candidate The candidate arm counts.
@@ -105,18 +120,30 @@ function thresholdLimb(
     control: AccountingCounts,
     candidate: AccountingCounts,
 ): ThresholdLimb {
+    const delta: Interval = differenceInterval(
+        intervalFromCounts(candidate),
+        intervalFromCounts(control),
+    );
     if (control.assessed === 0 || candidate.assessed === 0) {
         return {
             status: "inconclusive",
             lead: null,
+            interval: delta,
             detail: "no fully scored trials to compare",
         };
     }
     const lead = candidate.utilityTotal - control.utilityTotal;
+    const status: ThresholdLimb["status"] =
+        delta.low >= selection.threshold
+            ? "pass"
+            : delta.high < selection.threshold
+              ? "fail"
+              : "inconclusive";
     return {
-        status: lead >= selection.threshold ? "pass" : "fail",
+        status,
         lead,
-        detail: `lead ${lead} vs threshold ${selection.threshold}`,
+        interval: delta,
+        detail: `lead ${lead === null ? "unknown" : String(lead)}; full-population interval ${delta.low}..${delta.high} vs threshold ${selection.threshold}`,
     };
 }
 
