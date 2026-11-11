@@ -48,7 +48,7 @@ registered `docs` skill carries the working version.
     /docs
     ```
 
-    With an argument it searches as before, e.g.
+    Plain text searches as before, e.g.
     `/docs find the Bruno assertion notes`.
 
 - The plugin also registers the `docs` skill, so the convention travels with
