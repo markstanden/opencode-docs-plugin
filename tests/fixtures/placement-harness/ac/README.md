@@ -65,6 +65,11 @@ node tests/fixtures/placement-harness/ac/run.mjs manifest --root "$ROOT" --verif
 `judge` and `gate` take a stage base directory: `gen/<arm>` for screening and
 `gen/<arm>/holdout` for confirmation.
 
+`report` is the legacy campaign calculator, kept unchanged so the published
+2026-11-10 analyses stay reproducible. The supported route for future campaigns
+is the manifest-driven analyser in `../analysis/analyse.mts` (`--campaign`,
+`--evidence-root`, `--out`), documented in `TESTING.md`.
+
 ## Isolation
 
 `judge-launcher.sh` runs the judge in a read-only container with only an empty
