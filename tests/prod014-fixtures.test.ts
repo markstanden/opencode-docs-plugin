@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -142,5 +143,39 @@ describe("0.14.0 productivity-trial fixtures", () => {
             facts.find((fact) => fact.id === "legacyCondition")?.obsolete,
             true,
         );
+    });
+});
+
+describe("frozen campaign snapshot", () => {
+    const snapshot = readJson<{
+        files: Record<string, string>;
+        hashes: Record<string, string>;
+    }>("campaign/scripts.json");
+
+    it("hashes every frozen script", () => {
+        // Act
+        const mismatches = Object.entries(snapshot.files).filter(
+            ([name, body]) =>
+                createHash("sha256").update(body, "utf8").digest("hex") !==
+                snapshot.hashes[name],
+        );
+
+        // Assert
+        assert.deepEqual(
+            mismatches.map(([name]) => name),
+            [],
+        );
+    });
+
+    it("carries no personal path or credential file name", () => {
+        // Act
+        const leaks = Object.entries(snapshot.files)
+            .filter(([, body]) =>
+                /\/home\/mark\/|zai-api-key-docs-plugin-testing/.test(body),
+            )
+            .map(([name]) => name);
+
+        // Assert
+        assert.deepEqual(leaks, []);
     });
 });
