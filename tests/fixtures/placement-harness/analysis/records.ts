@@ -62,22 +62,28 @@ export type PreservationByFact = Record<
     Loaded<PreservationObservation>
 >;
 
-/** Token accounting summed from a recorded session trail. */
+/** One token field's subtotal and independent step coverage. */
+export interface TokenFieldUsage {
+    /** Sum over steps that reported this field; meaningful only with coverage. */
+    total: number;
+    /** Observed steps reporting a numeric value, including explicit zero. */
+    measuredSteps: number;
+    /** Observed steps not reporting this field. */
+    unknownSteps: number;
+}
+
+/** Token accounting summed from a recorded session trail, per field. */
 export interface TokenUsage {
-    /** Input tokens across measured steps. */
-    input: number;
-    /** Output tokens across measured steps. */
-    output: number;
-    /** Reasoning tokens across measured steps. */
-    reasoning: number;
-    /** Cache-read tokens across measured steps. */
-    cacheRead: number;
     /** Observed step_finish events, with or without token telemetry. */
     steps: number;
-    /** Observed steps carrying token telemetry. */
-    measuredSteps: number;
-    /** Observed steps with no token telemetry. */
-    unknownSteps: number;
+    /** Input-token subtotal and coverage. */
+    input: TokenFieldUsage;
+    /** Output-token subtotal and coverage. */
+    output: TokenFieldUsage;
+    /** Reasoning-token subtotal and coverage. */
+    reasoning: TokenFieldUsage;
+    /** Cache-read-token subtotal and coverage. */
+    cacheRead: TokenFieldUsage;
 }
 
 /** One recorded campaign-attempt ledger event. */
@@ -837,40 +843,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** A number, or zero for anything else. */
-function numberOf(value: unknown): number {
-    return typeof value === "number" ? value : 0;
+/** An empty per-field token total. */
+function emptyField(): TokenFieldUsage {
+    return { total: 0, measuredSteps: 0, unknownSteps: 0 };
 }
 
 /** An empty token total. */
 function emptyUsage(): TokenUsage {
     return {
-        input: 0,
-        output: 0,
-        reasoning: 0,
-        cacheRead: 0,
         steps: 0,
-        measuredSteps: 0,
-        unknownSteps: 0,
+        input: emptyField(),
+        output: emptyField(),
+        reasoning: emptyField(),
+        cacheRead: emptyField(),
     };
-}
-
-/**
- * Whether a step's tokens record carries any recognised token count. A record
- * with no counts is absent telemetry, not a measured zero; explicit zeros are
- * present fields and therefore measured.
- * @param tokens The step's tokens record.
- * @returns True when at least one token count is present.
- */
-function hasTokenCount(tokens: Record<string, unknown>): boolean {
-    if (
-        typeof tokens.input === "number" ||
-        typeof tokens.output === "number" ||
-        typeof tokens.reasoning === "number"
-    ) {
-        return true;
-    }
-    return isRecord(tokens.cache) && typeof tokens.cache.read === "number";
 }
 
 /**
@@ -888,9 +874,25 @@ function parseTrailLine(line: string): Record<string, unknown> | undefined {
 }
 
 /**
+ * Add one reported token field. A numeric value is measured, including an
+ * explicit zero; an absent or non-numeric value is unknown and contributes no
+ * subtotal.
+ * @param field The accumulated field usage.
+ * @param value The raw recorded value.
+ */
+function addTokenField(field: TokenFieldUsage, value: unknown): void {
+    if (typeof value === "number") {
+        field.total += value;
+        field.measuredSteps += 1;
+    } else {
+        field.unknownSteps += 1;
+    }
+}
+
+/**
  * Add one trail event's token usage. Every step_finish event counts as an
- * observed step; a step without any token count contributes to the unknown
- * coverage instead of being summed as zero.
+ * observed step; each token field keeps its own measured/unknown coverage, so
+ * a step reporting only `input` never implies a measured zero `output`.
  * @param usage The accumulated usage.
  * @param event The parsed trail event.
  */
@@ -902,16 +904,14 @@ function addTokenUsage(
     usage.steps += 1;
     const part = isRecord(event.part) ? event.part : {};
     const tokens = isRecord(part.tokens) ? part.tokens : undefined;
-    if (tokens === undefined || !hasTokenCount(tokens)) {
-        usage.unknownSteps += 1;
-        return;
-    }
-    usage.measuredSteps += 1;
-    const cache = isRecord(tokens.cache) ? tokens.cache : {};
-    usage.input += numberOf(tokens.input);
-    usage.output += numberOf(tokens.output);
-    usage.reasoning += numberOf(tokens.reasoning);
-    usage.cacheRead += numberOf(cache.read);
+    const cache =
+        tokens !== undefined && isRecord(tokens.cache)
+            ? tokens.cache
+            : undefined;
+    addTokenField(usage.input, tokens?.input);
+    addTokenField(usage.output, tokens?.output);
+    addTokenField(usage.reasoning, tokens?.reasoning);
+    addTokenField(usage.cacheRead, cache?.read);
 }
 
 /**

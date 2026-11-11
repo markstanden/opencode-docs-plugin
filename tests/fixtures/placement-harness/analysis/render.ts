@@ -56,22 +56,28 @@ export interface PairingSummary {
     problems: string[];
 }
 
-/** Captured token usage, with step coverage held separate from token coverage. */
+/** One token field's campaign subtotal and independent step coverage. */
+export interface TokenFieldCoverage {
+    /** Sum over reporting steps, or null when no step reported the field. */
+    total: number | null;
+    /** Observed steps reporting a numeric value, including explicit zero. */
+    measuredSteps: number;
+    /** Observed steps not reporting the field. */
+    unknownSteps: number;
+}
+
+/** Captured token usage, with coverage kept independently per field. */
 export interface UsageSummary {
-    /** Input tokens over measured steps, or null when no step was measured. */
-    input: number | null;
-    /** Output tokens over measured steps, or null when no step was measured. */
-    output: number | null;
-    /** Reasoning tokens over measured steps, or null when no step was measured. */
-    reasoning: number | null;
-    /** Cache-read tokens over measured steps, or null when none was measured. */
-    cacheRead: number | null;
+    /** Input-token subtotal and coverage. */
+    input: TokenFieldCoverage;
+    /** Output-token subtotal and coverage. */
+    output: TokenFieldCoverage;
+    /** Reasoning-token subtotal and coverage. */
+    reasoning: TokenFieldCoverage;
+    /** Cache-read-token subtotal and coverage. */
+    cacheRead: TokenFieldCoverage;
     /** Observed step_finish events, or null when no trail was readable. */
     steps: number | null;
-    /** Observed steps carrying token telemetry. */
-    measuredSteps: number;
-    /** Observed steps without token telemetry. */
-    unknownSteps: number;
     /** Trials whose session trail was readable. */
     measuredTrials: number;
     /** Trials whose session trail was unreadable. */
@@ -555,12 +561,28 @@ function integritySection(result: AnalysisResult): string {
             ["Measure", "Captured", "Coverage", "Unknown"],
             [
                 [
-                    "Tokens (input/output/reasoning/cache-read)",
-                    usage.measuredSteps === 0
-                        ? "—"
-                        : `${num(usage.input)}/${num(usage.output)}/${num(usage.reasoning)}/${num(usage.cacheRead)}`,
-                    `${num(usage.measuredSteps)} observed step(s) measured`,
-                    `${num(usage.unknownSteps)} observed step(s) without token telemetry`,
+                    "Input tokens",
+                    num(usage.input.total),
+                    `${num(usage.input.measuredSteps)} observed step(s) measured`,
+                    `${num(usage.input.unknownSteps)} observed step(s) without this field`,
+                ],
+                [
+                    "Output tokens",
+                    num(usage.output.total),
+                    `${num(usage.output.measuredSteps)} observed step(s) measured`,
+                    `${num(usage.output.unknownSteps)} observed step(s) without this field`,
+                ],
+                [
+                    "Reasoning tokens",
+                    num(usage.reasoning.total),
+                    `${num(usage.reasoning.measuredSteps)} observed step(s) measured`,
+                    `${num(usage.reasoning.unknownSteps)} observed step(s) without this field`,
+                ],
+                [
+                    "Cache-read tokens",
+                    num(usage.cacheRead.total),
+                    `${num(usage.cacheRead.measuredSteps)} observed step(s) measured`,
+                    `${num(usage.cacheRead.unknownSteps)} observed step(s) without this field`,
                 ],
                 [
                     "Steps observed",
@@ -577,7 +599,7 @@ function integritySection(result: AnalysisResult): string {
             ],
         ),
         "",
-        "Token totals are subtotals over measured steps; absent token fields stay unknown, explicit zeros are measured, and a step without token fields still counts as an observed step.",
+        "Token fields keep independent coverage: a step reporting only some fields leaves the rest unknown, explicit zeros are measured, and a step without token fields still counts as an observed step.",
         "",
         `Cost telemetry: ${result.cost.available ? "recorded" : "unavailable"}. ${result.cost.note}`,
         "",

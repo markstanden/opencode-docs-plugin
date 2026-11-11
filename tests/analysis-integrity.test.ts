@@ -78,17 +78,21 @@ interface Receipt {
     }>;
 }
 
+interface TokenField {
+    total: number | null;
+    measuredSteps: number;
+    unknownSteps: number;
+}
+
 interface Analysis {
     arms: Record<string, { accounting: { utilityTotal: number } }>;
     totals: { documented: number; utilityTotal: number };
     usage: {
-        input: number | null;
-        output: number | null;
-        reasoning: number | null;
-        cacheRead: number | null;
+        input: TokenField;
+        output: TokenField;
+        reasoning: TokenField;
+        cacheRead: TokenField;
         steps: number | null;
-        measuredSteps: number;
-        unknownSteps: number;
         measuredTrials: number;
         unknownTrials: number;
     };
@@ -537,13 +541,17 @@ describe("capture, usage and ledger observability", () => {
             const analysis = readJson<Analysis>(
                 join(space.out, "analysis.json"),
             );
-            assert.equal(analysis.usage.input, null);
-            assert.equal(analysis.usage.output, null);
-            assert.equal(analysis.usage.reasoning, null);
-            assert.equal(analysis.usage.cacheRead, null);
+            for (const field of [
+                analysis.usage.input,
+                analysis.usage.output,
+                analysis.usage.reasoning,
+                analysis.usage.cacheRead,
+            ]) {
+                assert.equal(field.total, null);
+                assert.equal(field.measuredSteps, 0);
+                assert.equal(field.unknownSteps, 0);
+            }
             assert.equal(analysis.usage.steps, null);
-            assert.equal(analysis.usage.measuredSteps, 0);
-            assert.equal(analysis.usage.unknownSteps, 0);
             assert.equal(analysis.usage.measuredTrials, 0);
             assert.equal(analysis.usage.unknownTrials, 4);
             assert.equal(analysis.cost.available, false);
@@ -567,12 +575,14 @@ describe("capture, usage and ledger observability", () => {
                 join(space.out, "analysis.json"),
             );
             assert.equal(analysis.usage.steps, 4);
-            assert.equal(analysis.usage.measuredSteps, 4);
-            assert.equal(analysis.usage.unknownSteps, 0);
             assert.equal(analysis.usage.measuredTrials, 4);
             assert.equal(analysis.usage.unknownTrials, 0);
-            assert.equal(typeof analysis.usage.input, "number");
-            assert.ok((analysis.usage.input ?? 0) > 0);
+            assert.equal(analysis.usage.input.total, 400);
+            assert.equal(analysis.usage.input.measuredSteps, 4);
+            assert.equal(analysis.usage.input.unknownSteps, 0);
+            assert.equal(analysis.usage.output.total, 80);
+            assert.equal(analysis.usage.reasoning.total, 0);
+            assert.equal(analysis.usage.cacheRead.total, 40);
         } finally {
             rmSync(space.dir, { recursive: true, force: true });
         }
@@ -660,7 +670,7 @@ describe("token coverage through the CLI", () => {
         writeFileSync(join(space.evidence, trail), `${lines.join("\n")}\n`);
     };
 
-    it("counts a step with no token fields as an observed step, not a measured zero", () => {
+    it("counts a step with no token fields as an observed step with every field unknown", () => {
         // Arrange
         const space = workspace("usage-no-tokens");
         try {
@@ -677,25 +687,28 @@ describe("token coverage through the CLI", () => {
                 join(space.out, "analysis.json"),
             );
             assert.equal(analysis.usage.steps, 16);
-            assert.equal(analysis.usage.measuredSteps, 0);
-            assert.equal(analysis.usage.unknownSteps, 16);
             assert.equal(analysis.usage.measuredTrials, 4);
             assert.equal(analysis.usage.unknownTrials, 0);
-            assert.equal(analysis.usage.input, null);
-            assert.equal(analysis.usage.output, null);
+            for (const field of [
+                analysis.usage.input,
+                analysis.usage.output,
+                analysis.usage.reasoning,
+                analysis.usage.cacheRead,
+            ]) {
+                assert.equal(field.total, null);
+                assert.equal(field.measuredSteps, 0);
+                assert.equal(field.unknownSteps, 16);
+            }
             const report = readFileSync(join(space.out, "REPORT.md"), "utf8");
             assert.match(report, /\| Steps observed \| 16 \|/);
             assert.match(report, /0 observed step\(s\) measured/);
-            assert.match(
-                report,
-                /16 observed step\(s\) without token telemetry/,
-            );
+            assert.match(report, /16 observed step\(s\) without this field/);
         } finally {
             rmSync(space.dir, { recursive: true, force: true });
         }
     });
 
-    it("keeps explicit zero token counts measured", () => {
+    it("keeps explicit zero token counts measured independently per field", () => {
         // Arrange
         const space = workspace("usage-explicit-zero");
         const zero = '{"input":0,"output":0,"reasoning":0,"cache":{"read":0}}';
@@ -718,18 +731,97 @@ describe("token coverage through the CLI", () => {
                 join(space.out, "analysis.json"),
             );
             assert.equal(analysis.usage.steps, 16);
-            assert.equal(analysis.usage.measuredSteps, 16);
-            assert.equal(analysis.usage.unknownSteps, 0);
-            assert.equal(analysis.usage.input, 0);
-            assert.equal(analysis.usage.output, 0);
-            assert.equal(analysis.usage.reasoning, 0);
-            assert.equal(analysis.usage.cacheRead, 0);
+            for (const field of [
+                analysis.usage.input,
+                analysis.usage.output,
+                analysis.usage.reasoning,
+                analysis.usage.cacheRead,
+            ]) {
+                assert.equal(field.total, 0);
+                assert.equal(field.measuredSteps, 16);
+                assert.equal(field.unknownSteps, 0);
+            }
             const report = readFileSync(join(space.out, "REPORT.md"), "utf8");
             assert.match(report, /16 observed step\(s\) measured/);
-            assert.match(
-                report,
-                /0 observed step\(s\) without token telemetry/,
+            assert.match(report, /0 observed step\(s\) without this field/);
+        } finally {
+            rmSync(space.dir, { recursive: true, force: true });
+        }
+    });
+
+    it("keeps unreported fields unknown when a step reports only input", () => {
+        // Arrange — the reported case: one step per trial, input only.
+        const space = workspace("usage-input-only");
+        const inputOnly = '{"input":10}';
+        try {
+            for (const trail of trails) {
+                writeTrail(space, trail, [step(inputOnly)]);
+            }
+
+            // Act
+            const run = analyse(space);
+
+            // Assert
+            assert.equal(run.status, 0, run.stderr);
+            const analysis = readJson<Analysis>(
+                join(space.out, "analysis.json"),
             );
+            assert.equal(analysis.usage.steps, 4);
+            assert.deepEqual(analysis.usage.input, {
+                total: 40,
+                measuredSteps: 4,
+                unknownSteps: 0,
+            });
+            for (const field of [
+                analysis.usage.output,
+                analysis.usage.reasoning,
+                analysis.usage.cacheRead,
+            ]) {
+                assert.equal(field.total, null);
+                assert.equal(field.measuredSteps, 0);
+                assert.equal(field.unknownSteps, 4);
+            }
+            const report = readFileSync(join(space.out, "REPORT.md"), "utf8");
+            assert.match(report, /\| Input tokens \| 40 \|/);
+            assert.match(report, /\| Output tokens \| — \|/);
+            assert.match(report, /\| Reasoning tokens \| — \|/);
+            assert.match(report, /\| Cache-read tokens \| — \|/);
+        } finally {
+            rmSync(space.dir, { recursive: true, force: true });
+        }
+    });
+
+    it("preserves a known zero subtotal beside a step that omits the field", () => {
+        // Arrange — two steps report output: 0, two omit output entirely.
+        const space = workspace("usage-mixed-fields");
+        try {
+            writeTrail(space, trails[0]!, [step('{"output":0}')]);
+            writeTrail(space, trails[1]!, [step()]);
+            writeTrail(space, trails[2]!, [step('{"output":0}')]);
+            writeTrail(space, trails[3]!, [step()]);
+
+            // Act
+            const run = analyse(space);
+
+            // Assert
+            assert.equal(run.status, 0, run.stderr);
+            const analysis = readJson<Analysis>(
+                join(space.out, "analysis.json"),
+            );
+            assert.equal(analysis.usage.steps, 4);
+            assert.deepEqual(analysis.usage.output, {
+                total: 0,
+                measuredSteps: 2,
+                unknownSteps: 2,
+            });
+            assert.deepEqual(analysis.usage.input, {
+                total: null,
+                measuredSteps: 0,
+                unknownSteps: 4,
+            });
+            const report = readFileSync(join(space.out, "REPORT.md"), "utf8");
+            assert.match(report, /2 observed step\(s\) measured/);
+            assert.match(report, /2 observed step\(s\) without this field/);
         } finally {
             rmSync(space.dir, { recursive: true, force: true });
         }
@@ -751,22 +843,30 @@ describe("token coverage through the CLI", () => {
                 join(space.out, "analysis.json"),
             );
             assert.equal(analysis.usage.steps, 7);
-            assert.equal(analysis.usage.measuredSteps, 3);
-            assert.equal(analysis.usage.unknownSteps, 4);
-            assert.equal(analysis.usage.input, 300);
-            assert.equal(analysis.usage.output, 60);
-            assert.equal(analysis.usage.reasoning, 0);
-            assert.equal(analysis.usage.cacheRead, 30);
+            assert.deepEqual(analysis.usage.input, {
+                total: 300,
+                measuredSteps: 3,
+                unknownSteps: 4,
+            });
+            assert.deepEqual(analysis.usage.output, {
+                total: 60,
+                measuredSteps: 3,
+                unknownSteps: 4,
+            });
+            assert.deepEqual(analysis.usage.reasoning, {
+                total: 0,
+                measuredSteps: 3,
+                unknownSteps: 4,
+            });
+            assert.deepEqual(analysis.usage.cacheRead, {
+                total: 30,
+                measuredSteps: 3,
+                unknownSteps: 4,
+            });
             const report = readFileSync(join(space.out, "REPORT.md"), "utf8");
             assert.match(report, /3 observed step\(s\) measured/);
-            assert.match(
-                report,
-                /4 observed step\(s\) without token telemetry/,
-            );
-            assert.match(
-                report,
-                /Token totals are subtotals over measured steps/,
-            );
+            assert.match(report, /4 observed step\(s\) without this field/);
+            assert.match(report, /Token fields keep independent coverage/);
         } finally {
             rmSync(space.dir, { recursive: true, force: true });
         }

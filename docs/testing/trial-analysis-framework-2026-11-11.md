@@ -138,7 +138,7 @@ clause does not negate the later assertion. `5000 milliseconds` is accepted;
 
 The test count and the test-file count are different figures, and the earlier
 record's "930 contract tests" predates this correction pass:
-**962 tests across 27 test files** at the corrected head (930 across 26 before
+**965 tests across 27 test files** at the corrected head (930 across 26 before
 the remediation backlog; one new file, `tests/analysis-integrity.test.ts`,
 holds the receipt, publication, usage/ledger, token-coverage and CLI
 evidence-state regressions).
@@ -155,11 +155,11 @@ node --test --experimental-test-coverage \
 
 | Area                               | Line   | Branch | Function |
 | ---------------------------------- | ------ | ------ | -------- |
-| all analysis modules, CLI included | 95.13% | 82.88% | 98.71%   |
-| `analyse.mts` (the CLI)            | 93.75% | 69.74% | 98.41%   |
+| all analysis modules, CLI included | 95.18% | 83.44% | 98.71%   |
+| `analyse.mts` (the CLI)            | 93.90% | 70.70% | 98.44%   |
 | `model.ts`                         | 90.98% | 71.35% | 100%     |
 | `scan.ts`                          | 92.40% | 92.77% | 92.31%   |
-| `records.ts`                       | 92.56% | 82.35% | 100%     |
+| `records.ts`                       | 92.66% | 84.68% | 100%     |
 
 The gate's coverage include is still `src/**/*.ts` and Sonar's `sonar.sources`
 is still `src`, so harness coverage is measured here as information and is
@@ -222,16 +222,16 @@ append-only on the same branch:
   and silently read as ac-v1 — implementing that adapter remains future work.
   A declared `evidence.inputs.attempts` ledger is reconciled against the
   schedule (events, missing launches, missing judge attempts, unknown stamps,
-  duplicate launches) and surfaced in JSON/Markdown. Step coverage is tracked
-  independently from token coverage: a `step_finish` without token fields is an
-  observed step with unknown tokens, explicit zeros are measured, and a known
-  subtotal is reported with its measured/unknown step counts. Token totals are
-  `null` when no step carried telemetry; cost is explicitly unavailable rather
-  than a measured zero.
+  duplicate launches) and surfaced in JSON/Markdown. Token coverage is tracked
+  independently per field: a step reporting only `input` leaves `output`,
+  `reasoning` and `cache-read` unknown (`null`, not zero), explicit zeros stay
+  measured, and a step with no token fields is still an observed step. Known
+  subtotals carry each field's measured/unknown step counts; cost is explicitly
+  unavailable rather than a measured zero.
 
 ## Facts
 
-- 962 contract tests pass across 27 test files at the corrected head (930
+- 965 contract tests pass across 27 test files at the corrected head (930
   across 26 before this pass); typecheck passes; `defined comply` is compliant;
   `replication/verify.mjs` is 32/32.
 - Manifests validate in CI without external evidence; the mini corpus exercises
@@ -240,6 +240,10 @@ append-only on the same branch:
   (A 29 / B 26; A 4 / B 7; A 9, B 15, C −1, D −1, E −2, F 4). The decision
   changes are the intended threshold-limb correction and the newly wired
   replication mutation policy; no accounting number moved.
+- Historical token telemetry is unchanged by the per-field correction: every
+  field has the same totals and full coverage (confirmation 400/400 steps,
+  replication 241/241, screening 462/462), so no recorded field was previously
+  reported as a measured zero.
 
 ## Open questions
 

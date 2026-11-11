@@ -111,13 +111,11 @@ describe("loadTrialRecord", () => {
         assert.deepEqual(
             record.tokens.state === "available" ? record.tokens.value : null,
             {
-                input: 10,
-                output: 5,
-                reasoning: 0,
-                cacheRead: 2,
                 steps: 1,
-                measuredSteps: 1,
-                unknownSteps: 0,
+                input: { total: 10, measuredSteps: 1, unknownSteps: 0 },
+                output: { total: 5, measuredSteps: 1, unknownSteps: 0 },
+                reasoning: { total: 0, measuredSteps: 1, unknownSteps: 0 },
+                cacheRead: { total: 2, measuredSteps: 1, unknownSteps: 0 },
             },
         );
         assert.equal(record.artefacts.finalAnswer.state, "available");
@@ -510,6 +508,43 @@ describe("loadTrialRecord", () => {
             record.tokens.state === "malformed" &&
                 record.tokens.problems.some((p) => p.includes("oops")),
         );
+    });
+
+    it("keeps each token field's coverage independent within one step", () => {
+        // Arrange — the step reports input only.
+        const files = completeTrial("cc-A-r0-R01");
+        const record = load({
+            ...files,
+            "results/cc-A-r0-R01/R01/stdout.jsonl":
+                '{"type":"step_finish","part":{"tokens":{"input":10}}}\n',
+        });
+
+        // Act
+        const usage =
+            record.tokens.state === "available" ? record.tokens.value : null;
+
+        // Assert
+        assert.equal(usage?.steps, 1);
+        assert.deepEqual(usage?.input, {
+            total: 10,
+            measuredSteps: 1,
+            unknownSteps: 0,
+        });
+        assert.deepEqual(usage?.output, {
+            total: 0,
+            measuredSteps: 0,
+            unknownSteps: 1,
+        });
+        assert.deepEqual(usage?.reasoning, {
+            total: 0,
+            measuredSteps: 0,
+            unknownSteps: 1,
+        });
+        assert.deepEqual(usage?.cacheRead, {
+            total: 0,
+            measuredSteps: 0,
+            unknownSteps: 1,
+        });
     });
 
     it("reports unselected judge attempts instead of silently ignoring them", () => {

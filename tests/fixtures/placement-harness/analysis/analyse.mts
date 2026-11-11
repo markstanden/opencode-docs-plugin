@@ -658,18 +658,51 @@ function screenCampaign(
  * @param records The loaded trial records.
  * @returns The usage summary with measured/unknown counts.
  */
+/** The token fields whose coverage is tracked independently. */
+const TOKEN_FIELDS = ["input", "output", "reasoning", "cacheRead"] as const;
+
+/** One field's accumulator while summing the campaign. */
+interface FieldAccumulator {
+    /** Sum over reporting steps. */
+    total: number;
+    /** Steps reporting the field. */
+    measuredSteps: number;
+    /** Steps not reporting the field. */
+    unknownSteps: number;
+    /** Whether any trial reported the field at all. */
+    known: boolean;
+}
+
+/**
+ * Sum per-field token usage across readable trails, keeping each field's
+ * coverage independent. A field is `null` when no observed step reported it;
+ * an explicit zero keeps a known zero subtotal.
+ * @param records The loaded trial records.
+ * @returns The usage summary with per-field coverage.
+ */
 function usageOf(records: readonly TrialRecord[]): UsageSummary {
-    let measuredSteps = 0;
-    let unknownSteps = 0;
     let measuredTrials = 0;
     let unknownTrials = 0;
     let steps = 0;
     let anyTrailReadable = false;
-    const totals = {
-        input: 0,
-        output: 0,
-        reasoning: 0,
-        cacheRead: 0,
+    const accumulators: Record<
+        (typeof TOKEN_FIELDS)[number],
+        FieldAccumulator
+    > = {
+        input: { total: 0, measuredSteps: 0, unknownSteps: 0, known: false },
+        output: { total: 0, measuredSteps: 0, unknownSteps: 0, known: false },
+        reasoning: {
+            total: 0,
+            measuredSteps: 0,
+            unknownSteps: 0,
+            known: false,
+        },
+        cacheRead: {
+            total: 0,
+            measuredSteps: 0,
+            unknownSteps: 0,
+            known: false,
+        },
     };
     for (const record of records) {
         if (record.tokens.state !== "available") {
@@ -679,22 +712,29 @@ function usageOf(records: readonly TrialRecord[]): UsageSummary {
         measuredTrials += 1;
         anyTrailReadable = true;
         steps += record.tokens.value.steps;
-        measuredSteps += record.tokens.value.measuredSteps;
-        unknownSteps += record.tokens.value.unknownSteps;
-        totals.input += record.tokens.value.input;
-        totals.output += record.tokens.value.output;
-        totals.reasoning += record.tokens.value.reasoning;
-        totals.cacheRead += record.tokens.value.cacheRead;
+        for (const field of TOKEN_FIELDS) {
+            const usage = record.tokens.value[field];
+            const accumulator = accumulators[field];
+            accumulator.total += usage.total;
+            accumulator.measuredSteps += usage.measuredSteps;
+            accumulator.unknownSteps += usage.unknownSteps;
+            if (usage.measuredSteps > 0) accumulator.known = true;
+        }
     }
-    const tokenTotalsMeasured = measuredSteps > 0;
+    const coverageOf = (field: (typeof TOKEN_FIELDS)[number]) => {
+        const accumulator = accumulators[field];
+        return {
+            total: accumulator.known ? accumulator.total : null,
+            measuredSteps: accumulator.measuredSteps,
+            unknownSteps: accumulator.unknownSteps,
+        };
+    };
     return {
-        input: tokenTotalsMeasured ? totals.input : null,
-        output: tokenTotalsMeasured ? totals.output : null,
-        reasoning: tokenTotalsMeasured ? totals.reasoning : null,
-        cacheRead: tokenTotalsMeasured ? totals.cacheRead : null,
+        input: coverageOf("input"),
+        output: coverageOf("output"),
+        reasoning: coverageOf("reasoning"),
+        cacheRead: coverageOf("cacheRead"),
         steps: anyTrailReadable ? steps : null,
-        measuredSteps,
-        unknownSteps,
         measuredTrials,
         unknownTrials,
     };
@@ -913,7 +953,7 @@ function limitationsOf(
         screen.missingSnapshots > 0
             ? `Screening read missing before/after lake snapshots for ${String(screen.missingSnapshots)} trial(s).`
             : "Every screened trial had readable before/after lake snapshots.",
-        `Token telemetry covered ${String(usage.measuredSteps)} observed step(s) and left ${String(usage.unknownSteps)} unknown; ${String(usage.measuredTrials)} trial trail(s) were readable and ${String(usage.unknownTrials)} unreadable.`,
+        `Token coverage (measured/unknown steps): input ${String(usage.input.measuredSteps)}/${String(usage.input.unknownSteps)}, output ${String(usage.output.measuredSteps)}/${String(usage.output.unknownSteps)}, reasoning ${String(usage.reasoning.measuredSteps)}/${String(usage.reasoning.unknownSteps)}, cache-read ${String(usage.cacheRead.measuredSteps)}/${String(usage.cacheRead.unknownSteps)}; ${String(usage.measuredTrials)} readable and ${String(usage.unknownTrials)} unreadable trial trail(s).`,
         ...(ledgerLine === undefined ? [] : [ledgerLine]),
         ...records.flatMap((record) =>
             record.attempt.problems
