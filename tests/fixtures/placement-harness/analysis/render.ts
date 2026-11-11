@@ -86,6 +86,8 @@ export interface AnalysisResult {
     pairing: PairingSummary;
     /** The candidate-minus-control comparison, when a rule is declared. */
     paired: PairedComparison | null;
+    /** Full-population candidate-minus-control interval, when a rule is declared. */
+    bounds: { delta: Interval | null };
     /** The three-limb decision. */
     decision: DecisionResult;
     /** The sensitivity grid, when the campaign froze one. */
@@ -325,6 +327,12 @@ function pairSection(result: AnalysisResult): string {
     if (result.paired !== null) {
         lines.push(
             `Paired comparison: ${num(result.paired.completePairs)} pairs, control better ${num(result.paired.controlBetter)}, candidate better ${num(result.paired.candidateBetter)}, ties ${num(result.paired.ties)}; delta ${num(result.paired.delta)} (interval ${num(result.paired.interval.low)}..${num(result.paired.interval.high)}).`,
+            "",
+        );
+    }
+    if (result.bounds.delta !== null) {
+        lines.push(
+            `Full-population candidate-minus-control interval: ${num(result.bounds.delta.low)}..${num(result.bounds.delta.high)} (worst case, not a confidence interval).`,
             "",
         );
     }

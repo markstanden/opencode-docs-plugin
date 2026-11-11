@@ -38,6 +38,16 @@ export const GUARDRAIL_KINDS = ["mutation-policy", "destructive-loss"] as const;
 /** A known guardrail kind. */
 export type GuardrailKind = (typeof GUARDRAIL_KINDS)[number];
 
+/** How a slot's observation relates to the frozen schedule. */
+export const DISPOSITIONS = [
+    "first-attempt",
+    "replacement",
+    "excluded",
+] as const;
+
+/** A known observation disposition. */
+export type Disposition = (typeof DISPOSITIONS)[number];
+
 /** The campaign being analysed. */
 export interface CampaignIdentity {
     /** Stable campaign id, e.g. `rc-20261110`. */
@@ -98,6 +108,8 @@ export interface SlotSpec {
     repetition: number;
     /** The declared pair id; pairs hold exactly two distinct-arm slots. */
     pairId?: string | undefined;
+    /** How the observation relates to the schedule; defaults to first-attempt. */
+    disposition?: Disposition | undefined;
 }
 
 /** The frozen schedule. */
@@ -568,6 +580,27 @@ function slotMembershipProblems(
 }
 
 /**
+ * Validate one slot's optional disposition.
+ * @param label The dotted field path of the slot.
+ * @param entry The raw slot object.
+ * @returns Problems; empty means valid.
+ */
+function slotDispositionProblems(
+    label: string,
+    entry: Record<string, unknown>,
+): string[] {
+    if (
+        entry.disposition !== undefined &&
+        !(DISPOSITIONS as readonly string[]).includes(String(entry.disposition))
+    ) {
+        return [
+            `${label}.disposition must be one of ${DISPOSITIONS.join("|")} when present`,
+        ];
+    }
+    return [];
+}
+
+/**
  * Validate one slot.
  * @param label The dotted field path of the slot.
  * @param entry The raw slot value.
@@ -589,6 +622,7 @@ function slotProblems(
     return [
         ...slotIdentityProblems(label, entry, slotNumbers, stamps),
         ...slotMembershipProblems(label, entry, armIds, scenarioIds),
+        ...slotDispositionProblems(label, entry),
     ];
 }
 

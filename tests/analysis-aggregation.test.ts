@@ -253,6 +253,24 @@ describe("scoreTrial", () => {
         assert.equal(scored.gateStatus, "missing");
     });
 
+    it("takes the observation disposition from the declared slot", () => {
+        // Act
+        const excluded = scoreTrial(
+            record(),
+            slot({ disposition: "excluded" }),
+        );
+        const replacement = scoreTrial(
+            record(),
+            slot({ disposition: "replacement" }),
+        );
+
+        // Assert
+        assert.equal(excluded.disposition, "excluded");
+        assert.equal(excluded.trial.planned, false);
+        assert.equal(replacement.disposition, "replacement");
+        assert.equal(replacement.trial.planned, true);
+    });
+
     it("keeps an unassessed trial as an interval, never a zero", () => {
         // Act
         const scored = scoreTrial(
@@ -632,5 +650,26 @@ describe("pairing", () => {
         // Assert
         assert.equal(result.pairs.length, 0);
         assert.equal(result.unpaired.length, 1);
+    });
+
+    it("does not let a replacement observation complete a pair", () => {
+        // Arrange
+        const replacement = {
+            ...observation(1, "A", "R01", "P01", 5),
+            disposition: "replacement" as const,
+        };
+        const rows = [replacement, observation(2, "B", "R01", "P01", -1)];
+        const slots = slotsFor([
+            { pairId: "P01", scenario: "R01", a: true, b: true },
+        ]);
+
+        // Act
+        const result = pairObservations(rows, slots);
+
+        // Assert
+        assert.equal(result.pairs[0]?.complete, false);
+        assert.deepEqual(result.pairs[0]?.missingArms, ["A"]);
+        assert.equal(result.unmatched.length, 1);
+        assert.equal(result.unmatched[0]?.identity.arm, "B");
     });
 });

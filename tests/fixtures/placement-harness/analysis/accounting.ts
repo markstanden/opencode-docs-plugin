@@ -16,10 +16,10 @@ import {
     type UtilityWeights,
 } from "../ac-scoring.mts";
 import type { AssessmentStatus, AttemptState, TrialRecord } from "./records.ts";
-import type { SlotSpec } from "./model.ts";
+import type { Disposition, SlotSpec } from "./model.ts";
 
 /** How one observation relates to the frozen schedule. */
-export type Disposition = "first-attempt" | "replacement" | "excluded";
+export type { Disposition };
 
 /** The declared identity a scored trial carries. */
 export interface ScoredIdentity {
@@ -168,7 +168,8 @@ export function scoreTrial(
     slot: SlotSpec,
     options: ScoreOptions = {},
 ): TrialScored {
-    const disposition = options.disposition ?? "first-attempt";
+    const disposition =
+        options.disposition ?? slot.disposition ?? "first-attempt";
     const trial: ScoredTrial = {
         arm: slot.arm,
         scenario: slot.scenario,

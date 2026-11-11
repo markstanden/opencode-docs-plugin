@@ -36,12 +36,13 @@ import {
     scoreTrial,
     type TrialScored,
 } from "./accounting.ts";
-import { intervalFromCounts } from "./bounds.ts";
+import { differenceInterval, intervalFromCounts } from "./bounds.ts";
 import { evaluateDecision, type DecisionResult } from "./decision.ts";
 import { summariseGuardrails, type GuardrailArmSummary } from "./guardrails.ts";
 import {
     parseManifest,
     type CampaignManifest,
+    type SelectionSpec,
     type SlotSpec,
 } from "./model.ts";
 import { pairObservations, pairedComparison } from "./pairing.ts";
@@ -345,6 +346,26 @@ function armReports(
 }
 
 /**
+ * Build the full-population candidate-minus-control interval.
+ * @param selection The declared selection rule, when present.
+ * @param counts Accounting counts keyed by arm.
+ * @returns The difference interval, or null without a usable pair of arms.
+ */
+function deltaIntervalOf(
+    selection: SelectionSpec | null,
+    counts: Record<string, AccountingCounts>,
+): { low: number; high: number } | null {
+    if (selection === null) return null;
+    const control = counts[selection.controlArm];
+    const candidate = counts[selection.candidateArm];
+    if (control === undefined || candidate === undefined) return null;
+    return differenceInterval(
+        intervalFromCounts(candidate),
+        intervalFromCounts(control),
+    );
+}
+
+/**
  * Build the pairing summary from the pairing result.
  * @param pairing The pairing result.
  * @returns The report summary.
@@ -380,6 +401,7 @@ function sensitivityOf(
     if (grid === undefined) return null;
     const arms: Record<string, ScoredTrial[]> = {};
     for (const slot of manifest.schedule.slots) {
+        if (slot.disposition === "excluded") continue;
         const record = records.find((one) => one.identity.stamp === slot.stamp);
         if (record === undefined) continue;
         const trial = scoreTrial(record, slot, {
@@ -607,6 +629,7 @@ function assemble(
         totals,
         pairing: pairingSummaryOf(pairing),
         paired,
+        bounds: { delta: deltaIntervalOf(selection, counts) },
         decision,
         sensitivity: sensitivityOf(manifest, records),
         screening: {

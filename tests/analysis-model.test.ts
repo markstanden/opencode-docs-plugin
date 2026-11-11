@@ -4,6 +4,7 @@ import {
     MANIFEST_SCHEMA_VERSION,
     parseManifest,
     type CampaignManifest,
+    type Disposition,
     type EvidenceLayout,
     type GuardrailKind,
     type SelectionPolicy,
@@ -145,6 +146,16 @@ describe("parseManifest", () => {
         assert.ok(
             unknownArm.problems.some((p) => p.includes("undeclared arm")),
         );
+    });
+
+    it("refuses an unknown slot disposition", () => {
+        // Act
+        const parsed = parseOf((manifest) => {
+            manifest.schedule.slots[0]!.disposition = "bogus" as Disposition;
+        });
+
+        // Assert
+        assert.ok(parsed.problems.some((p) => p.includes("disposition")));
     });
 
     it("refuses duplicate slot numbers and duplicate stamps", () => {
