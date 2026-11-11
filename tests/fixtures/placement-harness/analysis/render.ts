@@ -56,22 +56,26 @@ export interface PairingSummary {
     problems: string[];
 }
 
-/** Captured token usage, with explicit measured/unknown counts. */
+/** Captured token usage, with step coverage held separate from token coverage. */
 export interface UsageSummary {
-    /** Input tokens over measured trials, or null when none was measured. */
+    /** Input tokens over measured steps, or null when no step was measured. */
     input: number | null;
-    /** Output tokens over measured trials, or null when none was measured. */
+    /** Output tokens over measured steps, or null when no step was measured. */
     output: number | null;
-    /** Reasoning tokens over measured trials, or null when none was measured. */
+    /** Reasoning tokens over measured steps, or null when no step was measured. */
     reasoning: number | null;
-    /** Cache-read tokens over measured trials, or null when none was measured. */
+    /** Cache-read tokens over measured steps, or null when none was measured. */
     cacheRead: number | null;
-    /** Recorded steps over measured trials, or null when none was measured. */
+    /** Observed step_finish events, or null when no trail was readable. */
     steps: number | null;
-    /** Trials with readable token telemetry. */
-    measured: number;
-    /** Trials without readable token telemetry. */
-    unknown: number;
+    /** Observed steps carrying token telemetry. */
+    measuredSteps: number;
+    /** Observed steps without token telemetry. */
+    unknownSteps: number;
+    /** Trials whose session trail was readable. */
+    measuredTrials: number;
+    /** Trials whose session trail was unreadable. */
+    unknownTrials: number;
 }
 
 /** Cost availability: token telemetry is not a monetary cost. */
@@ -177,11 +181,12 @@ export interface AnalysisReceipt {
     policyId: string;
     /** The injected rendering timestamp. */
     renderedAt: string;
-    /** Every consumed input with its identity and explicit state, sorted. */
+    /** Every consumed observation with its identity and explicit state, sorted. */
     inputs: Array<{
         reference: string;
+        kind: "file" | "directory";
         sha256: string | null;
-        state: "available" | "missing";
+        state: "available" | "missing" | "not-a-directory" | "malformed";
     }>;
 }
 
@@ -547,24 +552,32 @@ function integritySection(result: AnalysisResult): string {
         `Hashed input sources: ${num(result.integrity.sources.length)}. The full consumed-input list and the rendering identity are in analysis-receipt.json.`,
         "",
         table(
-            ["Measure", "Captured", "Measured trials", "Unknown trials"],
+            ["Measure", "Captured", "Coverage", "Unknown"],
             [
                 [
-                    "Tokens (input/output/reasoning/cache-read) and steps",
-                    usage.measured === 0
+                    "Tokens (input/output/reasoning/cache-read)",
+                    usage.measuredSteps === 0
                         ? "—"
-                        : `${num(usage.input)}/${num(usage.output)}/${num(usage.reasoning)}/${num(usage.cacheRead)} tokens, ${num(usage.steps)} steps`,
-                    num(usage.measured),
-                    num(usage.unknown),
+                        : `${num(usage.input)}/${num(usage.output)}/${num(usage.reasoning)}/${num(usage.cacheRead)}`,
+                    `${num(usage.measuredSteps)} observed step(s) measured`,
+                    `${num(usage.unknownSteps)} observed step(s) without token telemetry`,
+                ],
+                [
+                    "Steps observed",
+                    num(usage.steps),
+                    `${num(usage.measuredTrials)} readable trail(s)`,
+                    `${num(usage.unknownTrials)} unreadable trail(s)`,
                 ],
                 [
                     "Monetary cost",
                     "—",
-                    "0",
-                    num(usage.measured + usage.unknown),
+                    "not recorded",
+                    `${num(usage.measuredTrials + usage.unknownTrials)} trial(s)`,
                 ],
             ],
         ),
+        "",
+        "Token totals are subtotals over measured steps; absent token fields stay unknown, explicit zeros are measured, and a step without token fields still counts as an observed step.",
         "",
         `Cost telemetry: ${result.cost.available ? "recorded" : "unavailable"}. ${result.cost.note}`,
         "",

@@ -110,7 +110,15 @@ describe("loadTrialRecord", () => {
         assert.equal(record.tokens.state, "available");
         assert.deepEqual(
             record.tokens.state === "available" ? record.tokens.value : null,
-            { input: 10, output: 5, reasoning: 0, cacheRead: 2, steps: 1 },
+            {
+                input: 10,
+                output: 5,
+                reasoning: 0,
+                cacheRead: 2,
+                steps: 1,
+                measuredSteps: 1,
+                unknownSteps: 0,
+            },
         );
         assert.equal(record.artefacts.finalAnswer.state, "available");
     });

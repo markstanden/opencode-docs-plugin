@@ -39,7 +39,7 @@ capability, executes no campaign code, refuses outputs overlapping the evidence
 root, refuses an accidental overwrite, and never writes `INTERPRETATION.md`.
 Publication pre-flights the whole output set (refusing symlinked or aliasing
 names) and writes exclusive temps before renaming; the receipt records every
-consumed evidence file with its state and hash.
+consumed file and directory observation with its state and stable hash.
 
 ## Replay anchors (verified against recorded evidence)
 
@@ -138,9 +138,10 @@ clause does not negate the later assertion. `5000 milliseconds` is accepted;
 
 The test count and the test-file count are different figures, and the earlier
 record's "930 contract tests" predates this correction pass:
-**958 tests across 27 test files** at the corrected head (930 across 26 before
+**962 tests across 27 test files** at the corrected head (930 across 26 before
 the remediation backlog; one new file, `tests/analysis-integrity.test.ts`,
-holds the receipt, publication, usage/ledger and CLI evidence-state regressions).
+holds the receipt, publication, usage/ledger, token-coverage and CLI
+evidence-state regressions).
 
 The earlier coverage run included `analysis/**/*.ts` only and **excluded the
 `.mts` CLI**, so its aggregate could not describe the file that assembles and
@@ -154,11 +155,11 @@ node --test --experimental-test-coverage \
 
 | Area                               | Line   | Branch | Function |
 | ---------------------------------- | ------ | ------ | -------- |
-| all analysis modules, CLI included | 95.27% | 82.87% | 98.70%   |
-| `analyse.mts` (the CLI)            | 94.58% | 70.00% | 98.39%   |
+| all analysis modules, CLI included | 95.13% | 82.88% | 98.71%   |
+| `analyse.mts` (the CLI)            | 93.75% | 69.74% | 98.41%   |
 | `model.ts`                         | 90.98% | 71.35% | 100%     |
 | `scan.ts`                          | 92.40% | 92.77% | 92.31%   |
-| `records.ts`                       | 92.39% | 82.63% | 100%     |
+| `records.ts`                       | 92.56% | 82.35% | 100%     |
 
 The gate's coverage include is still `src/**/*.ts` and Sonar's `sonar.sources`
 is still `src`, so harness coverage is measured here as information and is
@@ -190,18 +191,21 @@ The review found that the result did not bind to the evidence that decided it,
 and that several advertised capabilities were accepted but unread. Corrections,
 append-only on the same branch:
 
-- **Receipt binding.** The evidence reader records every consumed text file with
-  a stable root-relative reference, an explicit `available`/`missing` state and
-  a SHA-256 when readable; the out-of-tree manifest has its own identity.
-  Changing the selected judgement on a corpus copy changes exactly that receipt
-  entry. Findings and reconciliation rows now carry `trial`, `role`
+- **Receipt binding.** The evidence reader records every consumed observation —
+  files and directories — with a stable root-relative reference, an explicit
+  state and a SHA-256 when readable; a readable directory's identity is the hash
+  of its sorted entries, so a missing lake and a recorded empty lake cannot
+  share an entry. The out-of-tree manifest has its own identity. Changing the
+  selected judgement on a corpus copy changes exactly that receipt entry.
+  Findings and reconciliation rows now carry `trial`, `role`
   (before/after/response/prompt/writes) and a root-relative source, so two
   trials with byte-identical `final.md` remain distinguishable.
 - **Publication safety.** The whole output set is pre-flighted before any write:
   a symlinked output name, a non-file target, or a target aliasing the manifest,
-  `INTERPRETATION.md` or consumed evidence is refused with the previous outputs
-  untouched. Publication uses exclusive temp creation (`"wx"`), writes through
-  the descriptor, then renames.
+  `INTERPRETATION.md` or consumed evidence is refused before staging. All
+  exclusive temps are written before the first rename, so a staging failure
+  leaves the previous outputs untouched; each rename is atomic, but an
+  interruption between renames can leave a mixed generation.
 - **Declared populations.** The sensitivity grid now spreads the campaign's
   declared non-grid weights, so the baseline cell equals accounting; the
   threshold limb evaluates the full-population interval and keeps the assessed
@@ -218,13 +222,16 @@ append-only on the same branch:
   and silently read as ac-v1 — implementing that adapter remains future work.
   A declared `evidence.inputs.attempts` ledger is reconciled against the
   schedule (events, missing launches, missing judge attempts, unknown stamps,
-  duplicate launches) and surfaced in JSON/Markdown. Token/step usage is reported
-  with measured/unknown counts; totals are `null` when nothing was measured, and
-  cost is explicitly unavailable rather than a measured zero.
+  duplicate launches) and surfaced in JSON/Markdown. Step coverage is tracked
+  independently from token coverage: a `step_finish` without token fields is an
+  observed step with unknown tokens, explicit zeros are measured, and a known
+  subtotal is reported with its measured/unknown step counts. Token totals are
+  `null` when no step carried telemetry; cost is explicitly unavailable rather
+  than a measured zero.
 
 ## Facts
 
-- 958 contract tests pass across 27 test files at the corrected head (930
+- 962 contract tests pass across 27 test files at the corrected head (930
   across 26 before this pass); typecheck passes; `defined comply` is compliant;
   `replication/verify.mjs` is 32/32.
 - Manifests validate in CI without external evidence; the mini corpus exercises

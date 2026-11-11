@@ -72,8 +72,9 @@ interface Receipt {
     renderedAt: string;
     inputs: Array<{
         reference: string;
+        kind: "file" | "directory";
         sha256: string | null;
-        state: "available" | "missing";
+        state: "available" | "missing" | "not-a-directory" | "malformed";
     }>;
 }
 
@@ -86,8 +87,10 @@ interface Analysis {
         reasoning: number | null;
         cacheRead: number | null;
         steps: number | null;
-        measured: number;
-        unknown: number;
+        measuredSteps: number;
+        unknownSteps: number;
+        measuredTrials: number;
+        unknownTrials: number;
     };
     cost: { available: boolean; note: string };
     ledger: null | {
@@ -151,6 +154,82 @@ describe("analysis receipt binding", () => {
             );
             assert.deepEqual(first.inputs, later.inputs);
             assert.notEqual(first.renderedAt, later.renderedAt);
+        } finally {
+            rmSync(space.dir, { recursive: true, force: true });
+        }
+    });
+
+    it("binds a directory observation to the receipt when a missing lake becomes an empty one", () => {
+        // Arrange
+        const space = workspace("receipt-directory");
+        const beforeDir = "a/fixtures/R01/lakes/docs";
+        try {
+            assert.equal(analyse(space).status, 0);
+            const beforeReceipt = readJson<Receipt>(
+                join(space.out, "analysis-receipt.json"),
+            );
+            const beforeAnalysis = readJson<Analysis>(
+                join(space.out, "analysis.json"),
+            );
+            const beforeEntry = beforeReceipt.inputs.find(
+                (input) => input.reference === beforeDir,
+            );
+            assert.equal(beforeEntry?.kind, "directory");
+            assert.equal(beforeEntry?.state, "missing");
+            assert.equal(beforeEntry?.sha256, null);
+            assert.ok(
+                beforeAnalysis.limitations.some((line) =>
+                    line.includes("missing before/after lake snapshots for 2"),
+                ),
+            );
+            mkdirSync(join(space.evidence, beforeDir), { recursive: true });
+
+            // Act
+            const rerun = analyse(space, ["--rerender"]);
+
+            // Assert
+            assert.equal(rerun.status, 0, rerun.stderr);
+            const afterReceipt = readJson<Receipt>(
+                join(space.out, "analysis-receipt.json"),
+            );
+            const afterAnalysis = readJson<Analysis>(
+                join(space.out, "analysis.json"),
+            );
+            const afterEntry = afterReceipt.inputs.find(
+                (input) => input.reference === beforeDir,
+            );
+            assert.equal(afterEntry?.kind, "directory");
+            assert.equal(afterEntry?.state, "available");
+            assert.equal(
+                afterEntry?.sha256,
+                // SHA-256 of the JSON-serialised sorted, empty entry list.
+                "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            );
+            assert.ok(
+                afterAnalysis.limitations.some((line) =>
+                    line.includes("missing before/after lake snapshots for 1"),
+                ),
+            );
+            const beforeByKey = new Map(
+                beforeReceipt.inputs.map((input) => [
+                    `${input.kind}\u0000${input.reference}`,
+                    input,
+                ]),
+            );
+            const afterByKey = new Map(
+                afterReceipt.inputs.map((input) => [
+                    `${input.kind}\u0000${input.reference}`,
+                    input,
+                ]),
+            );
+            const differing = [
+                ...new Set([...beforeByKey.keys(), ...afterByKey.keys()]),
+            ].filter(
+                (key) =>
+                    JSON.stringify(beforeByKey.get(key)) !==
+                    JSON.stringify(afterByKey.get(key)),
+            );
+            assert.deepEqual(differing, [`directory\u0000${beforeDir}`]);
         } finally {
             rmSync(space.dir, { recursive: true, force: true });
         }
@@ -463,8 +542,10 @@ describe("capture, usage and ledger observability", () => {
             assert.equal(analysis.usage.reasoning, null);
             assert.equal(analysis.usage.cacheRead, null);
             assert.equal(analysis.usage.steps, null);
-            assert.equal(analysis.usage.measured, 0);
-            assert.equal(analysis.usage.unknown, 4);
+            assert.equal(analysis.usage.measuredSteps, 0);
+            assert.equal(analysis.usage.unknownSteps, 0);
+            assert.equal(analysis.usage.measuredTrials, 0);
+            assert.equal(analysis.usage.unknownTrials, 4);
             assert.equal(analysis.cost.available, false);
             assert.match(analysis.cost.note, /without an invented price/);
             const report = readFileSync(join(space.out, "REPORT.md"), "utf8");
@@ -485,8 +566,11 @@ describe("capture, usage and ledger observability", () => {
             const analysis = readJson<Analysis>(
                 join(space.out, "analysis.json"),
             );
-            assert.equal(analysis.usage.measured, 4);
-            assert.equal(analysis.usage.unknown, 0);
+            assert.equal(analysis.usage.steps, 4);
+            assert.equal(analysis.usage.measuredSteps, 4);
+            assert.equal(analysis.usage.unknownSteps, 0);
+            assert.equal(analysis.usage.measuredTrials, 4);
+            assert.equal(analysis.usage.unknownTrials, 0);
             assert.equal(typeof analysis.usage.input, "number");
             assert.ok((analysis.usage.input ?? 0) > 0);
         } finally {
@@ -551,6 +635,139 @@ describe("capture, usage and ledger observability", () => {
             );
         } finally {
             rmSync(base.dir, { recursive: true, force: true });
+            rmSync(space.dir, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("token coverage through the CLI", () => {
+    /** The four mini trials' session trails. */
+    const trails = [
+        "a/results/cc-A-r0-R01/R01/stdout.jsonl",
+        "a/results/cc-A-r0-R02/R02/stdout.jsonl",
+        "b/results/cc-B-r0-R01/R01/stdout.jsonl",
+        "b/results/cc-B-r0-R02/R02/stdout.jsonl",
+    ];
+    const step = (tokens?: string): string =>
+        tokens === undefined
+            ? '{"type":"step_finish","part":{}}'
+            : `{"type":"step_finish","part":{"tokens":${tokens}}}`;
+    const writeTrail = (
+        space: Workspace,
+        trail: string,
+        lines: readonly string[],
+    ): void => {
+        writeFileSync(join(space.evidence, trail), `${lines.join("\n")}\n`);
+    };
+
+    it("counts a step with no token fields as an observed step, not a measured zero", () => {
+        // Arrange
+        const space = workspace("usage-no-tokens");
+        try {
+            for (const trail of trails) {
+                writeTrail(space, trail, [step(), step(), step(), step()]);
+            }
+
+            // Act
+            const run = analyse(space);
+
+            // Assert
+            assert.equal(run.status, 0, run.stderr);
+            const analysis = readJson<Analysis>(
+                join(space.out, "analysis.json"),
+            );
+            assert.equal(analysis.usage.steps, 16);
+            assert.equal(analysis.usage.measuredSteps, 0);
+            assert.equal(analysis.usage.unknownSteps, 16);
+            assert.equal(analysis.usage.measuredTrials, 4);
+            assert.equal(analysis.usage.unknownTrials, 0);
+            assert.equal(analysis.usage.input, null);
+            assert.equal(analysis.usage.output, null);
+            const report = readFileSync(join(space.out, "REPORT.md"), "utf8");
+            assert.match(report, /\| Steps observed \| 16 \|/);
+            assert.match(report, /0 observed step\(s\) measured/);
+            assert.match(
+                report,
+                /16 observed step\(s\) without token telemetry/,
+            );
+        } finally {
+            rmSync(space.dir, { recursive: true, force: true });
+        }
+    });
+
+    it("keeps explicit zero token counts measured", () => {
+        // Arrange
+        const space = workspace("usage-explicit-zero");
+        const zero = '{"input":0,"output":0,"reasoning":0,"cache":{"read":0}}';
+        try {
+            for (const trail of trails) {
+                writeTrail(space, trail, [
+                    step(zero),
+                    step(zero),
+                    step(zero),
+                    step(zero),
+                ]);
+            }
+
+            // Act
+            const run = analyse(space);
+
+            // Assert
+            assert.equal(run.status, 0, run.stderr);
+            const analysis = readJson<Analysis>(
+                join(space.out, "analysis.json"),
+            );
+            assert.equal(analysis.usage.steps, 16);
+            assert.equal(analysis.usage.measuredSteps, 16);
+            assert.equal(analysis.usage.unknownSteps, 0);
+            assert.equal(analysis.usage.input, 0);
+            assert.equal(analysis.usage.output, 0);
+            assert.equal(analysis.usage.reasoning, 0);
+            assert.equal(analysis.usage.cacheRead, 0);
+            const report = readFileSync(join(space.out, "REPORT.md"), "utf8");
+            assert.match(report, /16 observed step\(s\) measured/);
+            assert.match(
+                report,
+                /0 observed step\(s\) without token telemetry/,
+            );
+        } finally {
+            rmSync(space.dir, { recursive: true, force: true });
+        }
+    });
+
+    it("reports a known subtotal with its coverage when telemetry is mixed", () => {
+        // Arrange — one trial has four tokenless steps, three keep their
+        // measured step data.
+        const space = workspace("usage-mixed");
+        try {
+            writeTrail(space, trails[0]!, [step(), step(), step(), step()]);
+
+            // Act
+            const run = analyse(space);
+
+            // Assert
+            assert.equal(run.status, 0, run.stderr);
+            const analysis = readJson<Analysis>(
+                join(space.out, "analysis.json"),
+            );
+            assert.equal(analysis.usage.steps, 7);
+            assert.equal(analysis.usage.measuredSteps, 3);
+            assert.equal(analysis.usage.unknownSteps, 4);
+            assert.equal(analysis.usage.input, 300);
+            assert.equal(analysis.usage.output, 60);
+            assert.equal(analysis.usage.reasoning, 0);
+            assert.equal(analysis.usage.cacheRead, 30);
+            const report = readFileSync(join(space.out, "REPORT.md"), "utf8");
+            assert.match(report, /3 observed step\(s\) measured/);
+            assert.match(
+                report,
+                /4 observed step\(s\) without token telemetry/,
+            );
+            assert.match(
+                report,
+                /Token totals are subtotals over measured steps/,
+            );
+        } finally {
             rmSync(space.dir, { recursive: true, force: true });
         }
     });

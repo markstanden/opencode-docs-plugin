@@ -101,22 +101,42 @@ interface CliRun {
     messages: string[];
 }
 
-/** One evidence input observed at the reader boundary. */
+/** One evidence observation recorded at the reader boundary. */
 interface ConsumedInput {
     /** The stable root-relative identity. */
     reference: string;
-    /** SHA-256 of the exact bytes, or null when unavailable. */
+    /** Whether the observation was a file or a directory. */
+    kind: "file" | "directory";
+    /** SHA-256 of the file bytes or sorted directory entries, or null. */
     sha256: string | null;
-    /** Whether the input was readable. */
-    state: "available" | "missing";
+    /** The explicit observed state. */
+    state: "available" | "missing" | "not-a-directory" | "malformed";
+}
+
+/**
+ * Record one reader observation. Files and directories are keyed separately so
+ * a path probed both ways keeps both identities.
+ * @param consumed The trace.
+ * @param observation The observation to record.
+ */
+function traceObservation(
+    consumed: Map<string, ConsumedInput>,
+    observation: ConsumedInput,
+): void {
+    consumed.set(
+        `${observation.kind}\u0000${observation.reference}`,
+        observation,
+    );
 }
 
 /**
  * Read the filesystem through the analyser's evidence-reader boundary,
- * recording every text file consumed so the receipt binds to the evidence that
- * determined the result. Directory reads are not inputs: they yield no bytes.
+ * recording every file and directory observation so the receipt binds to the
+ * evidence that determined the result. A readable directory's identity is the
+ * SHA-256 of its sorted entries, so a missing tree and a recorded empty tree
+ * cannot share a receipt entry.
  * @param root The evidence root.
- * @param consumed The trace collecting every consumed text file.
+ * @param consumed The trace collecting every consumed observation.
  * @returns The reader.
  */
 function fsReader(
@@ -133,15 +153,17 @@ function fsReader(
                 if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
                     throw error;
                 }
-                consumed.set(path, {
+                traceObservation(consumed, {
                     reference: path,
+                    kind: "file",
                     sha256: null,
                     state: "missing",
                 });
                 return { state: "missing", source: path };
             }
-            consumed.set(path, {
+            traceObservation(consumed, {
                 reference: path,
+                kind: "file",
                 sha256: sha256OfText(text),
                 state: "available",
             });
@@ -154,6 +176,12 @@ function fsReader(
                 stats = statSync(full);
             } catch (error) {
                 if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+                    traceObservation(consumed, {
+                        reference: path,
+                        kind: "directory",
+                        sha256: null,
+                        state: "malformed",
+                    });
                     return {
                         state: "malformed",
                         source: path,
@@ -162,19 +190,41 @@ function fsReader(
                         ],
                     };
                 }
+                traceObservation(consumed, {
+                    reference: path,
+                    kind: "directory",
+                    sha256: null,
+                    state: "missing",
+                });
                 return { state: "missing", source: path };
             }
             // An ordinary file where a directory was expected — a README.txt
             // beside the notes, say — is a skip, never an empty directory.
-            if (!stats.isDirectory())
+            if (!stats.isDirectory()) {
+                traceObservation(consumed, {
+                    reference: path,
+                    kind: "directory",
+                    sha256: null,
+                    state: "not-a-directory",
+                });
                 return { state: "not-a-directory", source: path };
+            }
             try {
-                return {
+                const value = readdirSync(full).sort();
+                traceObservation(consumed, {
+                    reference: path,
+                    kind: "directory",
+                    sha256: sha256OfText(JSON.stringify(value)),
                     state: "available",
-                    value: readdirSync(full).sort(),
-                    source: path,
-                };
+                });
+                return { state: "available", value, source: path };
             } catch (error) {
+                traceObservation(consumed, {
+                    reference: path,
+                    kind: "directory",
+                    sha256: null,
+                    state: "malformed",
+                });
                 return {
                     state: "malformed",
                     source: path,
@@ -609,39 +659,45 @@ function screenCampaign(
  * @returns The usage summary with measured/unknown counts.
  */
 function usageOf(records: readonly TrialRecord[]): UsageSummary {
-    let measured = 0;
-    let unknown = 0;
+    let measuredSteps = 0;
+    let unknownSteps = 0;
+    let measuredTrials = 0;
+    let unknownTrials = 0;
+    let steps = 0;
+    let anyTrailReadable = false;
     const totals = {
         input: 0,
         output: 0,
         reasoning: 0,
         cacheRead: 0,
-        steps: 0,
     };
     for (const record of records) {
-        if (record.tokens.state === "available") {
-            measured += 1;
-            totals.input += record.tokens.value.input;
-            totals.output += record.tokens.value.output;
-            totals.reasoning += record.tokens.value.reasoning;
-            totals.cacheRead += record.tokens.value.cacheRead;
-            totals.steps += record.tokens.value.steps;
-        } else {
-            unknown += 1;
+        if (record.tokens.state !== "available") {
+            unknownTrials += 1;
+            continue;
         }
+        measuredTrials += 1;
+        anyTrailReadable = true;
+        steps += record.tokens.value.steps;
+        measuredSteps += record.tokens.value.measuredSteps;
+        unknownSteps += record.tokens.value.unknownSteps;
+        totals.input += record.tokens.value.input;
+        totals.output += record.tokens.value.output;
+        totals.reasoning += record.tokens.value.reasoning;
+        totals.cacheRead += record.tokens.value.cacheRead;
     }
-    if (measured === 0) {
-        return {
-            input: null,
-            output: null,
-            reasoning: null,
-            cacheRead: null,
-            steps: null,
-            measured,
-            unknown,
-        };
-    }
-    return { ...totals, measured, unknown };
+    const tokenTotalsMeasured = measuredSteps > 0;
+    return {
+        input: tokenTotalsMeasured ? totals.input : null,
+        output: tokenTotalsMeasured ? totals.output : null,
+        reasoning: tokenTotalsMeasured ? totals.reasoning : null,
+        cacheRead: tokenTotalsMeasured ? totals.cacheRead : null,
+        steps: anyTrailReadable ? steps : null,
+        measuredSteps,
+        unknownSteps,
+        measuredTrials,
+        unknownTrials,
+    };
 }
 
 /** Per-event and per-stamp counts read from one attempt ledger. */
@@ -857,7 +913,7 @@ function limitationsOf(
         screen.missingSnapshots > 0
             ? `Screening read missing before/after lake snapshots for ${String(screen.missingSnapshots)} trial(s).`
             : "Every screened trial had readable before/after lake snapshots.",
-        `Token telemetry was measured for ${String(usage.measured)} and unknown for ${String(usage.unknown)} trial(s).`,
+        `Token telemetry covered ${String(usage.measuredSteps)} observed step(s) and left ${String(usage.unknownSteps)} unknown; ${String(usage.measuredTrials)} trial trail(s) were readable and ${String(usage.unknownTrials)} unreadable.`,
         ...(ledgerLine === undefined ? [] : [ledgerLine]),
         ...records.flatMap((record) =>
             record.attempt.problems
@@ -1080,10 +1136,12 @@ function acquireTemp(
 }
 
 /**
- * Publish the whole output set: every exclusive temp is created and fully
- * written before any rename, so a failed publication leaves the previous
- * outputs untouched. A seeded symlink or foreign object at a temp name is
- * never followed or removed.
+ * Publish the pre-flighted output set. Every exclusive temp is created and
+ * fully written before the first rename, so a failure during staging leaves
+ * the previous outputs untouched. Each rename then replaces one file
+ * atomically, but an interruption between renames can leave outputs from two
+ * generations (some new, some previous). A seeded symlink or foreign object at
+ * a temp name is never followed or removed.
  * @param out The output directory.
  * @param contents The fixed output names and their bytes.
  */
@@ -1177,11 +1235,14 @@ export function runAnalysis(argv: readonly string[]): CliRun {
         inputs: [
             {
                 reference: "campaign-manifest",
+                kind: "file" as const,
                 sha256: result.manifestSha256,
                 state: "available" as const,
             },
-            ...[...consumed.values()].sort((left, right) =>
-                left.reference.localeCompare(right.reference),
+            ...[...consumed.values()].sort(
+                (left, right) =>
+                    left.reference.localeCompare(right.reference) ||
+                    left.kind.localeCompare(right.kind),
             ),
         ],
     };
