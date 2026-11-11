@@ -669,18 +669,22 @@ function countRow(arm: string, measures: MeasuresReport): string[] {
         success: 0,
         planned: 0,
         unknown: 0,
+        notRun: 0,
     };
     const retrieval = one?.retrieval ?? {
         applied: 0,
         planned: 0,
         unknown: 0,
+        notRun: 0,
     };
     return [
         arm,
         `${String(recording.success)}/${String(recording.planned)}`,
         String(recording.unknown),
+        String(recording.notRun),
         `${String(retrieval.applied)}/${String(retrieval.planned)}`,
         String(retrieval.unknown),
+        String(retrieval.notRun),
     ];
 }
 
@@ -726,8 +730,10 @@ function measuresSection(result: AnalysisResult): string {
             "Arm",
             "Recording",
             "Recording unknown",
+            "Recording not run",
             "Retrieval",
             "Retrieval unknown",
+            "Retrieval not run",
         ],
         arms.map((arm) => countRow(arm, measures)),
     );

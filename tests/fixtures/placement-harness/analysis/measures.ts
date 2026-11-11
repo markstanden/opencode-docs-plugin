@@ -66,6 +66,7 @@ export interface RecordingMeasure {
         | "tool-error"
         | "no-write"
         | "unknown"
+        | "not-run"
         | "not-eligible";
     /** Whether a verified useful plugin-mediated write landed. */
     success: boolean;
@@ -83,8 +84,8 @@ export interface RecordingMeasure {
 export interface RetrievalMeasure {
     /** Whether the scenario is in the retrieval denominator. */
     eligible: boolean;
-    /** The resolved state: applied, miss, unknown or not eligible. */
-    state: "applied" | "miss" | "unknown" | "not-eligible";
+    /** The resolved state: applied, miss, unknown, not run or not eligible. */
+    state: "applied" | "miss" | "unknown" | "not-run" | "not-eligible";
     /** Whether an attributable completed read of the declared note exists. */
     read: boolean;
     /** The judge's recorded retrieval state, when present. */
@@ -119,6 +120,7 @@ export interface ArmMeasureSummary {
         success: number;
         miss: number;
         unknown: number;
+        notRun: number;
         dispositions: Record<string, number>;
     };
     /** Retrieval out of the planned five. */
@@ -127,6 +129,7 @@ export interface ArmMeasureSummary {
         applied: number;
         miss: number;
         unknown: number;
+        notRun: number;
         states: Record<string, number>;
     };
 }
@@ -388,6 +391,7 @@ interface MeasureContext {
     gate: string | null;
     outcome: DocumentationOutcome | null;
     primary: string;
+    notRun: boolean;
     recordingEligible: boolean;
     retrievalDeclaration: RetrievalDeclaration | undefined;
 }
@@ -410,6 +414,9 @@ function contextOf(
             record.gate.state === "available" ? record.gate.value.status : null,
         outcome: record.assessment.outcome ?? null,
         primary: record.primary.status,
+        notRun:
+            record.attempt.state === "absent" ||
+            record.assessment.status === "not-run",
         recordingEligible: declarations.recording.includes(
             record.identity.scenario,
         ),
@@ -417,14 +424,15 @@ function contextOf(
     };
 }
 
-/** The deterministic disposition of a trial's documentation write. */
-function dispositionOf(
+/** The dispositions decided before any write is inspected. */
+function earlyDisposition(
     context: MeasureContext,
-    completedAdds: DocsOperation[],
-    failedAdds: DocsOperation[],
-): { disposition: RecordingMeasure["disposition"]; evidence: string[] } {
+): { disposition: RecordingMeasure["disposition"]; evidence: string[] } | null {
     if (!context.recordingEligible) {
         return { disposition: "not-eligible", evidence: [] };
+    }
+    if (context.notRun) {
+        return { disposition: "not-run", evidence: [] };
     }
     if (context.gate === "blocked") {
         const reason =
@@ -444,6 +452,17 @@ function dispositionOf(
             ],
         };
     }
+    return null;
+}
+
+/** The deterministic disposition of a trial's documentation write. */
+function dispositionOf(
+    context: MeasureContext,
+    completedAdds: DocsOperation[],
+    failedAdds: DocsOperation[],
+): { disposition: RecordingMeasure["disposition"]; evidence: string[] } {
+    const early = earlyDisposition(context);
+    if (early !== null) return early;
     if (completedAdds.length > 0) {
         return completedWrite(context);
     }
@@ -524,6 +543,16 @@ function retrievalOf(context: MeasureContext): {
             read: false,
             judgeState: null,
             note: null,
+            trace: [],
+            evidence: [],
+        };
+    }
+    if (context.notRun) {
+        return {
+            state: "not-run",
+            read: false,
+            judgeState: null,
+            note: declaration.note,
             trace: [],
             evidence: [],
         };
@@ -654,9 +683,39 @@ function emptyCounts(): {
     success: number;
     miss: number;
     unknown: number;
+    notRun: number;
     dispositions: Record<string, number>;
 } {
-    return { success: 0, miss: 0, unknown: 0, dispositions: {} };
+    return {
+        success: 0,
+        miss: 0,
+        unknown: 0,
+        notRun: 0,
+        dispositions: {},
+    };
+}
+
+/** Add one trial to an arm's opportunity counts. */
+function countTrial(
+    trial: TrialMeasures,
+    recording: ReturnType<typeof emptyCounts>,
+    retrieval: ReturnType<typeof emptyCounts>,
+): void {
+    if (trial.recording.eligible) {
+        const disposition = trial.recording.disposition;
+        recording.dispositions[disposition] =
+            (recording.dispositions[disposition] ?? 0) + 1;
+        if (trial.recording.success) recording.success += 1;
+        else if (disposition === "unknown") recording.unknown += 1;
+        else if (disposition === "not-run") recording.notRun += 1;
+        else recording.miss += 1;
+    }
+    if (!trial.retrieval.eligible) return;
+    const state = trial.retrieval.state;
+    if (state === "applied") retrieval.success += 1;
+    else if (state === "unknown") retrieval.unknown += 1;
+    else if (state === "not-run") retrieval.notRun += 1;
+    else retrieval.miss += 1;
 }
 
 /**
@@ -677,21 +736,7 @@ export function summariseMeasures(
         const recording = emptyCounts();
         const retrieval = emptyCounts();
         for (const trial of trials.filter((one) => one.arm === arm)) {
-            if (trial.recording.eligible) {
-                recording.dispositions[trial.recording.disposition] =
-                    (recording.dispositions[trial.recording.disposition] ?? 0) +
-                    1;
-                if (trial.recording.success) recording.success += 1;
-                else if (trial.recording.disposition === "unknown")
-                    recording.unknown += 1;
-                else recording.miss += 1;
-            }
-            if (trial.retrieval.eligible) {
-                if (trial.retrieval.state === "applied") retrieval.success += 1;
-                else if (trial.retrieval.state === "unknown")
-                    retrieval.unknown += 1;
-                else retrieval.miss += 1;
-            }
+            countTrial(trial, recording, retrieval);
         }
         result[arm] = {
             recording: {
@@ -711,6 +756,7 @@ export function summariseMeasures(
                 applied: retrieval.success,
                 miss: retrieval.miss,
                 unknown: retrieval.unknown,
+                notRun: retrieval.notRun,
                 states: retrieval.dispositions,
             },
         };
