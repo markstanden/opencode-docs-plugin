@@ -1,0 +1,6 @@
+{
+    "status": "judged",
+    "documentationOutcome": "transient",
+    "documentationReason": "one-off transient note with no future value",
+    "evidence": ["The dev server was killed and left a stale socket"]
+}

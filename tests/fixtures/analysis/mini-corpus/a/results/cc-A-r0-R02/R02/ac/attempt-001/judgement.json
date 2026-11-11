@@ -1,0 +1,24 @@
+{
+    "status": "judged",
+    "documentationOutcome": "none",
+    "documentationReason": "restraint: the existing note already states the corrected facts",
+    "evidence": ["The pool holds at most 10 connections."],
+    "preservation": {
+        "poolSize": {
+            "state": "retained",
+            "quote": "The pool holds at most 10 connections."
+        },
+        "acquireTimeout": {
+            "state": "retained",
+            "quote": "Acquiring a connection waits up to 5 seconds before failing."
+        },
+        "startupMigrations": {
+            "state": "retained",
+            "quote": "Migrations run at application startup."
+        },
+        "obsoleteTlsClaim": {
+            "state": "removed",
+            "quote": "Connections use `sslmode=disable`."
+        }
+    }
+}

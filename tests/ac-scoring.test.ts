@@ -13,6 +13,7 @@ import {
     validateAcJudgement,
     type DocumentationOutcome,
     type ScoredTrial,
+    type UtilityWeights,
 } from "./fixtures/placement-harness/ac-scoring.mts";
 
 type TrialOverrides = Omit<Partial<ScoredTrial>, "outcome"> & {
@@ -863,5 +864,36 @@ describe("sensitivity", () => {
         const costly = cells.find((cell) => cell.transient === 2);
         assert.deepEqual(free?.ranking, ["A", "B"]);
         assert.deepEqual(costly?.ranking, ["B", "A"]);
+    });
+
+    it("holds the declared non-grid weights at the baseline grid point", () => {
+        // Arrange — the mini manifest's duplicate penalty, not the default.
+        const declared: UtilityWeights = {
+            useful: 5,
+            transient: -1,
+            duplicate: -8,
+            misleading: -5,
+            taskFailure: -5,
+        };
+        const arms = {
+            A: [
+                trial({ arm: "A", outcome: "duplicate" }),
+                trial({ arm: "A", outcome: "transient" }),
+            ],
+            B: [trial({ arm: "B", outcome: "useful-create" })],
+        };
+
+        // Act
+        const cells = sensitivity(arms, [5], [1], declared);
+        const baseline = cells[0];
+
+        // Assert
+        assert.deepEqual(baseline?.totals, {
+            A:
+                trialUtility(arms.A[0]!, declared).score +
+                trialUtility(arms.A[1]!, declared).score,
+            B: trialUtility(arms.B[0]!, declared).score,
+        });
+        assert.equal(baseline?.totals.A, -9);
     });
 });

@@ -96,7 +96,8 @@ export const DEFAULT_WEIGHTS: UtilityWeights = {
     taskFailure: -5,
 };
 
-const OUTCOMES: readonly DocumentationOutcome[] = [
+/** The one documentation outcome a trial receives. */
+export const DOCUMENTATION_OUTCOMES: readonly DocumentationOutcome[] = [
     "useful-create",
     "useful-update",
     "transient",
@@ -271,10 +272,10 @@ function judgementSchemaProblems(value: Record<string, unknown>): string[] {
     const outcome = value.documentationOutcome;
     if (
         typeof outcome !== "string" ||
-        !OUTCOMES.includes(outcome as DocumentationOutcome)
+        !DOCUMENTATION_OUTCOMES.includes(outcome as DocumentationOutcome)
     ) {
         problems.push(
-            `documentationOutcome must be one of ${OUTCOMES.join("|")}`,
+            `documentationOutcome must be one of ${DOCUMENTATION_OUTCOMES.join("|")}`,
         );
     }
     if (
@@ -464,6 +465,24 @@ export function documentationScore(
     }
 }
 
+/**
+ * The closed documentation interval for an unassessed outcome: the lowest and
+ * highest score any allowed outcome can earn under the declared weights.
+ * Derived from the policy, never assumed — a custom duplicate penalty can sit
+ * below the misleading penalty, and the interval must follow it.
+ * @param weights The frozen utility weights.
+ * @returns The lowest and highest possible documentation scores.
+ */
+export function documentationRange(weights: UtilityWeights = DEFAULT_WEIGHTS): {
+    low: number;
+    high: number;
+} {
+    const scores = DOCUMENTATION_OUTCOMES.map((outcome) =>
+        documentationScore(outcome, weights),
+    );
+    return { low: Math.min(...scores), high: Math.max(...scores) };
+}
+
 /** The task component's closed bounds for a known or unknown primary result. */
 function taskBounds(
     primary: ScoredTrial["primary"],
@@ -480,9 +499,10 @@ function taskBounds(
  * One trial's utility, or a closed interval when a component is unknown.
  *
  * An unassessed documentation outcome contributes nothing and is reported as
- * missing, never as zero. The documentation interval is the full outcome range;
- * the task interval retains whatever the primary check already established, so
- * a known pass does not widen the bound as though it too were unknown.
+ * missing, never as zero. The documentation interval is the full range of
+ * allowed outcome scores under the declared weights; the task interval
+ * retains whatever the primary check already established, so a known pass
+ * does not widen the bound as though it too were unknown.
  */
 export function trialUtility(
     trial: ScoredTrial,
@@ -490,10 +510,11 @@ export function trialUtility(
 ): { score: number; low: number; high: number; assessed: boolean } {
     const task = taskBounds(trial.primary, weights);
     if (!trial.usable || trial.outcome === undefined) {
+        const range = documentationRange(weights);
         return {
             score: 0,
-            low: weights.misleading + task.low,
-            high: weights.useful + task.high,
+            low: range.low + task.low,
+            high: range.high + task.high,
             assessed: false,
         };
     }
@@ -702,23 +723,27 @@ export interface SensitivityCell {
 
 /**
  * Re-score every arm under the requested weight grid, holding the other
- * penalties fixed. This explores preferences; it is not nine experiments.
+ * penalties fixed at the campaign's declared weights. This explores
+ * preferences; it is not nine experiments.
  * @param arms The planned trials, keyed by arm.
  * @param usefulWeights The useful create/update rewards to try.
  * @param transientPenalties The transient penalties to try, as positive
  *   magnitudes applied as negative scores.
+ * @param baseWeights The campaign's non-grid weights; defaults to the
+ *   prospective defaults so legacy callers keep their frozen baseline.
  * @returns One cell per combination, with totals and the resulting ranking.
  */
 export function sensitivity(
     arms: Record<string, ScoredTrial[]>,
     usefulWeights: number[],
     transientPenalties: number[],
+    baseWeights: UtilityWeights = DEFAULT_WEIGHTS,
 ): SensitivityCell[] {
     const cells: SensitivityCell[] = [];
     for (const useful of usefulWeights) {
         for (const transient of transientPenalties) {
             const weights: UtilityWeights = {
-                ...DEFAULT_WEIGHTS,
+                ...baseWeights,
                 useful,
                 transient: -Math.abs(transient),
             };

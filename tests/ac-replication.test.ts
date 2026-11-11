@@ -9,6 +9,15 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const replication = join(here, "fixtures", "placement-harness", "replication");
+const inventoryModule = join(
+    here,
+    "fixtures",
+    "placement-harness",
+    "analysis",
+    "screening",
+    "inventory.ts",
+);
+const inventoryJson = join(replication, "r02-inventory.json");
 const hash = (value: string) =>
     createHash("sha256").update(value, "utf8").digest("hex");
 
@@ -251,7 +260,9 @@ test("the preservation screen keeps the full triggering assertion and spans", ()
     // Arrange: the exact B r0 document and a true contradiction whose
     // neighbouring clause contains an affirmative migration statement.
     const script = `
-        import { preservationScreen } from ${JSON.stringify(join(replication, "preservation.mjs"))};
+        import { readFileSync } from "node:fs";
+        import { preservationScreen } from ${JSON.stringify(inventoryModule)};
+        const inventory = JSON.parse(readFileSync(${JSON.stringify(inventoryJson)}, "utf8"));
         const bR0 = [
           "# Connection pool",
           "",
@@ -272,8 +283,8 @@ test("the preservation screen keeps the full triggering assertion and spans", ()
           "- Acquiring a connection waits up to 5 seconds before failing.",
           "- TLS is required.",
         ].join("\\n");
-        const bR0Screen = preservationScreen(bR0);
-        const trickyScreen = preservationScreen(tricky);
+        const bR0Screen = preservationScreen(bR0, inventory);
+        const trickyScreen = preservationScreen(tricky, inventory);
         process.stdout.write(JSON.stringify({ bR0Screen, trickyScreen }));
     `;
 
@@ -296,10 +307,10 @@ test("the preservation screen keeps the full triggering assertion and spans", ()
             status: string;
             contradicted: string[];
             triggers: Array<{
-                bullet: string;
+                context: string;
                 assertion: string;
-                negatedSpan: string;
-                factSpan: string;
+                negation: { text: string; start: number; end: number };
+                mention: { text: string; start: number; end: number };
             }>;
         };
     };
@@ -307,26 +318,28 @@ test("the preservation screen keeps the full triggering assertion and spans", ()
     assert.deepEqual(bR0Screen.contradicted, []);
     assert.deepEqual(bR0Screen.triggers, []);
     assert.equal(trickyScreen.status, "rejected");
-    assert.deepEqual(trickyScreen.contradicted, ["pool maximum of 10"]);
+    assert.deepEqual(trickyScreen.contradicted, ["poolSize"]);
     assert.equal(trickyScreen.triggers.length, 1);
     const trigger = trickyScreen.triggers[0] as {
-        bullet: string;
+        context: string;
         assertion: string;
-        negatedSpan: string;
-        factSpan: string;
+        negation: { text: string; start: number; end: number };
+        mention: { text: string; start: number; end: number };
     };
-    assert.match(trigger.bullet, /migrations run at application startup/);
+    assert.match(trigger.context, /migrations run at application startup/);
     assert.match(trigger.assertion, /no longer limited to 10 connections/);
-    assert.equal(trigger.negatedSpan, "no longer");
-    assert.match(trigger.factSpan, /10/);
+    assert.equal(trigger.negation.text, "no longer");
+    assert.match(trigger.mention.text, /10/);
 });
 
 test("R02 preservation screen accepts equivalents and rejects contradictions", () => {
     // Arrange
     const script = `
-        import { preservationScreen } from ${JSON.stringify(join(replication, "preservation.mjs"))};
+        import { readFileSync } from "node:fs";
+        import { preservationScreen } from ${JSON.stringify(inventoryModule)};
+        const inventory = JSON.parse(readFileSync(${JSON.stringify(inventoryJson)}, "utf8"));
         const base = "# Pool\\n\\n### Facts\\n\\n";
-        const accepted = (body) => preservationScreen(base + body).status === "accepted";
+        const accepted = (body) => preservationScreen(base + body, inventory).status === "accepted";
         const out = {
           paraphrase: accepted("- The pool is capped at ten connections.\\n- A caller waits five seconds for a connection.\\n- Schema migrations run at start-up.\\n- TLS is required.\\n"),
           loss: accepted("- TLS is required.\\n"),

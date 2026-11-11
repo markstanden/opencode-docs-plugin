@@ -1,0 +1,6 @@
+{
+    "status": "judged",
+    "documentationOutcome": "useful-create",
+    "documentationReason": "created a needed note about the BOM boundary",
+    "evidence": ["Only a leading BOM is stripped; later U+FEFF is preserved."]
+}

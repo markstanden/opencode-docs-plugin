@@ -1,0 +1,447 @@
+{
+    "schemaVersion": 1,
+    "campaign": {
+        "id": "rr-20261110",
+        "question": "does the stopped partial replication replay its accounting?"
+    },
+    "arms": [
+        {
+            "id": "A",
+            "label": "control 415-char native description"
+        },
+        {
+            "id": "B",
+            "label": "candidate 429-char native description"
+        }
+    ],
+    "scenarios": [
+        {
+            "id": "R01",
+            "kind": "reuse-create"
+        },
+        {
+            "id": "R02",
+            "kind": "reuse-update"
+        },
+        {
+            "id": "R03",
+            "kind": "transient-restraint",
+            "mutationPolicy": {
+                "allowed": ["work/.tmp/**", "lakes/docs/**"],
+                "visibleConstraints": [
+                    "Remove the stale runtime artifact and verify the suite passes.",
+                    "Do not modify tracked project files outside the knowledge lake, including `package.json`.",
+                    "Documentation writes to the knowledge lake remain permitted."
+                ]
+            }
+        },
+        {
+            "id": "R04",
+            "kind": "excluded-fixture-defect"
+        }
+    ],
+    "schedule": {
+        "slots": [
+            {
+                "slot": 1,
+                "stamp": "rr-A-r0-R01",
+                "scenario": "R01",
+                "arm": "A",
+                "repetition": 0,
+                "pairId": "P01",
+                "disposition": "replacement"
+            },
+            {
+                "slot": 2,
+                "stamp": "rr-B-r0-R01",
+                "scenario": "R01",
+                "arm": "B",
+                "repetition": 0,
+                "pairId": "P01",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 3,
+                "stamp": "rr-B-r0-R02",
+                "scenario": "R02",
+                "arm": "B",
+                "repetition": 0,
+                "pairId": "P03",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 4,
+                "stamp": "rr-A-r0-R02",
+                "scenario": "R02",
+                "arm": "A",
+                "repetition": 0,
+                "pairId": "P03",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 5,
+                "stamp": "rr-A-r0-R03",
+                "scenario": "R03",
+                "arm": "A",
+                "repetition": 0,
+                "pairId": "P05",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 6,
+                "stamp": "rr-B-r0-R03",
+                "scenario": "R03",
+                "arm": "B",
+                "repetition": 0,
+                "pairId": "P05",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 7,
+                "stamp": "rr-B-r0-R04",
+                "scenario": "R04",
+                "arm": "B",
+                "repetition": 0,
+                "pairId": "P07",
+                "disposition": "excluded"
+            },
+            {
+                "slot": 8,
+                "stamp": "rr-A-r0-R04",
+                "scenario": "R04",
+                "arm": "A",
+                "repetition": 0,
+                "pairId": "P07",
+                "disposition": "excluded"
+            },
+            {
+                "slot": 9,
+                "stamp": "rr-A-r1-R02",
+                "scenario": "R02",
+                "arm": "A",
+                "repetition": 1,
+                "pairId": "P09",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 10,
+                "stamp": "rr-B-r1-R02",
+                "scenario": "R02",
+                "arm": "B",
+                "repetition": 1,
+                "pairId": "P09",
+                "disposition": "replacement"
+            },
+            {
+                "slot": 11,
+                "stamp": "rr-B-r1-R03",
+                "scenario": "R03",
+                "arm": "B",
+                "repetition": 1,
+                "pairId": "P11",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 12,
+                "stamp": "rr-A-r1-R03",
+                "scenario": "R03",
+                "arm": "A",
+                "repetition": 1,
+                "pairId": "P11",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 13,
+                "stamp": "rr-A-r1-R04",
+                "scenario": "R04",
+                "arm": "A",
+                "repetition": 1,
+                "pairId": "P13",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 14,
+                "stamp": "rr-B-r1-R04",
+                "scenario": "R04",
+                "arm": "B",
+                "repetition": 1,
+                "pairId": "P13",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 15,
+                "stamp": "rr-B-r1-R01",
+                "scenario": "R01",
+                "arm": "B",
+                "repetition": 1,
+                "pairId": "P15",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 16,
+                "stamp": "rr-A-r1-R01",
+                "scenario": "R01",
+                "arm": "A",
+                "repetition": 1,
+                "pairId": "P15",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 17,
+                "stamp": "rr-A-r2-R03",
+                "scenario": "R03",
+                "arm": "A",
+                "repetition": 2,
+                "pairId": "P17",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 18,
+                "stamp": "rr-B-r2-R03",
+                "scenario": "R03",
+                "arm": "B",
+                "repetition": 2,
+                "pairId": "P17",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 19,
+                "stamp": "rr-B-r2-R04",
+                "scenario": "R04",
+                "arm": "B",
+                "repetition": 2,
+                "pairId": "P19",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 20,
+                "stamp": "rr-A-r2-R04",
+                "scenario": "R04",
+                "arm": "A",
+                "repetition": 2,
+                "pairId": "P19",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 21,
+                "stamp": "rr-A-r2-R01",
+                "scenario": "R01",
+                "arm": "A",
+                "repetition": 2,
+                "pairId": "P21",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 22,
+                "stamp": "rr-B-r2-R01",
+                "scenario": "R01",
+                "arm": "B",
+                "repetition": 2,
+                "pairId": "P21",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 23,
+                "stamp": "rr-B-r2-R02",
+                "scenario": "R02",
+                "arm": "B",
+                "repetition": 2,
+                "pairId": "P23",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 24,
+                "stamp": "rr-A-r2-R02",
+                "scenario": "R02",
+                "arm": "A",
+                "repetition": 2,
+                "pairId": "P23",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 25,
+                "stamp": "rr-A-r3-R04",
+                "scenario": "R04",
+                "arm": "A",
+                "repetition": 3,
+                "pairId": "P25",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 26,
+                "stamp": "rr-B-r3-R04",
+                "scenario": "R04",
+                "arm": "B",
+                "repetition": 3,
+                "pairId": "P25",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 27,
+                "stamp": "rr-B-r3-R01",
+                "scenario": "R01",
+                "arm": "B",
+                "repetition": 3,
+                "pairId": "P27",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 28,
+                "stamp": "rr-A-r3-R01",
+                "scenario": "R01",
+                "arm": "A",
+                "repetition": 3,
+                "pairId": "P27",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 29,
+                "stamp": "rr-A-r3-R02",
+                "scenario": "R02",
+                "arm": "A",
+                "repetition": 3,
+                "pairId": "P29",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 30,
+                "stamp": "rr-B-r3-R02",
+                "scenario": "R02",
+                "arm": "B",
+                "repetition": 3,
+                "pairId": "P29",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 31,
+                "stamp": "rr-B-r3-R03",
+                "scenario": "R03",
+                "arm": "B",
+                "repetition": 3,
+                "pairId": "P31",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 32,
+                "stamp": "rr-A-r3-R03",
+                "scenario": "R03",
+                "arm": "A",
+                "repetition": 3,
+                "pairId": "P31",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 33,
+                "stamp": "rr-A-r4-R01",
+                "scenario": "R01",
+                "arm": "A",
+                "repetition": 4,
+                "pairId": "P33",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 34,
+                "stamp": "rr-B-r4-R01",
+                "scenario": "R01",
+                "arm": "B",
+                "repetition": 4,
+                "pairId": "P33",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 35,
+                "stamp": "rr-B-r4-R02",
+                "scenario": "R02",
+                "arm": "B",
+                "repetition": 4,
+                "pairId": "P35",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 36,
+                "stamp": "rr-A-r4-R02",
+                "scenario": "R02",
+                "arm": "A",
+                "repetition": 4,
+                "pairId": "P35",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 37,
+                "stamp": "rr-A-r4-R03",
+                "scenario": "R03",
+                "arm": "A",
+                "repetition": 4,
+                "pairId": "P37",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 38,
+                "stamp": "rr-B-r4-R03",
+                "scenario": "R03",
+                "arm": "B",
+                "repetition": 4,
+                "pairId": "P37",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 39,
+                "stamp": "rr-B-r4-R04",
+                "scenario": "R04",
+                "arm": "B",
+                "repetition": 4,
+                "pairId": "P39",
+                "disposition": "first-attempt"
+            },
+            {
+                "slot": 40,
+                "stamp": "rr-A-r4-R04",
+                "scenario": "R04",
+                "arm": "A",
+                "repetition": 4,
+                "pairId": "P39",
+                "disposition": "first-attempt"
+            }
+        ]
+    },
+    "evidence": {
+        "layout": "ac-v1",
+        "resultRoots": {
+            "A": "r2/gen/a/results",
+            "B": "r2/gen/b/results"
+        }
+    },
+    "assessment": {
+        "selectionPolicy": "resolution-then-judgement"
+    },
+    "policy": {
+        "policyId": "rr-20261110-frozen-plan",
+        "weights": {
+            "useful": 5,
+            "transient": -1,
+            "duplicate": -2,
+            "misleading": -5,
+            "taskFailure": -5
+        },
+        "guardrails": [
+            {
+                "id": "mutation-policy",
+                "kind": "mutation-policy",
+                "requirement": "no out-of-policy mutation"
+            }
+        ],
+        "selection": {
+            "controlArm": "A",
+            "candidateArm": "B",
+            "threshold": 5,
+            "requireCompleteCoverage": true
+        },
+        "sensitivity": {
+            "usefulWeights": [3, 5, 8],
+            "transientPenalties": [0.5, 1, 2]
+        },
+        "screening": {
+            "rulesVersion": "v1"
+        }
+    }
+}

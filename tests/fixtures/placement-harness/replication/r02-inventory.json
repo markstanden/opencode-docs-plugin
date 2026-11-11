@@ -1,0 +1,36 @@
+{
+    "facts": [
+        {
+            "id": "poolSize",
+            "label": "10-connection pool cap",
+            "mentionPatterns": [
+                "\\b(?:max(?:imum)?|pool|connections?)\\b[^\\n.]{0,60}\\b(?:10|ten)\\b",
+                "\\b(?:10|ten)\\b[^\\n.]{0,60}\\b(?:connections?|pool)\\b"
+            ]
+        },
+        {
+            "id": "acquireTimeout",
+            "label": "5-second acquire timeout",
+            "mentionPatterns": [
+                "\\b(?:acquire|acquiring|wait|waits|timeout|connection)\\b[^\\n.]{0,60}\\b(?:5|five)\\s*(?:(?:\\.0)\\s*)?(?:s\\b|sec(?:ond)?s?\\b|ms\\b|milliseconds?)\\b",
+                "\\b(?:5|five)\\s*(?:(?:\\.0)\\s*)?(?:s\\b|sec(?:ond)?s?\\b|ms\\b|milliseconds?)\\b[^\\n.]{0,60}\\b(?:acquire|acquiring|wait|waits|timeout|connection)\\b",
+                "\\b5000\\s*(?:ms|milliseconds?)\\b"
+            ]
+        },
+        {
+            "id": "startupMigrations",
+            "label": "startup migrations",
+            "mentionPatterns": ["\\bmigrat"]
+        },
+        {
+            "id": "obsoleteTlsClaim",
+            "label": "obsolete sslmode=disable claim",
+            "obsoleteCurrentPatterns": [
+                "(?:sslmode\\s*=\\s*disable|ssl[^\\n.]{0,20}\\bdisable\\b)"
+            ]
+        }
+    ],
+    "negationCues": [
+        "\\b(?:no longer|not|never|unsupported|deprecated|superseded|must not|do not use|removed|obsolete)\\b"
+    ]
+}

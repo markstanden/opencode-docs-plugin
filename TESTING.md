@@ -51,6 +51,45 @@ Run `defined comply` after a coherent batch of edits and before proposing a
 commit; its JSON verdict is authoritative, and repairs it makes are real
 working-tree changes.
 
+## Trial analysis framework
+
+`tests/fixtures/placement-harness/analysis/analyse.mts` is the supported offline
+analyser: manifest validation, explicit-state evidence loading, accounting,
+declared-identity pairing, derived utility bounds, guardrail evaluation, the
+three-limb decision, the static screen and stable reporting. It makes no model
+calls and executes no campaign-supplied code.
+
+```sh
+node tests/fixtures/placement-harness/analysis/analyse.mts \
+  --campaign tests/fixtures/analysis/manifests/confirmation.json \
+  --evidence-root /home/mark/tmp/recording-confirm-20261110 \
+  --out /home/mark/tmp/confirmation-replay
+```
+
+Manifests are portable and committed under `tests/fixtures/analysis/manifests/`:
+campaign identity, arms, scenarios (preservation inventories as data), the frozen
+schedule with pair ids and declared dispositions, relative evidence roots and the
+frozen weights/guardrails/selection/sensitivity. The evidence root is supplied at
+runtime. CI validates every manifest and replays the committed synthetic corpus
+(`tests/fixtures/analysis/mini-corpus/`) without external evidence. Outputs
+(`analysis.json`, `REPORT.md`, `SCREENING.json`, `analysis-receipt.json`) must
+land outside the evidence root; an existing analysis is refused without
+`--rerender`, and `INTERPRETATION.md` is never written or overwritten. The legacy
+campaign-specific `ac/run.mjs report` route is preserved unchanged for historical
+reproduction.
+
+Replay anchors, verified against the recorded evidence on 2026-11-11:
+
+- **rc-20261110** — 40 recorded / 38 documented, 18 complete pairs, A 29 / B 26,
+  paired delta −3 (A better 5, B better 3, tied 10), bounds A `24..34`,
+  B `21..31`, full-population delta `−13..+7`, R02 preservation 8/8 assessed,
+  R04 destructive loss unresolved symmetrically.
+- **rr-20261110** — 30 documented (28 first-attempt + 2 replacements), 13
+  complete pairs and 2 unmatched observations, paired delta −2, all-scored
+  B−A +3.
+- **fr-20261110** — six-arm screening totals A 9, B 15, C −1, D −1, E −2, F 4,
+  matching the published `ANALYSIS-screening.json`.
+
 ## Behavioural placement trials
 
 `tests/fixtures/placement-cases.json` holds eighteen cases (E01–E18): each

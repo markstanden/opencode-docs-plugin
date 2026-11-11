@@ -14,11 +14,14 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { preservationScreen } from "./preservation.mjs";
+import { preservationScreen } from "../analysis/screening/inventory.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const checksDir = join(here, "..", "primary-checks");
 const cases = JSON.parse(readFileSync(join(here, "cases.json"), "utf8"));
+const inventory = JSON.parse(
+    readFileSync(join(here, "r02-inventory.json"), "utf8"),
+);
 
 const materialise = (testCase, root) => {
     for (const one of testCase.seeds) {
@@ -241,7 +244,7 @@ const expectations = {
     "negated migrations": false,
 };
 for (const [label, document] of Object.entries(examples)) {
-    const verdict = preservationScreen(document);
+    const verdict = preservationScreen(document, inventory);
     record(
         "R02-preservation",
         label,

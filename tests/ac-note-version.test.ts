@@ -9,8 +9,9 @@ const modulePath = join(
     here,
     "fixtures",
     "placement-harness",
-    "replication",
-    "note-version.mjs",
+    "analysis",
+    "screening",
+    "noteVersion.ts",
 );
 
 const verdict = (document: string): string => {
