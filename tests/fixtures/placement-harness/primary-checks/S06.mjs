@@ -19,7 +19,9 @@ if (!existsSync(answerPath)) {
 const answer = readFileSync(answerPath, "utf8");
 const problems = [];
 if (!/\bPartially Automated\b/i.test(answer)) {
-    problems.push("answer does not state the derived status Partially Automated");
+    problems.push(
+        "answer does not state the derived status Partially Automated",
+    );
 }
 if (!/\bR-1041\b/.test(answer)) {
     problems.push("answer does not cite the deciding run R-1041");

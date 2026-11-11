@@ -90,7 +90,12 @@ function need(args, name) {
 const harnessOf = (repo) =>
     join(repo, "tests/fixtures/placement-harness/harness.mts");
 
-/** Collect Markdown documents under a root as `{path, contents}`. */
+/**
+ * Collect Markdown documents under a `lakes` root as `{path, contents}`.
+ * Paths are lake-qualified (`docs/db/pool.md`), so documents in different
+ * lakes stay distinguishable and a multi-lake trial is judged from its whole
+ * surface.
+ */
 function lakeDocs(root) {
     const found = [];
     const visit = (dir) => {
@@ -218,8 +223,8 @@ function primaryEvidence(record) {
 function packetFor(base, stamp, caseId, truth, scoringSpec) {
     const caseDir = join(base, "results", stamp, caseId);
     const caseSpec = scoringSpec?.[caseId] ?? {};
-    const beforeDocs = lakeDocs(join(base, "fixtures", caseId, "lakes/docs"));
-    const afterDocs = lakeDocs(join(caseDir, "live/lakes/docs"));
+    const beforeDocs = lakeDocs(join(base, "fixtures", caseId, "lakes"));
+    const afterDocs = lakeDocs(join(caseDir, "live/lakes"));
     const state = docChanges(beforeDocs, afterDocs);
     const prompt = buildAcPrompt({
         taskPrompt: readText(join(caseDir, "prompt.md")),
@@ -236,8 +241,7 @@ function packetFor(base, stamp, caseId, truth, scoringSpec) {
         ),
         answer: readText(join(caseDir, "final.md")),
         requirePreservation:
-            caseId === PRESERVATION_CASE &&
-            caseSpec.preservation === undefined,
+            caseId === PRESERVATION_CASE && caseSpec.preservation === undefined,
         ...(caseSpec.preservation === undefined
             ? {}
             : { preservationSpec: caseSpec.preservation }),
@@ -275,22 +279,33 @@ function spawnJudge({ launcher, model, stamp, prompt, runDir, timeout }) {
 }
 
 /** The stored judgement payload for one parsed answer. */
-function judgementPayload(parsed, state, caseId, scoringSpec) {
+/**
+ * The validation options one case's measurement spec requires: R02 keeps its
+ * pinned block, a generic inventory replaces it, and a declared retrieval
+ * finding is required.
+ */
+function judgementOptions(caseId, scoringSpec) {
     const caseSpec = scoringSpec?.[caseId] ?? {};
+    const options = {
+        requirePreservation:
+            caseId === PRESERVATION_CASE && caseSpec.preservation === undefined,
+    };
+    if (caseSpec.preservation !== undefined) {
+        options.preservationSpec = caseSpec.preservation;
+    }
+    if (caseSpec.retrieval !== undefined) options.retrieval = true;
+    return options;
+}
+
+function judgementPayload(parsed, state, caseId, scoringSpec) {
     const problems =
         parsed.value === undefined
             ? parsed.problems
-            : validateAcJudgement(parsed.value, state, {
-                  requirePreservation:
-                      caseId === PRESERVATION_CASE &&
-                      caseSpec.preservation === undefined,
-                  ...(caseSpec.preservation === undefined
-                      ? {}
-                      : { preservationSpec: caseSpec.preservation }),
-                  ...(caseSpec.retrieval === undefined
-                      ? {}
-                      : { retrieval: true }),
-              });
+            : validateAcJudgement(
+                  parsed.value,
+                  state,
+                  judgementOptions(caseId, scoringSpec),
+              );
     return {
         problems,
         value:
@@ -440,7 +455,13 @@ function judge(args) {
     const scoringSpec = args.get("--spec")
         ? JSON.parse(readFileSync(need(args, "--spec"), "utf8"))
         : undefined;
-    const { prompt, state } = packetFor(base, stamp, caseId, truth, scoringSpec);
+    const { prompt, state } = packetFor(
+        base,
+        stamp,
+        caseId,
+        truth,
+        scoringSpec,
+    );
     const leaks = labelLeaks(prompt);
     if (leaks.length > 0) {
         console.error(
@@ -501,18 +522,11 @@ function resolveAttempt(attemptDir, judgement, scoringSpec) {
     if (extracted !== undefined) {
         try {
             const parsed = JSON.parse(extracted);
-            const caseSpec = scoringSpec?.[meta.caseId] ?? {};
-            const problems = validateAcJudgement(parsed, meta.state, {
-                requirePreservation:
-                    meta.caseId === PRESERVATION_CASE &&
-                    caseSpec.preservation === undefined,
-                ...(caseSpec.preservation === undefined
-                    ? {}
-                    : { preservationSpec: caseSpec.preservation }),
-                ...(caseSpec.retrieval === undefined
-                    ? {}
-                    : { retrieval: true }),
-            });
+            const problems = validateAcJudgement(
+                parsed,
+                meta.state,
+                judgementOptions(meta.caseId, scoringSpec),
+            );
             if (problems.length === 0) {
                 record.status = "judged";
                 record.parsed = parsed;
@@ -559,7 +573,10 @@ function resolve(args) {
             const attemptDir = path.slice(0, -"judgement.json".length);
             const judgement = JSON.parse(readFileSync(path, "utf8"));
             if (judgement.status === "invalid-verdict") {
-                if (resolveAttempt(attemptDir, judgement, scoringSpec) === "refused")
+                if (
+                    resolveAttempt(attemptDir, judgement, scoringSpec) ===
+                    "refused"
+                )
                     refused += 1;
             }
         }

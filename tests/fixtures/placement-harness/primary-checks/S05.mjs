@@ -23,10 +23,10 @@ requireFiles(liveWork, pristineWork, [
     "fixtures/responses/fail-2.json",
 ]);
 
-const { root, status } = runRestoredSuite(
-    liveWork,
-    pristineWork,
-    "s05",
-    ["test", "package.json", "scripts", "fixtures"],
-);
+const { root, status } = runRestoredSuite(liveWork, pristineWork, "s05", [
+    "test",
+    "package.json",
+    "scripts",
+    "fixtures",
+]);
 finish("S05", root, status);

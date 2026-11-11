@@ -82,11 +82,7 @@ const stagingSeeds = [
             4,
         )}\n`,
     ),
-    seed(
-        "work",
-        "scripts/smoke.mjs",
-        'console.log("smoke check: ok");\n',
-    ),
+    seed("work", "scripts/smoke.mjs", 'console.log("smoke check: ok");\n'),
     seed(
         "work",
         "scripts/validate-deploy.mjs",
@@ -643,14 +639,21 @@ const s02 = base("S02", {
     mutationPolicy: { allowed: ["work/deploy/**", "lakes/docs/**"] },
     expectedDocs: {
         kind: "none",
-        preserve: ["lakes/docs/ops/staging-deploy.md", "lakes/docs/ops/staging-db.md"],
+        preserve: [
+            "lakes/docs/ops/staging-deploy.md",
+            "lakes/docs/ops/staging-db.md",
+        ],
     },
     docsCriterion: {
         minVerifiedCalls: 1,
         verbs: ["read"],
         paths: ["ops/staging-deploy.md"],
     },
-    primaryCheck: { id: "s02-staging-order", script: "S02.mjs", timeoutMs: 120000 },
+    primaryCheck: {
+        id: "s02-staging-order",
+        script: "S02.mjs",
+        timeoutMs: 120000,
+    },
 });
 
 const s05 = base("S05", {
@@ -683,11 +686,13 @@ const s05 = base("S05", {
         },
         {
             allowed: "lakes/docs/**",
-            instruction: "Documentation writes to the knowledge lake remain permitted",
+            instruction:
+                "Documentation writes to the knowledge lake remain permitted",
         },
         {
             allowed: "lakes/shared/**",
-            instruction: "Documentation writes to the knowledge lake remain permitted",
+            instruction:
+                "Documentation writes to the knowledge lake remain permitted",
         },
     ],
     forbiddenInstruction:
@@ -737,15 +742,18 @@ const s06 = base("S06", {
     permissionMapping: [
         {
             allowed: "work/answer.md",
-            instruction: "Write your answer and the records you used to `answer.md`",
+            instruction:
+                "Write your answer and the records you used to `answer.md`",
         },
         {
             allowed: "lakes/docs/**",
-            instruction: "Documentation writes to the knowledge lake remain permitted",
+            instruction:
+                "Documentation writes to the knowledge lake remain permitted",
         },
         {
             allowed: "lakes/shared/**",
-            instruction: "Documentation writes to the knowledge lake remain permitted",
+            instruction:
+                "Documentation writes to the knowledge lake remain permitted",
         },
     ],
     forbiddenInstruction: "Do not modify the export",
@@ -804,7 +812,8 @@ const s07 = base("S07", {
         },
         {
             allowed: "lakes/docs/**",
-            instruction: "Documentation writes to the knowledge lake remain permitted",
+            instruction:
+                "Documentation writes to the knowledge lake remain permitted",
         },
     ],
     forbiddenInstruction:
@@ -869,22 +878,19 @@ const measurement = {
         S02: {
             retrieval: {
                 note: "ops/staging-deploy.md",
-                detail:
-                    "the post-deploy smoke check runs after the slot switch and before the old slot is drained",
+                detail: "the post-deploy smoke check runs after the slot switch and before the old slot is drained",
             },
         },
         R02: {
             retrieval: {
                 note: "db/pool.md",
-                detail:
-                    "after the 2026 upgrade connections must require TLS; sslmode=disable is obsolete while the 10-connection pool, 5-second acquire timeout and startup migrations stay valid",
+                detail: "after the 2026 upgrade connections must require TLS; sslmode=disable is obsolete while the 10-connection pool, 5-second acquire timeout and startup migrations stay valid",
             },
         },
         S06: {
             retrieval: {
                 note: "ado/test-automation-status.md",
-                detail:
-                    "effective automation status is derived from the latest run by completedAt: latest failed with an earlier pass is Partially Automated",
+                detail: "effective automation status is derived from the latest run by completedAt: latest failed with an earlier pass is Partially Automated",
             },
         },
         S07: {
@@ -907,15 +913,13 @@ const measurement = {
             },
             retrieval: {
                 note: "ops/upgrade.md",
-                detail:
-                    "4.x upgrades never run migrate:legacy; it exists only for 3.x to 4.0, and the snapshot and rollback facts still apply",
+                detail: "4.x upgrades never run migrate:legacy; it exists only for 3.x to 4.0, and the snapshot and rollback facts still apply",
             },
         },
         R04: {
             retrieval: {
                 note: "db/migrations.md",
-                detail:
-                    "the lexical MIGRATION_ORDER report for the intentional 002 filename is documented, and npm test is the repository gate",
+                detail: "the lexical MIGRATION_ORDER report for the intentional 002 filename is documented, and npm test is the repository gate",
             },
         },
     },

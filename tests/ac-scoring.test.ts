@@ -966,7 +966,10 @@ describe("scenario-keyed preservation and retrieval assessment", () => {
 
     it("keeps a retrieval-only prompt free of the preservation block", () => {
         // Act
-        const prompt = buildAcPrompt({ ...baseInput, retrievalSpec: retrieval });
+        const prompt = buildAcPrompt({
+            ...baseInput,
+            retrievalSpec: retrieval,
+        });
 
         // Assert
         assert.doesNotMatch(prompt, /PRESERVATION ASSESSMENT/);

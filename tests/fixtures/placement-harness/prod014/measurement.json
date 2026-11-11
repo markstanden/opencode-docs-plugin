@@ -1,65 +1,54 @@
 {
-  "campaign": "pd-20261111",
-  "recordingOpportunities": [
-    "R01",
-    "R02",
-    "S05",
-    "S07"
-  ],
-  "retrievalOpportunities": [
-    "S02",
-    "R02",
-    "S06",
-    "S07",
-    "R04"
-  ],
-  "scenarios": {
-    "S02": {
-      "retrieval": {
-        "note": "ops/staging-deploy.md",
-        "detail": "the post-deploy smoke check runs after the slot switch and before the old slot is drained"
-      }
-    },
-    "R02": {
-      "retrieval": {
-        "note": "db/pool.md",
-        "detail": "after the 2026 upgrade connections must require TLS; sslmode=disable is obsolete while the 10-connection pool, 5-second acquire timeout and startup migrations stay valid"
-      }
-    },
-    "S06": {
-      "retrieval": {
-        "note": "ado/test-automation-status.md",
-        "detail": "effective automation status is derived from the latest run by completedAt: latest failed with an earlier pass is Partially Automated"
-      }
-    },
-    "S07": {
-      "preservation": {
-        "facts": [
-          {
-            "id": "snapshot",
-            "label": "take a snapshot before upgrading"
-          },
-          {
-            "id": "rollback",
-            "label": "restore the snapshot and redeploy the previous image"
-          },
-          {
-            "id": "legacyCondition",
-            "label": "below-4.2 legacy migration condition",
-            "obsolete": true
-          }
-        ]
-      },
-      "retrieval": {
-        "note": "ops/upgrade.md",
-        "detail": "4.x upgrades never run migrate:legacy; it exists only for 3.x to 4.0, and the snapshot and rollback facts still apply"
-      }
-    },
-    "R04": {
-      "retrieval": {
-        "note": "db/migrations.md",
-        "detail": "the lexical MIGRATION_ORDER report for the intentional 002 filename is documented, and npm test is the repository gate"
-      }
+    "campaign": "pd-20261111",
+    "recordingOpportunities": ["R01", "R02", "S05", "S07"],
+    "retrievalOpportunities": ["S02", "R02", "S06", "S07", "R04"],
+    "scenarios": {
+        "S02": {
+            "retrieval": {
+                "note": "ops/staging-deploy.md",
+                "detail": "the post-deploy smoke check runs after the slot switch and before the old slot is drained"
+            }
+        },
+        "R02": {
+            "retrieval": {
+                "note": "db/pool.md",
+                "detail": "after the 2026 upgrade connections must require TLS; sslmode=disable is obsolete while the 10-connection pool, 5-second acquire timeout and startup migrations stay valid"
+            }
+        },
+        "S06": {
+            "retrieval": {
+                "note": "ado/test-automation-status.md",
+                "detail": "effective automation status is derived from the latest run by completedAt: latest failed with an earlier pass is Partially Automated"
+            }
+        },
+        "S07": {
+            "preservation": {
+                "facts": [
+                    {
+                        "id": "snapshot",
+                        "label": "take a snapshot before upgrading"
+                    },
+                    {
+                        "id": "rollback",
+                        "label": "restore the snapshot and redeploy the previous image"
+                    },
+                    {
+                        "id": "legacyCondition",
+                        "label": "below-4.2 legacy migration condition",
+                        "obsolete": true
+                    }
+                ]
+            },
+            "retrieval": {
+                "note": "ops/upgrade.md",
+                "detail": "4.x upgrades never run migrate:legacy; it exists only for 3.x to 4.0, and the snapshot and rollback facts still apply"
+            }
+        },
+        "R04": {
+            "retrieval": {
+                "note": "db/migrations.md",
+                "detail": "the lexical MIGRATION_ORDER report for the intentional 002 filename is documented, and npm test is the repository gate"
+            }
+        }
     }
-  }
 }

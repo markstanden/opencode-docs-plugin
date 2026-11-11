@@ -235,7 +235,9 @@ Assess each still-valid fact by meaning, not exact wording: a faithful paraphras
 The obsolete claim (${input.preservationSpec.facts
                 .filter((fact) => fact.obsolete === true)
                 .map((fact) => fact.label)
-                .join(", ")}) is "removed" only when the resulting document no longer asserts it.
+                .join(
+                    ", ",
+                )}) is "removed" only when the resulting document no longer asserts it.
 Quote the decisive text from the AFTER documents for every entry, or write "(absent)" when the text is gone.
 If any still-valid fact is lost, the documentation outcome must be "misleading".
 `
@@ -456,12 +458,70 @@ function lostFact(entry: unknown): boolean {
 }
 
 /**
- * Problems with a scenario-keyed preservation inventory.
+ * Schema problems for one inventory fact's finding.
+ * @param fact The declared fact.
+ * @param entry The judgement's entry for it.
+ * @returns The problems and whether the entry reports loss.
+ */
+function genericFactProblems(
+    fact: PreservationFactSpec,
+    entry: unknown,
+): { problems: string[]; lost: boolean } {
+    if (!isPlainObject(entry)) {
+        return {
+            problems: [`preservation.${fact.id} must be an object`],
+            lost: false,
+        };
+    }
+    const allowed =
+        fact.obsolete === true ? ["removed", "retained"] : PRESERVATION_STATES;
+    const problems: string[] = [];
+    if (
+        typeof entry.state !== "string" ||
+        !(allowed as readonly string[]).includes(entry.state)
+    ) {
+        problems.push(
+            `preservation.${fact.id}.state must be one of ${allowed.join("|")}`,
+        );
+    }
+    if (typeof entry.quote !== "string" || entry.quote.trim() === "") {
+        problems.push(
+            `preservation.${fact.id}.quote must be a nonblank string`,
+        );
+    }
+    return {
+        problems,
+        lost: fact.obsolete !== true && entry.state === "lost",
+    };
+}
+
+/**
+ * Problems raised when an inventory reports destructive loss.
  * @param value The parsed judgement.
  * @param state The mutation facts for the trial.
- * @param spec The scenario's declared facts.
- * @returns The problems; empty means a usable assessment.
+ * @param lost The lost fact ids.
+ * @returns The outcome-consistency problems.
  */
+function lostFactProblems(
+    value: Record<string, unknown>,
+    state: DocState,
+    lost: string[],
+): string[] {
+    if (lost.length === 0) return [];
+    const problems: string[] = [];
+    if (value.documentationOutcome !== "misleading") {
+        problems.push(
+            `preservation reports a lost valid fact (${lost.join(", ")}); documentationOutcome must be "misleading"`,
+        );
+    }
+    if (!state.documentsChanged) {
+        problems.push(
+            "preservation reports a lost valid fact but no documentation document changed",
+        );
+    }
+    return problems;
+}
+
 function genericPreservationProblems(
     value: Record<string, unknown>,
     state: DocState,
@@ -474,45 +534,11 @@ function genericPreservationProblems(
     const problems: string[] = [];
     const lost: string[] = [];
     for (const fact of spec.facts) {
-        const entry = preservation[fact.id];
-        if (!isPlainObject(entry)) {
-            problems.push(`preservation.${fact.id} must be an object`);
-            continue;
-        }
-        const allowed =
-            fact.obsolete === true
-                ? ["removed", "retained"]
-                : PRESERVATION_STATES;
-        if (
-            typeof entry.state !== "string" ||
-            !(allowed as readonly string[]).includes(entry.state)
-        ) {
-            problems.push(
-                `preservation.${fact.id}.state must be one of ${allowed.join("|")}`,
-            );
-        }
-        if (typeof entry.quote !== "string" || entry.quote.trim() === "") {
-            problems.push(
-                `preservation.${fact.id}.quote must be a nonblank string`,
-            );
-        }
-        if (fact.obsolete !== true && entry.state === "lost") {
-            lost.push(fact.id);
-        }
+        const outcome = genericFactProblems(fact, preservation[fact.id]);
+        problems.push(...outcome.problems);
+        if (outcome.lost) lost.push(fact.id);
     }
-    if (lost.length > 0) {
-        if (value.documentationOutcome !== "misleading") {
-            problems.push(
-                `preservation reports a lost valid fact (${lost.join(", ")}); documentationOutcome must be "misleading"`,
-            );
-        }
-        if (!state.documentsChanged) {
-            problems.push(
-                "preservation reports a lost valid fact but no documentation document changed",
-            );
-        }
-    }
-    return problems;
+    return [...problems, ...lostFactProblems(value, state, lost)];
 }
 
 /**

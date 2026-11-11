@@ -5,18 +5,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const fixtureDir = join(
-    here,
-    "fixtures",
-    "placement-harness",
-    "prod014",
-);
-const checksDir = join(
-    here,
-    "fixtures",
-    "placement-harness",
-    "primary-checks",
-);
+const fixtureDir = join(here, "fixtures", "placement-harness", "prod014");
+const checksDir = join(here, "fixtures", "placement-harness", "primary-checks");
 const readJson = <T>(name: string): T =>
     JSON.parse(readFileSync(join(fixtureDir, name), "utf8")) as T;
 
@@ -77,7 +67,10 @@ describe("0.14.0 productivity-trial fixtures", () => {
         );
 
         // Assert
-        assert.deepEqual(missing.map((entry) => entry.id), []);
+        assert.deepEqual(
+            missing.map((entry) => entry.id),
+            [],
+        );
     });
 
     it("keeps every seeded expectation on a declared seed path", () => {
