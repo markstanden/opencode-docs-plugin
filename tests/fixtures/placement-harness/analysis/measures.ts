@@ -420,12 +420,19 @@ export function operationMatchesNotePath(
         declaration.lake === null
             ? expected
             : `${declaration.lake}/${expected}`;
-    const candidates = [operation.path, operation.target]
-        .filter((value): value is string => value !== null)
-        .map(barePath);
-    return candidates.some(
-        (value) => value === expected || value === qualified,
-    );
+    // The returned identity is authoritative. A request target that contradicts
+    // it is contradictory evidence and cannot earn credit.
+    if (
+        operation.path !== null &&
+        operation.target !== null &&
+        barePath(operation.path) !== barePath(operation.target)
+    ) {
+        return false;
+    }
+    const identity = operation.path ?? operation.target;
+    if (identity === null) return false;
+    const value = barePath(identity);
+    return value === expected || value === qualified;
 }
 
 /**
@@ -475,7 +482,7 @@ function contextOf(
     return {
         record,
         operations: parsed?.operations ?? [],
-        parsed: journalProblem === null,
+        parsed: parsed !== undefined,
         journalProblem,
         gate:
             record.gate.state === "available" ? record.gate.value.status : null,
@@ -511,14 +518,6 @@ function earlyDisposition(
             evidence: [`gate blocked: ${reason}`],
         };
     }
-    if (!context.parsed) {
-        return {
-            disposition: "unknown",
-            evidence: [
-                `${context.journalProblem ?? "docs-operation journal is unreadable"}; a write cannot be attributed`,
-            ],
-        };
-    }
     return null;
 }
 
@@ -534,9 +533,24 @@ function dispositionOf(
         return completedWrite(context);
     }
     if (failedAdds.length > 0) {
+        return context.journalProblem === null
+            ? {
+                  disposition: "tool-error",
+                  evidence: ["a docs add operation failed"],
+              }
+            : {
+                  disposition: "unknown",
+                  evidence: [
+                      `${context.journalProblem}; the unreadable line could hide a successful write`,
+                  ],
+              };
+    }
+    if (context.journalProblem !== null) {
         return {
-            disposition: "tool-error",
-            evidence: ["a docs add operation failed"],
+            disposition: "unknown",
+            evidence: [
+                `${context.journalProblem}; a write cannot be attributed`,
+            ],
         };
     }
     if (
@@ -659,13 +673,11 @@ function retrievalOf(context: MeasureContext): {
         note: declaration.note,
         trace: reads.map((operation) => operation.line),
     };
-    if (!context.parsed) {
+    if (!base.read && context.journalProblem !== null) {
         return {
             ...base,
             state: "unknown",
-            evidence: [
-                `docs-operation journal is ${context.record.artefacts.docsOperations.state}; attribution is unknown`,
-            ],
+            evidence: [`${context.journalProblem}; attribution is unknown`],
         };
     }
     if (!base.read && lakeUnknown) {
@@ -885,7 +897,7 @@ function countBounds(
     extraRobust: boolean;
     neitherLowerKnown: boolean;
     neitherLowerRobust: boolean;
-    impossibleExtra: boolean;
+    certainLoss: boolean;
     unknowns: number;
 } {
     return {
@@ -905,11 +917,15 @@ function countBounds(
                 control.recording.success + control.recording.unknown &&
             candidate.retrieval.applied >=
                 control.retrieval.applied + control.retrieval.unknown,
-        impossibleExtra:
+        certainLoss:
             candidate.recording.success + candidate.recording.unknown <
-                control.recording.success + 1 &&
+                control.recording.success ||
             candidate.retrieval.applied + candidate.retrieval.unknown <
-                control.retrieval.applied + 1,
+                control.retrieval.applied ||
+            (candidate.recording.success + candidate.recording.unknown <=
+                control.recording.success &&
+                candidate.retrieval.applied + candidate.retrieval.unknown <=
+                    control.retrieval.applied),
         unknowns:
             control.recording.unknown +
             candidate.recording.unknown +
@@ -929,6 +945,15 @@ function opportunityCriterion(
         `retrieval: control ${String(control.retrieval.applied)}/${String(control.retrieval.planned)}, candidate ${String(candidate.retrieval.applied)}/${String(candidate.retrieval.planned)} (unknown control ${String(control.retrieval.unknown)}, candidate ${String(candidate.retrieval.unknown)})`,
     ];
     const positive = bounds.extraRobust && bounds.neitherLowerRobust;
+    if (bounds.certainLoss) {
+        return {
+            status: "fail",
+            reasons: [
+                ...reasons,
+                "the candidate cannot be at least equal on both counts and strictly ahead on one under any completion (a tie gives no promotion)",
+            ],
+        };
+    }
     if (positive) {
         return {
             status: "pass",
@@ -938,7 +963,7 @@ function opportunityCriterion(
             ],
         };
     }
-    if (bounds.unknowns > 0 && !bounds.impossibleExtra) {
+    if (bounds.unknowns > 0) {
         return {
             status: "inconclusive",
             reasons: [

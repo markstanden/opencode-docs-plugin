@@ -258,6 +258,13 @@ describe("docs-operation parsing", () => {
             ),
             false,
         );
+        assert.equal(
+            operationMatchesNotePath(
+                operation("docs", "other.md", "db/pool.md"),
+                declaration,
+            ),
+            false,
+        );
     });
 });
 
@@ -348,6 +355,29 @@ describe("retrieval measure", () => {
         assert.equal(measured.retrieval.read, false);
     });
 
+    it("refuses a read whose returned identity contradicts the request", () => {
+        // Arrange
+        const conflicting = JSON.stringify({
+            status: "completed",
+            surface: "native",
+            input: { read: "ops/staging-deploy.md" },
+            result: {
+                metadata: { lake: "docs", path: "ops/other.md" },
+            },
+        });
+
+        // Act
+        const measured = measureTrial(
+            record({ journal: [conflicting] }),
+            declarations,
+            "A",
+        );
+
+        // Assert
+        assert.equal(measured.retrieval.state, "miss");
+        assert.equal(measured.retrieval.read, false);
+    });
+
     it("stays unknown when a matching read reports no lake", () => {
         // Arrange
         const noLake = JSON.stringify({
@@ -427,16 +457,40 @@ describe("recording measure", () => {
         assert.equal(measured.recording.disposition, "unknown");
     });
 
-    it("stays unknown when the journal has an unreadable line", () => {
+    it("stays unknown when the journal has an unreadable line and no valid write", () => {
         // Act
         const measured = measureTrial(
-            create({ journal: [journal.add, "not json"] }),
+            create({ journal: ["not json"] }),
             recordingDeclarations,
             "A",
         );
 
         // Assert
         assert.equal(measured.recording.disposition, "unknown");
+    });
+
+    it("keeps a valid write when a malformed line cannot change it", () => {
+        // Arrange
+        const both = {
+            recording: ["S02"],
+            retrieval: {
+                S02: { note: "ops/staging-deploy.md", lake: "docs", facts: [] },
+            },
+        };
+
+        // Act
+        const measured = measureTrial(
+            record({
+                journal: [journal.read, journal.add, "not json"],
+                outcome: "useful-create",
+            }),
+            both,
+            "A",
+        );
+
+        // Assert
+        assert.equal(measured.recording.disposition, "verified-write");
+        assert.equal(measured.retrieval.state, "applied");
     });
 
     it("stays unknown when a write exists but no judgement was recorded", () => {
@@ -540,6 +594,25 @@ describe("personal-trial screen", () => {
 
         // Assert
         assert.equal(possibleTie.recommendation, "inconclusive");
+    });
+
+    it("rejects a mathematically certain loss", () => {
+        // Arrange: A recording 2, B 1; retrieval A 0, B 1 plus one B unknown.
+        const certain = screen({
+            measures: {
+                A: arm({
+                    recording: { success: 2, miss: 0, unknown: 0 },
+                    retrieval: { applied: 0, miss: 0, unknown: 0 },
+                }),
+                B: arm({
+                    recording: { success: 1, miss: 0, unknown: 0 },
+                    retrieval: { applied: 1, miss: 0, unknown: 1 },
+                }),
+            },
+        });
+
+        // Assert
+        assert.equal(certain.recommendation, "no-promotion");
     });
 
     it("promotes only when the lead survives every control unknown", () => {

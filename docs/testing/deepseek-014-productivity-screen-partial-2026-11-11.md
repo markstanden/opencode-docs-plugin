@@ -87,6 +87,27 @@ Five review findings were fixed and covered by regressions:
   and a contract test runs the materialiser in a fresh directory and checks
   the modes.
 
+A second review pass added:
+
+- **Closure is enforced before launch.** A `campaign-closed` ledger stops both
+  `run.mjs` and `rejudge.mjs` before any launch/judge event or child process.
+- **Recovery judgements are validated on resume.** An existing recovery attempt
+  with a non-judged status blocks the next slot; a judged or resolved attempt
+  resumes without a duplicate call.
+- **The shim check is on the live path**, not only the dry run.
+- **A mathematically certain loss is rejected.** If the candidate cannot be
+  equal on both opportunity counts and strictly ahead on one under any
+  completion, the result is `no-promotion`, not `inconclusive`.
+- **A partially readable journal keeps decisive evidence.** A valid completed
+  read or write settles its measure when the malformed line cannot change the
+  answer; otherwise it stays `unknown`, with the parse diagnostic retained.
+- **Conflicting read identities cannot earn credit.** The returned path is
+  authoritative; a request target that contradicts it is rejected.
+
+Offline replay of the preserved P04 evidence produced unchanged counts: A
+utility 8, B utility 9, the same outcomes, gates and opportunity measures, and
+the same incomplete/inconclusive decision.
+
 ## Reconciliation
 
 | Layer                             | Count                                                         | Notes                                                                       |
