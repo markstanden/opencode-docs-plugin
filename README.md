@@ -41,6 +41,15 @@ registered `docs` skill carries the working version.
   `tools.docs.docs_search(…)`.
 - `/docs` (command) — the same core, driven from the prompt:
   `search <text>` (bare text searches too), `add <text>`, `check`, `help`.
+  A bare `/docs` asks the agent to record the durable knowledge the current
+  conversation established, choosing the lake and whether to update or create:
+
+    ```text
+    /docs
+    ```
+
+  With an argument it searches as before, e.g.
+  `/docs find the Bruno assertion notes`.
 - The plugin also registers the `docs` skill, so the convention travels with
   the tool rather than living in always-loaded prose.
 

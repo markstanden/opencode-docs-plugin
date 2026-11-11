@@ -108,6 +108,7 @@ async function loadPlugin(pkg: string, spec: LakeSpec) {
         commands: [],
         skills: [],
     };
+    const prompts: Array<{ sessionID: string; text: string }> = [];
     const ctx = {
         options: { lakes: [spec] },
         location: { directory: tempDir("project") },
@@ -127,7 +128,12 @@ async function loadPlugin(pkg: string, spec: LakeSpec) {
                 fn: (editor: { add: (s: never) => void }) => void,
             ) => fn({ add: (s) => editors.skills.push(s as never) }),
         },
-        session: { hook: async () => undefined, prompt: async () => undefined },
+        session: {
+            hook: async () => undefined,
+            prompt: async (input: { sessionID: string; text: string }) => {
+                prompts.push({ sessionID: input.sessionID, text: input.text });
+            },
+        },
     };
     const loaded = (await import(
         pathToFileURL(join(pkg, "src", "index.ts")).href
@@ -135,7 +141,7 @@ async function loadPlugin(pkg: string, spec: LakeSpec) {
         default: { setup: (ctx: unknown) => Promise<void> };
     };
     await loaded.default.setup(ctx);
-    return { editors, ctx };
+    return { editors, ctx, prompts };
 }
 
 const surface = (editors: Editors, name: string) =>
@@ -185,6 +191,64 @@ describe("packed installation, away from the checkout", () => {
             readFileSync(join(pkg, "src/SKILL.md"), "utf8"),
             "the skill content resolves through the installed package",
         );
+    });
+
+    it("the registered command records a bare invocation exactly once", async () => {
+        // Arrange
+        const RECORDING_INSTRUCTION =
+            "Identify the reusable knowledge established in this conversation " +
+            "and preserve it using the docs tool. Search for related " +
+            "documentation first, then update an existing note or create one " +
+            "in the appropriate lake. Capture the findings, reasoning and " +
+            "constraints needed to apply the knowledge later. Verify that the " +
+            "saved content accurately reflects what we established, then " +
+            "briefly report what you stored and where.";
+        const { editors, prompts } = await loadPlugin(pkg, tempLake(root));
+        const command = editors.commands[0] as unknown as {
+            execute: (input: unknown) => Promise<void>;
+        };
+
+        // Act
+        for (const text of ["", " \t\n "]) {
+            await command.execute({
+                sessionID: "ses_test",
+                prompt: { text },
+                delivery: {},
+            });
+        }
+
+        // Assert
+        assert.deepEqual(prompts, [
+            { sessionID: "ses_test", text: RECORDING_INSTRUCTION },
+            { sessionID: "ses_test", text: RECORDING_INSTRUCTION },
+        ]);
+    });
+
+    it("the registered command still searches a non-empty argument", async () => {
+        // Arrange
+        const spec = tempLake(root);
+        mkdirSync(join(spec.root, "bruno"), { recursive: true });
+        writeFileSync(
+            join(spec.root, "bruno/assertion-notes.md"),
+            "---\nArea: bruno\nKeywords: assertion, notes\nSummary: Bruno assertion notes.\n---\n\n" +
+                "# Bruno assertion notes\n\n### Facts\n\n- The assertion trap.\n",
+        );
+        const { editors, prompts } = await loadPlugin(pkg, spec);
+        const command = editors.commands[0] as unknown as {
+            execute: (input: unknown) => Promise<void>;
+        };
+
+        // Act
+        await command.execute({
+            sessionID: "ses_test",
+            prompt: { text: "find the Bruno assertion notes" },
+            delivery: {},
+        });
+
+        // Assert
+        assert.equal(prompts.length, 1);
+        assert.match(prompts[0]?.text ?? "", /bruno\/assertion-notes\.md/);
+        assert.doesNotMatch(prompts[0]?.text ?? "", /Identify the reusable/);
     });
 
     it("native surface: search, read, add, replace and refusal round trip", async () => {

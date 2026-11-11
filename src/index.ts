@@ -4952,6 +4952,23 @@ const ADD_VERB = "add";
 const CHECK_VERB = "check";
 
 /**
+ * The instruction delivered by a bare `/docs`: the user has already decided
+ * that the conversation established something worth preserving, so the agent
+ * chooses the finding, the lake and whether to update or create.
+ *
+ * This wording is the command's model-visible contract, held here as one named
+ * component. It deliberately appears in no tool description, skill or
+ * always-loaded prompt: only invoking the command delivers it.
+ */
+export const RECORD_CONVERSATION_INSTRUCTION =
+    "Identify the reusable knowledge established in this conversation and " +
+    "preserve it using the docs tool. Search for related documentation " +
+    "first, then update an existing note or create one in the appropriate " +
+    "lake. Capture the findings, reasoning and constraints needed to apply " +
+    "the knowledge later. Verify that the saved content accurately reflects " +
+    "what we established, then briefly report what you stored and where.";
+
+/**
  * The prompt delivered by `/docs add <text>`: ask the agent to call the tool's
  * `add` with a typed DTO rather than searching. An empty body is named as the
  * mistake it is.
@@ -4972,10 +4989,12 @@ function addPrompt(subject: string): string {
 }
 
 /**
- * Build the `/docs` command over the same core as the tool: a search ranks the
- * catalogue (`search <text>`, or bare text), `add <text>` asks the agent to
- * write the knowledge through the tool's typed `add`, and `check` validates
- * the knowledge lakes.
+ * Build the `/docs` command over the same core as the tool: a bare `/docs`
+ * delivers {@link RECORD_CONVERSATION_INSTRUCTION} so the agent records what
+ * the conversation established, a search ranks the catalogue
+ * (`search <text>`, or bare text), `add <text>` asks the agent to write the
+ * knowledge through the tool's typed `add`, and `check` validates the
+ * knowledge lakes.
  * @param deps Runtime seams used on each call.
  * @returns The command the host registers.
  */
@@ -4984,9 +5003,13 @@ export function createDocsCommand(deps: DocsCommandDeps): CommandDefinition {
     return {
         name: "docs",
         description:
-            "Search the configured knowledge lakes, ranked, plus nested project `README.md` files (search only); `add <text>` records new knowledge through the tool's typed `add`; `check` validates the lakes; a blank search lists recent docs.",
+            "Search the configured knowledge lakes, ranked, plus nested project `README.md` files (search only); `add <text>` records new knowledge through the tool's typed `add`; `check` validates the lakes; bare `/docs` records the conversation's durable knowledge.",
         async execute({ sessionID, prompt }) {
             const text = prompt.text.trim();
+            if (text === "") {
+                await deps.prompt(sessionID, RECORD_CONVERSATION_INSTRUCTION);
+                return;
+            }
             if (isHelp(text)) {
                 await deps.prompt(sessionID, helpText(lakeInfo(runtime.lakes)));
                 return;
