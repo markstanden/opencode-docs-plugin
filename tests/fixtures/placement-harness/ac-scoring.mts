@@ -465,6 +465,24 @@ export function documentationScore(
     }
 }
 
+/**
+ * The closed documentation interval for an unassessed outcome: the lowest and
+ * highest score any allowed outcome can earn under the declared weights.
+ * Derived from the policy, never assumed — a custom duplicate penalty can sit
+ * below the misleading penalty, and the interval must follow it.
+ * @param weights The frozen utility weights.
+ * @returns The lowest and highest possible documentation scores.
+ */
+export function documentationRange(weights: UtilityWeights = DEFAULT_WEIGHTS): {
+    low: number;
+    high: number;
+} {
+    const scores = DOCUMENTATION_OUTCOMES.map((outcome) =>
+        documentationScore(outcome, weights),
+    );
+    return { low: Math.min(...scores), high: Math.max(...scores) };
+}
+
 /** The task component's closed bounds for a known or unknown primary result. */
 function taskBounds(
     primary: ScoredTrial["primary"],
@@ -481,9 +499,10 @@ function taskBounds(
  * One trial's utility, or a closed interval when a component is unknown.
  *
  * An unassessed documentation outcome contributes nothing and is reported as
- * missing, never as zero. The documentation interval is the full outcome range;
- * the task interval retains whatever the primary check already established, so
- * a known pass does not widen the bound as though it too were unknown.
+ * missing, never as zero. The documentation interval is the full range of
+ * allowed outcome scores under the declared weights; the task interval
+ * retains whatever the primary check already established, so a known pass
+ * does not widen the bound as though it too were unknown.
  */
 export function trialUtility(
     trial: ScoredTrial,
@@ -491,10 +510,11 @@ export function trialUtility(
 ): { score: number; low: number; high: number; assessed: boolean } {
     const task = taskBounds(trial.primary, weights);
     if (!trial.usable || trial.outcome === undefined) {
+        const range = documentationRange(weights);
         return {
             score: 0,
-            low: weights.misleading + task.low,
-            high: weights.useful + task.high,
+            low: range.low + task.low,
+            high: range.high + task.high,
             assessed: false,
         };
     }
