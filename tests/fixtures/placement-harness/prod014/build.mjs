@@ -878,18 +878,21 @@ const measurement = {
         S02: {
             retrieval: {
                 note: "ops/staging-deploy.md",
+                lake: "docs",
                 detail: "the post-deploy smoke check runs after the slot switch and before the old slot is drained",
             },
         },
         R02: {
             retrieval: {
                 note: "db/pool.md",
+                lake: "docs",
                 detail: "after the 2026 upgrade connections must require TLS; sslmode=disable is obsolete while the 10-connection pool, 5-second acquire timeout and startup migrations stay valid",
             },
         },
         S06: {
             retrieval: {
                 note: "ado/test-automation-status.md",
+                lake: "shared",
                 detail: "effective automation status is derived from the latest run by completedAt: latest failed with an earlier pass is Partially Automated",
             },
         },
@@ -913,12 +916,14 @@ const measurement = {
             },
             retrieval: {
                 note: "ops/upgrade.md",
+                lake: "docs",
                 detail: "4.x upgrades never run migrate:legacy; it exists only for 3.x to 4.0, and the snapshot and rollback facts still apply",
             },
         },
         R04: {
             retrieval: {
                 note: "db/migrations.md",
+                lake: "docs",
                 detail: "the lexical MIGRATION_ORDER report for the intentional 002 filename is documented, and npm test is the repository gate",
             },
         },

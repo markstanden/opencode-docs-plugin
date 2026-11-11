@@ -5,7 +5,8 @@ import {
     parseMeasureDeclarations,
     parseOperations,
     personalTrialDecision,
-    targetsNote,
+    operationMatchesNoteLake,
+    operationMatchesNotePath,
     type ArmMeasureSummary,
     type MeasureDeclarations,
 } from "./fixtures/placement-harness/analysis/measures.ts";
@@ -15,7 +16,7 @@ import type { TrialRecord } from "./fixtures/placement-harness/analysis/records.
 const declarations: MeasureDeclarations = {
     recording: ["R01"],
     retrieval: {
-        S02: { note: "ops/staging-deploy.md", facts: [] },
+        S02: { note: "ops/staging-deploy.md", lake: "docs", facts: [] },
     },
 };
 
@@ -24,6 +25,9 @@ const journal = {
         status: "completed",
         surface: "native",
         input: { read: "ops/staging-deploy.md" },
+        result: {
+            metadata: { lake: "docs", path: "ops/staging-deploy.md" },
+        },
     }),
     add: JSON.stringify({
         status: "completed",
@@ -44,6 +48,7 @@ const journal = {
 
 type Overrides = {
     gate?: string;
+    gateMissing?: boolean;
     primary?: "pass" | "fail" | "unknown";
     outcome?: string;
     journal?: string[];
@@ -60,11 +65,13 @@ const record = (overrides: Overrides = {}): TrialRecord => ({
     },
     attempt: { state: "recorded", usable: true, problems: [] },
     run: { state: "available", value: {}, source: "meta.json" },
-    gate: {
-        state: "available",
-        value: { status: overrides.gate ?? "pass", reason: null },
-        source: "gate.json",
-    },
+    gate: overrides.gateMissing
+        ? { state: "missing", source: "gate.json" }
+        : {
+              state: "available",
+              value: { status: overrides.gate ?? "pass", reason: null },
+              source: "gate.json",
+          },
     primary: { status: overrides.primary ?? "pass", problems: [] },
     assessment: {
         status: "judged",
@@ -156,6 +163,7 @@ describe("measure declarations", () => {
         assert.deepEqual(parsed.declarations?.recording, ["R01"]);
         assert.deepEqual(parsed.declarations?.retrieval.S02, {
             note: "ops/staging-deploy.md",
+            lake: null,
             facts: ["snapshot"],
         });
     });
@@ -200,14 +208,56 @@ describe("docs-operation parsing", () => {
         assert.match(parsed.problems.join("; "), /not JSON/);
     });
 
-    it("matches lake-qualified and lake-relative targets, not fragments", () => {
+    it("matches the exact declared path and lake, not a suffix", () => {
+        // Arrange
+        const declaration = {
+            note: "db/pool.md",
+            lake: "docs",
+            facts: [],
+        };
+        const operation = (
+            lake: string | null,
+            path: string,
+            target = path,
+        ) => ({
+            status: "completed",
+            surface: "native",
+            verb: "read" as const,
+            target,
+            lake,
+            path,
+            line: "line",
+        });
+
         // Assert
         assert.equal(
-            targetsNote("shared/ado/status.md", "ado/status.md"),
+            operationMatchesNotePath(
+                operation("shared", "db/pool.md"),
+                declaration,
+            ),
             true,
         );
-        assert.equal(targetsNote("ado/status.md", "ado/status.md"), true);
-        assert.equal(targetsNote("ado/status.md", "other/status.md"), false);
+        assert.equal(
+            operationMatchesNoteLake(
+                operation("shared", "db/pool.md"),
+                declaration,
+            ),
+            false,
+        );
+        assert.equal(
+            operationMatchesNoteLake(
+                operation("docs", "db/pool.md"),
+                declaration,
+            ),
+            true,
+        );
+        assert.equal(
+            operationMatchesNotePath(
+                operation(null, "shared/db/pool.md", "shared/db/pool.md"),
+                declaration,
+            ),
+            false,
+        );
     });
 });
 
@@ -274,6 +324,48 @@ describe("retrieval measure", () => {
         // Assert
         assert.equal(measured.retrieval.state, "unknown");
     });
+
+    it("refuses a read of the same filename in another lake", () => {
+        // Arrange
+        const foreign = JSON.stringify({
+            status: "completed",
+            surface: "native",
+            input: { read: "ops/staging-deploy.md" },
+            result: {
+                metadata: { lake: "shared", path: "ops/staging-deploy.md" },
+            },
+        });
+
+        // Act
+        const measured = measureTrial(
+            record({ journal: [foreign] }),
+            declarations,
+            "A",
+        );
+
+        // Assert
+        assert.equal(measured.retrieval.state, "miss");
+        assert.equal(measured.retrieval.read, false);
+    });
+
+    it("stays unknown when a matching read reports no lake", () => {
+        // Arrange
+        const noLake = JSON.stringify({
+            status: "completed",
+            surface: "native",
+            input: { read: "ops/staging-deploy.md" },
+        });
+
+        // Act
+        const measured = measureTrial(
+            record({ journal: [noLake] }),
+            declarations,
+            "A",
+        );
+
+        // Assert
+        assert.equal(measured.retrieval.state, "unknown");
+    });
 });
 
 describe("recording measure", () => {
@@ -321,6 +413,30 @@ describe("recording measure", () => {
 
         // Assert
         assert.equal(measured.recording.disposition, "tool-error");
+    });
+
+    it("stays unknown when a useful write exists but the gate is missing", () => {
+        // Act
+        const measured = measureTrial(
+            create({ gateMissing: true }),
+            recordingDeclarations,
+            "A",
+        );
+
+        // Assert
+        assert.equal(measured.recording.disposition, "unknown");
+    });
+
+    it("stays unknown when the journal has an unreadable line", () => {
+        // Act
+        const measured = measureTrial(
+            create({ journal: [journal.add, "not json"] }),
+            recordingDeclarations,
+            "A",
+        );
+
+        // Assert
+        assert.equal(measured.recording.disposition, "unknown");
     });
 
     it("stays unknown when a write exists but no judgement was recorded", () => {
@@ -409,6 +525,36 @@ describe("personal-trial screen", () => {
 
         // Assert
         assert.equal(extra.recommendation, "personal-trial");
+    });
+
+    it("is inconclusive when a control unknown could erase the candidate lead", () => {
+        // Arrange: A has one success and one unknown; B has two known successes.
+        const possibleTie = screen({
+            measures: {
+                A: arm({
+                    recording: { success: 1, miss: 0, unknown: 1 },
+                }),
+                B: arm({ recording: { success: 2, miss: 0, unknown: 0 } }),
+            },
+        });
+
+        // Assert
+        assert.equal(possibleTie.recommendation, "inconclusive");
+    });
+
+    it("promotes only when the lead survives every control unknown", () => {
+        // Arrange: A has one success and one unknown; B has three successes.
+        const robust = screen({
+            measures: {
+                A: arm({
+                    recording: { success: 1, miss: 0, unknown: 1 },
+                }),
+                B: arm({ recording: { success: 3, miss: 0, unknown: 0 } }),
+            },
+        });
+
+        // Assert
+        assert.equal(robust.recommendation, "personal-trial");
     });
 
     it("is inconclusive when missing attribution could change the decision", () => {

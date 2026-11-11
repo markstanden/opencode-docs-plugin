@@ -20,6 +20,8 @@ export const MEASURES_SCHEMA_VERSION = 1;
 export interface RetrievalDeclaration {
     /** The lake-relative path of the seeded note. */
     note: string;
+    /** The lake the note belongs to, when declared; identity is not optional for credit. */
+    lake: string | null;
     /** The preservation facts the note's correction must keep, when any. */
     facts: string[];
 }
@@ -50,6 +52,10 @@ export interface DocsOperation {
     verb: "add" | "read" | "search" | "check" | "help" | "unknown";
     /** The typed target of a read or add, when present. */
     target: string | null;
+    /** The lake the completed operation reports, when present. */
+    lake: string | null;
+    /** The lake-relative path the completed operation reports, when present. */
+    path: string | null;
     /** The raw journal line, for the receipt/evidence trail. */
     line: string;
 }
@@ -255,7 +261,11 @@ function retrievalDeclaration(
     }
     const facts = factIds(entry, id, problems);
     if (facts === undefined) return undefined;
-    return { note: retrieval.note, facts };
+    const lake =
+        typeof retrieval.lake === "string" && retrieval.lake.trim() !== ""
+            ? retrieval.lake.trim()
+            : null;
+    return { note: retrieval.note, lake, facts };
 }
 
 /**
@@ -311,6 +321,7 @@ function operationOf(
     }
     const input = value.input;
     const add = isRecord(input.add) ? input.add : undefined;
+    const identity = reportedIdentityOf(value);
     return {
         operation: {
             status: typeof value.status === "string" ? value.status : "unknown",
@@ -318,8 +329,30 @@ function operationOf(
                 typeof value.surface === "string" ? value.surface : "unknown",
             verb: verbOf(input, add),
             target: targetOf(input, add),
+            lake: identity.lake,
+            path: identity.path,
             line,
         },
+    };
+}
+
+/**
+ * The lake and path a completed operation reports in its result metadata.
+ * @param value The journal entry.
+ * @returns The reported identity, with nulls when it is absent.
+ */
+function reportedIdentityOf(value: Record<string, unknown>): {
+    lake: string | null;
+    path: string | null;
+} {
+    const result = isRecord(value.result) ? value.result : undefined;
+    const metadata =
+        result !== undefined && isRecord(result.metadata)
+            ? result.metadata
+            : undefined;
+    return {
+        lake: typeof metadata?.lake === "string" ? metadata.lake : null,
+        path: typeof metadata?.path === "string" ? metadata.path : null,
     };
 }
 
@@ -365,22 +398,48 @@ export function parseOperations(lines: readonly string[]): {
     return { operations, problems };
 }
 
+/** Strip an optional `lake:` prefix from a typed target. */
+function barePath(path: string): string {
+    return path.replace(/^[a-z0-9_-]+:/i, "");
+}
+
 /**
- * Whether a typed read or add target names the declared note. Lake-qualified
- * and lake-relative forms both match; a partial fragment does not.
- * @param target The typed operation target.
- * @param note The declared note path.
- * @returns True when the target is the note.
+ * Whether an operation names the declared note path exactly. A suffix match is
+ * deliberately not accepted: `shared/db/pool.md` is a different file from
+ * `db/pool.md`.
+ * @param operation The journal operation.
+ * @param declaration The declared note.
+ * @returns True when the operation's reported path or target is the note.
  */
-export function targetsNote(target: string, note: string): boolean {
-    const normalise = (path: string) => path.replace(/^[a-z0-9_-]+:/i, "");
-    const left = normalise(target);
-    const right = normalise(note);
-    return (
-        left === right ||
-        left.endsWith(`/${right}`) ||
-        right.endsWith(`/${left}`)
+export function operationMatchesNotePath(
+    operation: DocsOperation,
+    declaration: RetrievalDeclaration,
+): boolean {
+    const expected = declaration.note;
+    const qualified =
+        declaration.lake === null
+            ? expected
+            : `${declaration.lake}/${expected}`;
+    const candidates = [operation.path, operation.target]
+        .filter((value): value is string => value !== null)
+        .map(barePath);
+    return candidates.some(
+        (value) => value === expected || value === qualified,
     );
+}
+
+/**
+ * Whether an operation's reported lake matches the declaration. A declaration
+ * without a lake accepts only an exact path; a declared lake must match.
+ * @param operation The journal operation.
+ * @param declaration The declared note.
+ * @returns True when the lake identity is satisfied.
+ */
+export function operationMatchesNoteLake(
+    operation: DocsOperation,
+    declaration: RetrievalDeclaration,
+): boolean {
+    return declaration.lake === null || operation.lake === declaration.lake;
 }
 
 /** The shared, evidence-only facts one trial's measures read. */
@@ -388,6 +447,7 @@ interface MeasureContext {
     record: TrialRecord;
     operations: DocsOperation[];
     parsed: boolean;
+    journalProblem: string | null;
     gate: string | null;
     outcome: DocumentationOutcome | null;
     primary: string;
@@ -406,10 +466,17 @@ function contextOf(
         journal.state === "available"
             ? parseOperations(journal.value)
             : undefined;
+    const journalProblem =
+        journal.state !== "available"
+            ? `docs-operation journal is ${journal.state}`
+            : parsed !== undefined && parsed.problems.length > 0
+              ? `docs-operation journal has unreadable lines: ${parsed.problems.join("; ")}`
+              : null;
     return {
         record,
         operations: parsed?.operations ?? [],
-        parsed: parsed !== undefined,
+        parsed: journalProblem === null,
+        journalProblem,
         gate:
             record.gate.state === "available" ? record.gate.value.status : null,
         outcome: record.assessment.outcome ?? null,
@@ -448,7 +515,7 @@ function earlyDisposition(
         return {
             disposition: "unknown",
             evidence: [
-                "no readable docs-operation journal; a write cannot be attributed",
+                `${context.journalProblem ?? "docs-operation journal is unreadable"}; a write cannot be attributed`,
             ],
         };
     }
@@ -473,16 +540,25 @@ function dispositionOf(
         };
     }
     if (
-        (context.outcome === "useful-create" ||
-            context.outcome === "useful-update") &&
-        context.gate === "pass"
+        context.outcome === "useful-create" ||
+        context.outcome === "useful-update"
     ) {
-        return {
-            disposition: "filesystem-only",
-            evidence: [
-                "the documentation surface changed and passed the gate, but no completed docs add operation was journaled",
-            ],
-        };
+        if (context.gate === "pass") {
+            return {
+                disposition: "filesystem-only",
+                evidence: [
+                    "the documentation surface changed and passed the gate, but no completed docs add operation was journaled",
+                ],
+            };
+        }
+        if (context.gate === null) {
+            return {
+                disposition: "unknown",
+                evidence: [
+                    "a useful judgement exists but the gate result is missing",
+                ],
+            };
+        }
     }
     return { disposition: "no-write", evidence: [] };
 }
@@ -496,9 +572,16 @@ function completedWrite(context: MeasureContext): {
         context.outcome === "useful-create" ||
         context.outcome === "useful-update"
     ) {
-        return context.gate === "pass"
-            ? { disposition: "verified-write", evidence: [] }
-            : { disposition: "gate-blocked", evidence: [] };
+        if (context.gate === "pass")
+            return { disposition: "verified-write", evidence: [] };
+        if (context.gate === "blocked")
+            return { disposition: "gate-blocked", evidence: [] };
+        return {
+            disposition: "unknown",
+            evidence: [
+                "a completed plugin write and a useful judgement exist but the gate result is missing",
+            ],
+        };
     }
     if (context.outcome === null) {
         return {
@@ -557,12 +640,17 @@ function retrievalOf(context: MeasureContext): {
             evidence: [],
         };
     }
-    const reads = context.operations.filter(
+    const matching = context.operations.filter(
         (operation) =>
             operation.verb === "read" &&
             operation.status === "completed" &&
-            operation.target !== null &&
-            targetsNote(operation.target, declaration.note),
+            operationMatchesNotePath(operation, declaration),
+    );
+    const reads = matching.filter((operation) =>
+        operationMatchesNoteLake(operation, declaration),
+    );
+    const lakeUnknown = matching.some(
+        (operation) => declaration.lake !== null && operation.lake === null,
     );
     const judge = judgeRetrieval(context.record);
     const base = {
@@ -580,12 +668,21 @@ function retrievalOf(context: MeasureContext): {
             ],
         };
     }
+    if (!base.read && lakeUnknown) {
+        return {
+            ...base,
+            state: "unknown",
+            evidence: [
+                `a read of ${declaration.note} was found but it reports no lake; attribution is unknown`,
+            ],
+        };
+    }
     if (!base.read) {
         return {
             ...base,
             state: "miss",
             evidence: [
-                `no completed read of ${declaration.note} was attributed to the session`,
+                `no completed read of ${declaration.lake === null ? declaration.note : `${declaration.lake}/${declaration.note}`} was attributed to the session`,
             ],
         };
     }
@@ -785,6 +882,7 @@ function countBounds(
     candidate: ArmMeasureSummary,
 ): {
     extraKnown: boolean;
+    extraRobust: boolean;
     neitherLowerKnown: boolean;
     neitherLowerRobust: boolean;
     impossibleExtra: boolean;
@@ -794,6 +892,11 @@ function countBounds(
         extraKnown:
             candidate.recording.success >= control.recording.success + 1 ||
             candidate.retrieval.applied >= control.retrieval.applied + 1,
+        extraRobust:
+            candidate.recording.success >=
+                control.recording.success + control.recording.unknown + 1 ||
+            candidate.retrieval.applied >=
+                control.retrieval.applied + control.retrieval.unknown + 1,
         neitherLowerKnown:
             candidate.recording.success >= control.recording.success &&
             candidate.retrieval.applied >= control.retrieval.applied,
@@ -825,11 +928,17 @@ function opportunityCriterion(
         `recording: control ${String(control.recording.success)}/${String(control.recording.planned)}, candidate ${String(candidate.recording.success)}/${String(candidate.recording.planned)} (unknown control ${String(control.recording.unknown)}, candidate ${String(candidate.recording.unknown)})`,
         `retrieval: control ${String(control.retrieval.applied)}/${String(control.retrieval.planned)}, candidate ${String(candidate.retrieval.applied)}/${String(candidate.retrieval.planned)} (unknown control ${String(control.retrieval.unknown)}, candidate ${String(candidate.retrieval.unknown)})`,
     ];
-    if (
-        bounds.unknowns > 0 &&
-        !(bounds.extraKnown && bounds.neitherLowerRobust) &&
-        !bounds.impossibleExtra
-    ) {
+    const positive = bounds.extraRobust && bounds.neitherLowerRobust;
+    if (positive) {
+        return {
+            status: "pass",
+            reasons: [
+                ...reasons,
+                "the candidate has at least one additional opportunity with neither count lower, even if every control unknown is a success",
+            ],
+        };
+    }
+    if (bounds.unknowns > 0 && !bounds.impossibleExtra) {
         return {
             status: "inconclusive",
             reasons: [
@@ -838,20 +947,11 @@ function opportunityCriterion(
             ],
         };
     }
-    if (!bounds.extraKnown || !bounds.neitherLowerKnown) {
-        return {
-            status: "fail",
-            reasons: [
-                ...reasons,
-                "the candidate has no additional successful recording or applied retrieval with neither count lower (a tie gives no promotion)",
-            ],
-        };
-    }
     return {
-        status: "pass",
+        status: "fail",
         reasons: [
             ...reasons,
-            "the candidate has at least one additional opportunity with neither count lower",
+            "the candidate has no additional successful recording or applied retrieval with neither count lower (a tie gives no promotion)",
         ],
     };
 }

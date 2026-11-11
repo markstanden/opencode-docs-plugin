@@ -63,6 +63,30 @@ a release-workflow constraint, not a behavioural result.
   machine-local path is committed. The campaign-local credential source and
   the blinded arm mapping stay outside the repository.
 
+## Review hardening
+
+Five review findings were fixed and covered by regressions:
+
+- **No promotion on a possible tie.** The opportunity criterion now requires
+  the candidate's lead to survive every control unknown: if A has one success
+  and one unknown and B has two known successes, the result is
+  `inconclusive`, not `personal-trial`. A lead is decisive only when B still
+  leads after all control unknowns are counted as successes.
+- **No credit for a read in another lake.** Retrieval credit requires the
+  declared lake **and** an exact note path; a suffix match is not enough.
+  `shared/db/pool.md` no longer satisfies `docs/db/pool.md`. A matching read
+  with no reported lake is `unknown`, not a success.
+- **A failed judge stops the runner.** A slot with no usable judgement is
+  recorded as blocked and the campaign pauses; a `meta.json` alone is not
+  treated as a prior judgement.
+- **Incomplete evidence is unknown.** An unreadable journal line, a missing
+  journal, or a missing gate beside a useful write yields `unknown`, never a
+  measured miss or a gate block.
+- **The logging shim is executable.** The materialiser sets `0755` on
+  `generate.sh` and `shim/podman`; the runner refuses a non-executable shim,
+  and a contract test runs the materialiser in a fresh directory and checks
+  the modes.
+
 ## Reconciliation
 
 | Layer                             | Count                                                         | Notes                                                                       |

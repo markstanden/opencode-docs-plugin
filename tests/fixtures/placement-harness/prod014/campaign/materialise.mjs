@@ -2,7 +2,7 @@
 // The scripts are data, not executable repository code: a rerun writes them
 // outside the repository and never imports them from here.
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -22,6 +22,9 @@ for (const [name, body] of Object.entries(snapshot.files)) {
     const path = join(target, "prepare", name);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, body, "utf8");
+    if (name.endsWith(".sh") || name === "shim/podman") {
+        chmodSync(path, 0o755);
+    }
 }
 console.log(
     `materialised ${Object.keys(snapshot.files).length} scripts into ${target}/prepare`,

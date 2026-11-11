@@ -1,7 +1,15 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+    existsSync,
+    mkdtempSync,
+    readFileSync,
+    rmSync,
+    statSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -177,5 +185,29 @@ describe("frozen campaign snapshot", () => {
 
         // Assert
         assert.deepEqual(leaks, []);
+    });
+});
+
+describe("materialised campaign runner", () => {
+    it("marks the shell scripts executable", () => {
+        // Arrange
+        const target = mkdtempSync(join(tmpdir(), "pd-materialise-"));
+
+        try {
+            // Act
+            execFileSync(
+                process.execPath,
+                [join(fixtureDir, "campaign", "materialise.mjs"), target],
+                { encoding: "utf8" },
+            );
+            const modes = ["prepare/generate.sh", "prepare/shim/podman"].map(
+                (path) => statSync(join(target, path)).mode & 0o777,
+            );
+
+            // Assert
+            assert.deepEqual(modes, [0o755, 0o755]);
+        } finally {
+            rmSync(target, { recursive: true, force: true });
+        }
     });
 });
