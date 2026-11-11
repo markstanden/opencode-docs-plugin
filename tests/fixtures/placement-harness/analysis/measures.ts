@@ -399,6 +399,11 @@ export function measureTrial(
                     `judgement recorded ${outcome} for a completed plugin write`,
                 );
             }
+        } else if (parsed === undefined) {
+            disposition = "unknown";
+            recordingEvidence.push(
+                "no readable docs-operation journal; a write cannot be attributed",
+            );
         } else if (failedAdds.length > 0) {
             disposition = "tool-error";
             recordingEvidence.push("a docs add operation failed");
@@ -410,9 +415,6 @@ export function measureTrial(
             recordingEvidence.push(
                 "the documentation surface changed and passed the gate, but no completed docs add operation was journaled",
             );
-        } else if (outcome === null && parsed === undefined) {
-            disposition = "unknown";
-            recordingEvidence.push("no readable docs-operation journal");
         } else {
             disposition = "no-write";
         }
