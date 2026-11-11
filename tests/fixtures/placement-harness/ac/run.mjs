@@ -213,6 +213,18 @@ function primaryEvidence(record) {
 }
 
 /**
+ * Resolve one case's measurement entry. A declaration may key cases at the
+ * top level or nest them under `scenarios`; both are accepted so the same
+ * measured campaign file drives the judge packet and the analyser.
+ * @param scoringSpec The parsed measurement declaration, when supplied.
+ * @param caseId The case id.
+ * @returns The case's measurement entry, or an empty object.
+ */
+function caseSpecOf(scoringSpec, caseId) {
+    return scoringSpec?.scenarios?.[caseId] ?? scoringSpec?.[caseId] ?? {};
+}
+
+/**
  * Assemble one arm-blind packet for a completed trial.
  * @param base The stage's result roots.
  * @param stamp The trial stamp.
@@ -222,7 +234,7 @@ function primaryEvidence(record) {
  */
 function packetFor(base, stamp, caseId, truth, scoringSpec) {
     const caseDir = join(base, "results", stamp, caseId);
-    const caseSpec = scoringSpec?.[caseId] ?? {};
+    const caseSpec = caseSpecOf(scoringSpec, caseId);
     const beforeDocs = lakeDocs(join(base, "fixtures", caseId, "lakes"));
     const afterDocs = lakeDocs(join(caseDir, "live/lakes"));
     const state = docChanges(beforeDocs, afterDocs);
@@ -285,7 +297,7 @@ function spawnJudge({ launcher, model, stamp, prompt, runDir, timeout }) {
  * finding is required.
  */
 function judgementOptions(caseId, scoringSpec) {
-    const caseSpec = scoringSpec?.[caseId] ?? {};
+    const caseSpec = caseSpecOf(scoringSpec, caseId);
     const options = {
         requirePreservation:
             caseId === PRESERVATION_CASE && caseSpec.preservation === undefined,
