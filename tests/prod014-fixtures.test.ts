@@ -17,12 +17,33 @@ const checksDir = join(
     "placement-harness",
     "primary-checks",
 );
-const readJson = (name) =>
-    JSON.parse(readFileSync(join(fixtureDir, name), "utf8"));
+const readJson = <T>(name: string): T =>
+    JSON.parse(readFileSync(join(fixtureDir, name), "utf8")) as T;
 
-const cases = readJson("cases.json");
-const truth = readJson("truth.json");
-const measurement = readJson("measurement.json");
+interface CaseEntry {
+    id: string;
+    primaryCheck?: { script?: string };
+    seeds?: Array<{ surface: string; path: string }>;
+    expectedDocs?: { target?: string; preserve?: string[] };
+}
+
+interface Measurement {
+    recordingOpportunities: string[];
+    retrievalOpportunities: string[];
+    scenarios: Record<
+        string,
+        {
+            retrieval?: { note?: string; detail?: string };
+            preservation?: {
+                facts?: Array<{ id: string; obsolete?: boolean }>;
+            };
+        }
+    >;
+}
+
+const cases = readJson<CaseEntry[]>("cases.json");
+const truth = readJson<Record<string, string>>("truth.json");
+const measurement = readJson<Measurement>("measurement.json");
 
 describe("0.14.0 productivity-trial fixtures", () => {
     it("carries one case per scheduled pair, in pair order", () => {
