@@ -897,3 +897,160 @@ describe("sensitivity", () => {
         assert.equal(baseline?.totals.A, -9);
     });
 });
+
+describe("scenario-keyed preservation and retrieval assessment", () => {
+    const changed = {
+        documentsChanged: true,
+        createdPaths: [],
+        modifiedPaths: ["docs/ops/upgrade.md"],
+    };
+    const spec = {
+        facts: [
+            { id: "snapshot", label: "pre-upgrade snapshot" },
+            { id: "rollback", label: "rollback procedure" },
+            {
+                id: "legacyCondition",
+                label: "legacy migrate version condition",
+                obsolete: true,
+            },
+        ],
+    };
+    const retrieval = {
+        note: "ops/upgrade.md",
+        detail: "4.x upgrades never run the legacy migration",
+    };
+    const baseInput = {
+        taskPrompt: "Fix the upgrade check.",
+        standingPermission: "You may update documentation.",
+        scenarioTruth: "The old version condition is obsolete.",
+        beforeDocs: [{ path: "docs/ops/upgrade.md", contents: "before" }],
+        afterDocs: [{ path: "docs/ops/upgrade.md", contents: "after" }],
+        changedPaths: ["lakes/docs/ops/upgrade.md"],
+        primary: { status: "pass", exit: 0, stdout: "ok", stderr: "" },
+        docsOperations: ["completed native read ops/upgrade.md"],
+        answer: "Corrected the note.",
+    };
+    const finding = (state: string, quote: string) => ({ state, quote });
+    const assessment = (overrides = {}) => ({
+        documentationOutcome: "useful-update",
+        documentationReason: "corrected the obsolete version condition",
+        evidence: ["4.x upgrades never run migrate:legacy."],
+        preservation: {
+            snapshot: finding("retained", "Take a snapshot first."),
+            rollback: finding("retained", "Restore the snapshot."),
+            legacyCondition: finding("removed", "(absent)"),
+        },
+        retrievalApplication: {
+            state: "applied",
+            quote: "limited the legacy step to 3.x",
+        },
+        ...overrides,
+    });
+
+    it("renders the declared facts and the seeded-note retrieval question", () => {
+        // Act
+        const prompt = buildAcPrompt({
+            ...baseInput,
+            preservationSpec: spec,
+            retrievalSpec: retrieval,
+        });
+
+        // Assert
+        assert.match(prompt, /PRESERVATION ASSESSMENT/);
+        assert.match(prompt, /"snapshot"/);
+        assert.match(prompt, /"legacyCondition"/);
+        assert.match(prompt, /RETRIEVAL ASSESSMENT/);
+        assert.match(prompt, /retrievalApplication/);
+        assert.match(prompt, /4\.x upgrades never run the legacy migration/);
+    });
+
+    it("keeps a retrieval-only prompt free of the preservation block", () => {
+        // Act
+        const prompt = buildAcPrompt({
+            ...baseInput,
+            retrievalSpec: retrieval,
+        });
+
+        // Assert
+        assert.doesNotMatch(prompt, /PRESERVATION ASSESSMENT/);
+        assert.match(prompt, /RETRIEVAL ASSESSMENT/);
+    });
+
+    it("accepts a complete inventory and retrieval finding", () => {
+        // Act
+        const problems = validateAcJudgement(assessment(), changed, {
+            preservationSpec: spec,
+            retrieval: true,
+        });
+
+        // Assert
+        assert.deepEqual(problems, []);
+    });
+
+    it("rejects an obsolete fact with an unrecognised state", () => {
+        // Arrange
+        const value = assessment({
+            preservation: {
+                ...assessment().preservation,
+                legacyCondition: finding("lost", "(absent)"),
+            },
+        });
+
+        // Act
+        const problems = validateAcJudgement(value, changed, {
+            preservationSpec: spec,
+        });
+
+        // Assert
+        assert.match(
+            problems.join("; "),
+            /preservation\.legacyCondition\.state must be one of removed\|retained/,
+        );
+    });
+
+    it("requires misleading when a still-valid fact is lost", () => {
+        // Arrange
+        const value = assessment({
+            preservation: {
+                ...assessment().preservation,
+                snapshot: finding("lost", "(absent)"),
+            },
+        });
+
+        // Act
+        const problems = validateAcJudgement(value, changed, {
+            preservationSpec: spec,
+        });
+
+        // Assert
+        assert.match(problems.join("; "), /lost valid fact \(snapshot\)/);
+        assert.match(problems.join("; "), /must be "misleading"/);
+    });
+
+    it("rejects a missing or malformed retrieval finding", () => {
+        // Arrange
+        const missing = assessment();
+        delete (missing as { retrievalApplication?: unknown })
+            .retrievalApplication;
+
+        // Act
+        const absent = validateAcJudgement(missing, changed, {
+            retrieval: true,
+        });
+        const badState = validateAcJudgement(
+            assessment({ retrievalApplication: finding("used", "x") }),
+            changed,
+            { retrieval: true },
+        );
+
+        // Assert
+        assert.match(
+            absent.join("; "),
+            /retrievalApplication must be an object/,
+        );
+        assert.match(
+            badState.join("; "),
+            /retrievalApplication\.state must be one of/,
+        );
+    });
+});

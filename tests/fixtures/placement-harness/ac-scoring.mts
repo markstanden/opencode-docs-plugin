@@ -51,6 +51,46 @@ export interface PreservationAssessment {
     obsoleteTlsClaim: { state: ObsoleteClaimState; quote: string };
 }
 
+/** One configured fact in a scenario-keyed preservation inventory. */
+export interface PreservationFactSpec {
+    /** Stable fact id, used as the judgement field name. */
+    id: string;
+    /** Human-readable label for the prompt. */
+    label: string;
+    /** True when the fact is the superseded claim rather than a still-valid one. */
+    obsolete?: boolean;
+}
+
+/** A scenario-keyed preservation inventory the judge must assess. */
+export interface PreservationSpec {
+    /** The facts to assess, in prompt order. */
+    facts: PreservationFactSpec[];
+}
+
+/** The seeded note and distinctive detail a retrieval assessment is about. */
+export interface RetrievalSpec {
+    /** Lake-relative path of the seeded note. */
+    note: string;
+    /** The actionable detail the task must apply. */
+    detail: string;
+}
+
+/** The assessed state of a trial's use of a seeded note. */
+export type RetrievalState =
+    | "applied"
+    | "read-not-applied"
+    | "search-only"
+    | "not-retrieved"
+    | "unknown";
+
+/** One trial's retrieval-application finding. */
+export interface RetrievalApplication {
+    /** Whether the note was retrieved and applied, read only, searched only, etc. */
+    state: RetrievalState;
+    /** The decisive excerpt, or "(none)". */
+    quote: string;
+}
+
 /** Everything a judge must state about one trial's documentation. */
 export interface AcJudgement {
     /** The one outcome the trial earns. */
@@ -61,6 +101,8 @@ export interface AcJudgement {
     evidence: string[];
     /** The R02 preservation assessment, required only for that scenario. */
     preservation?: PreservationAssessment;
+    /** The retrieval-application assessment, when the scenario declares one. */
+    retrievalApplication?: RetrievalApplication;
 }
 
 /** The mutation facts the judgement is validated against. */
@@ -148,6 +190,8 @@ export interface ScoredTrial {
  * @param input.docsOperations Verified docs operations observed.
  * @param input.answer The trial's final answer.
  * @param input.requirePreservation Require the R02 semantic preservation block.
+ * @param input.preservationSpec A scenario-keyed preservation inventory.
+ * @param input.retrievalSpec A seeded-note retrieval-application assessment.
  * @returns The complete judge prompt.
  */
 export function buildAcPrompt(input: {
@@ -166,6 +210,8 @@ export function buildAcPrompt(input: {
     docsOperations: string[];
     answer: string;
     requirePreservation?: boolean;
+    preservationSpec?: PreservationSpec;
+    retrievalSpec?: RetrievalSpec;
 }): string {
     const docs = (entries: Array<{ path: string; contents: string }>) =>
         entries
@@ -182,10 +228,50 @@ The obsolete TLS claim is "removed" only when the resulting document no longer a
 Quote the decisive text from the AFTER documents for every entry, or write "(absent)" when the text is gone.
 If any still-valid fact is lost, the documentation outcome must be "misleading".
 `
+        : input.preservationSpec
+          ? `
+PRESERVATION ASSESSMENT (required for this scenario): the trial corrects an existing note whose other facts stay valid.
+Assess each still-valid fact by meaning, not exact wording: a faithful paraphrase, an equivalent restatement or the same value is "retained"; a changed value is "corrected"; a fact the lake no longer states is "lost".
+The obsolete claim (${input.preservationSpec.facts
+                .filter((fact) => fact.obsolete === true)
+                .map((fact) => fact.label)
+                .join(
+                    ", ",
+                )}) is "removed" only when the resulting document no longer asserts it.
+Quote the decisive text from the AFTER documents for every entry, or write "(absent)" when the text is gone.
+If any still-valid fact is lost, the documentation outcome must be "misleading".
+`
+          : "";
+    const retrieval = input.retrievalSpec
+        ? `
+RETRIEVAL ASSESSMENT (required for this scenario): the seeded note \`${input.retrievalSpec.note}\` carries the project-specific detail: ${input.retrievalSpec.detail}
+Decide whether the trial's work applied that detail, using the final answer and the observed docs operations above:
+- "applied": an attributable docs operation retrieved the note and the work uses its detail;
+- "read-not-applied": the note was retrieved but the work does not apply the detail;
+- "search-only": only a search or help operation occurred, with no read of the note;
+- "not-retrieved": no attributable docs operation retrieved the note;
+- "unknown": the evidence cannot tell.
+Quote the decisive line from the work or the note, or write "(none)".
+`
         : "";
-    const returnShape = input.requirePreservation
-        ? `{"documentationOutcome":"useful-create"|"useful-update"|"transient"|"duplicate"|"misleading"|"none","documentationReason":"...","evidence":["..."],"preservation":{"poolSize":{"state":"retained"|"corrected"|"lost","quote":"..."},"acquireTimeout":{"state":"retained"|"corrected"|"lost","quote":"..."},"startupMigrations":{"state":"retained"|"corrected"|"lost","quote":"..."},"obsoleteTlsClaim":{"state":"removed"|"retained","quote":"..."}}}`
-        : `{"documentationOutcome":"useful-create"|"useful-update"|"transient"|"duplicate"|"misleading"|"none","documentationReason":"...","evidence":["..."]}`;
+    const retrievalShape = input.retrievalSpec
+        ? ',"retrievalApplication":{"state":"applied"|"read-not-applied"|"search-only"|"not-retrieved"|"unknown","quote":"..."}'
+        : "";
+    const preservationShape = input.requirePreservation
+        ? `,"preservation":{"poolSize":{"state":"retained"|"corrected"|"lost","quote":"..."},"acquireTimeout":{"state":"retained"|"corrected"|"lost","quote":"..."},"startupMigrations":{"state":"retained"|"corrected"|"lost","quote":"..."},"obsoleteTlsClaim":{"state":"removed"|"retained","quote":"..."}}`
+        : input.preservationSpec
+          ? `,"preservation":{${input.preservationSpec.facts
+                .map(
+                    (fact) =>
+                        `"${fact.id}":{"state":${
+                            fact.obsolete === true
+                                ? '"removed"|"retained"'
+                                : '"retained"|"corrected"|"lost"'
+                        },"quote":"..."}`,
+                )
+                .join(",")}}`
+          : "";
+    const returnShape = `{"documentationOutcome":"useful-create"|"useful-update"|"transient"|"duplicate"|"misleading"|"none","documentationReason":"...","evidence":["..."]${preservationShape}${retrievalShape}}`;
     return `Score ONE completed engineering trial's documentation outcome. Return ONE JSON object and nothing else.
 
 An agent was given the task below in a small synthetic repository. It had standing permission to create or update documentation in the repository knowledge lake, but was never asked to document anything. Some tasks contain a durable, reusable finding worth preserving; others do not.
@@ -236,7 +322,7 @@ Rules:
 - Classify mixed output by its most adverse component and name every component in the reason.
 - Do not reward volume or effort; one trial earns at most one documentation outcome.
 - The primary-task result is given, not yours to re-decide.
-${preservation}
+${preservation}${retrieval}
 Return exactly:
 ${returnShape}`;
 }
@@ -318,6 +404,15 @@ const PRESERVATION_STATES: readonly PreservationState[] = [
     "lost",
 ];
 
+/** Allowed states for a retrieval-application finding. */
+export const RETRIEVAL_STATES: readonly RetrievalState[] = [
+    "applied",
+    "read-not-applied",
+    "search-only",
+    "not-retrieved",
+    "unknown",
+];
+
 /** Problems with one still-valid fact's preservation finding. */
 function factProblems(label: string, entry: unknown): string[] {
     if (!isPlainObject(entry)) {
@@ -360,6 +455,115 @@ function obsoleteProblems(entry: unknown): string[] {
 /** Whether one fact entry records destructive loss. */
 function lostFact(entry: unknown): boolean {
     return isPlainObject(entry) && entry.state === "lost";
+}
+
+/**
+ * Schema problems for one inventory fact's finding.
+ * @param fact The declared fact.
+ * @param entry The judgement's entry for it.
+ * @returns The problems and whether the entry reports loss.
+ */
+function genericFactProblems(
+    fact: PreservationFactSpec,
+    entry: unknown,
+): { problems: string[]; lost: boolean } {
+    if (!isPlainObject(entry)) {
+        return {
+            problems: [`preservation.${fact.id} must be an object`],
+            lost: false,
+        };
+    }
+    const allowed =
+        fact.obsolete === true ? ["removed", "retained"] : PRESERVATION_STATES;
+    const problems: string[] = [];
+    if (
+        typeof entry.state !== "string" ||
+        !(allowed as readonly string[]).includes(entry.state)
+    ) {
+        problems.push(
+            `preservation.${fact.id}.state must be one of ${allowed.join("|")}`,
+        );
+    }
+    if (typeof entry.quote !== "string" || entry.quote.trim() === "") {
+        problems.push(
+            `preservation.${fact.id}.quote must be a nonblank string`,
+        );
+    }
+    return {
+        problems,
+        lost: fact.obsolete !== true && entry.state === "lost",
+    };
+}
+
+/**
+ * Problems raised when an inventory reports destructive loss.
+ * @param value The parsed judgement.
+ * @param state The mutation facts for the trial.
+ * @param lost The lost fact ids.
+ * @returns The outcome-consistency problems.
+ */
+function lostFactProblems(
+    value: Record<string, unknown>,
+    state: DocState,
+    lost: string[],
+): string[] {
+    if (lost.length === 0) return [];
+    const problems: string[] = [];
+    if (value.documentationOutcome !== "misleading") {
+        problems.push(
+            `preservation reports a lost valid fact (${lost.join(", ")}); documentationOutcome must be "misleading"`,
+        );
+    }
+    if (!state.documentsChanged) {
+        problems.push(
+            "preservation reports a lost valid fact but no documentation document changed",
+        );
+    }
+    return problems;
+}
+
+function genericPreservationProblems(
+    value: Record<string, unknown>,
+    state: DocState,
+    spec: PreservationSpec,
+): string[] {
+    if (!isPlainObject(value.preservation)) {
+        return ["preservation must be an object for this scenario"];
+    }
+    const preservation = value.preservation;
+    const problems: string[] = [];
+    const lost: string[] = [];
+    for (const fact of spec.facts) {
+        const outcome = genericFactProblems(fact, preservation[fact.id]);
+        problems.push(...outcome.problems);
+        if (outcome.lost) lost.push(fact.id);
+    }
+    return [...problems, ...lostFactProblems(value, state, lost)];
+}
+
+/**
+ * Problems with the optional retrieval-application finding.
+ * @param value The parsed judgement.
+ * @returns The problems; empty means a usable assessment.
+ */
+function retrievalProblems(value: Record<string, unknown>): string[] {
+    const retrieval = value.retrievalApplication;
+    if (!isPlainObject(retrieval)) {
+        return ["retrievalApplication must be an object for this scenario"];
+    }
+    const problems: string[] = [];
+    if (
+        typeof retrieval.state !== "string" ||
+        !RETRIEVAL_STATES.includes(retrieval.state as RetrievalState)
+    ) {
+        problems.push(
+            `retrievalApplication.state must be one of ${RETRIEVAL_STATES.join("|")}`,
+        );
+    }
+    if (typeof retrieval.quote !== "string" || retrieval.quote.trim() === "") {
+        problems.push("retrievalApplication.quote must be a nonblank string");
+    }
+    return problems;
 }
 
 /** Problems with the required R02 semantic preservation assessment. */
@@ -422,14 +626,20 @@ function outcomeEvidenceProblem(
  * created document, means the judge did not read the evidence.
  * @param value The parsed judge object.
  * @param state The mutation facts for the trial.
- * @param options Preservation requirement.
+ * @param options Preservation and retrieval requirements.
  * @param options.requirePreservation True for the R02 correction scenario.
+ * @param options.preservationSpec A scenario-keyed preservation inventory.
+ * @param options.retrieval True when the scenario needs a retrieval finding.
  * @returns The problems; empty means a usable judgement.
  */
 export function validateAcJudgement(
     value: Record<string, unknown>,
     state: DocState,
-    options: { requirePreservation?: boolean } = {},
+    options: {
+        requirePreservation?: boolean;
+        preservationSpec?: PreservationSpec;
+        retrieval?: boolean;
+    } = {},
 ): string[] {
     const schema = judgementSchemaProblems(value);
     if (schema.length > 0) return schema;
@@ -441,6 +651,17 @@ export function validateAcJudgement(
     if (contradiction !== null) problems.push(contradiction);
     if (options.requirePreservation) {
         problems.push(...preservationProblems(value, state));
+    } else if (options.preservationSpec) {
+        problems.push(
+            ...genericPreservationProblems(
+                value,
+                state,
+                options.preservationSpec,
+            ),
+        );
+    }
+    if (options.retrieval) {
+        problems.push(...retrievalProblems(value));
     }
     return problems;
 }

@@ -93,6 +93,7 @@ const record = (
         preservation:
             overrides.preservation ??
             ({ state: "missing", source: "ac" } as Loaded<PreservationByFact>),
+        retrieval: { state: "missing", source: "ac" },
         problems: [],
     },
     judgeModel: { state: "missing", source: "meta.json" },

@@ -215,6 +215,7 @@ const record = (
         reason: "reason",
         evidence: [],
         preservation: { state: "missing", source: "ac" },
+        retrieval: { state: "missing", source: "ac" },
         problems: [],
     },
     judgeModel: { state: "missing", source: "meta.json" },

@@ -105,6 +105,14 @@ export type AssessmentStatus =
     | "not-run"
     | "unknown";
 
+/** One trial's retrieval-application observation as the judge recorded it. */
+export interface RetrievalObservation {
+    /** The recorded state (e.g. applied, read-not-applied). */
+    state: string;
+    /** The decisive excerpt connecting the retrieved detail to the work. */
+    quote: string;
+}
+
 /** One trial's resolved assessment. */
 export interface TrialAssessment {
     /** The status of the selected judgement layer. */
@@ -119,6 +127,8 @@ export interface TrialAssessment {
     evidence: string[];
     /** Per-fact preservation observations for the scenario's inventory. */
     preservation: Loaded<PreservationByFact>;
+    /** The judge's retrieval-application finding, when one was recorded. */
+    retrieval: Loaded<RetrievalObservation>;
     /** Every problem found while loading or validating the assessment. */
     problems: string[];
 }
@@ -168,6 +178,8 @@ export interface TrialRecord {
 export interface TrialRecordOptions {
     /** The arm's result root, relative to the evidence root. */
     resultRoot: string;
+    /** The selected judge attempt directory; defaults to `attempt-001`. */
+    attemptId?: string;
     /** The trial stamp to load. */
     stamp: string;
     /** The scenario the slot declared. */
@@ -707,6 +719,7 @@ function unassessedResult(
         reason: undefined,
         evidence: [],
         preservation: { state: "missing", source },
+        retrieval: { state: "missing", source },
         problems,
     };
 }
@@ -721,12 +734,26 @@ function unassessedResult(
 function unselectedAttemptProblems(
     reader: EvidenceReader,
     acDir: string,
+    selectedAttemptId: string,
 ): string[] {
     const entries = reader.readDirectoryEntries(acDir);
     if (entries.state !== "available") return [];
-    return entries.value
-        .filter((name) => /^attempt-\d+$/.test(name) && name !== "attempt-001")
-        .map((name) => `unselected judge attempt present: ${name}`);
+    const problems: string[] = [];
+    for (const name of entries.value) {
+        if (!/^attempt-\d+$/.test(name) || name === selectedAttemptId) continue;
+        const judgement = loadJson(
+            reader,
+            joinPath(joinPath(acDir, name), "judgement.json"),
+        );
+        const judged =
+            judgement.state === "available" &&
+            isRecord(judgement.value) &&
+            judgement.value.status === "judged";
+        if (judged) {
+            problems.push(`unselected judge attempt present: ${name}`);
+        }
+    }
+    return problems;
 }
 
 /**
@@ -775,7 +802,45 @@ function selectedAssessment(
             attemptDir,
             options.inventoryFactIds,
         ),
+        retrieval:
+            status === "judged"
+                ? retrievalOf(value, attemptDir)
+                : { state: "missing", source: attemptDir },
         problems,
+    };
+}
+
+/**
+ * Extract the judge's retrieval-application finding, keeping a missing or
+ * malformed block explicit rather than treating it as a miss.
+ * @param value The judgement object.
+ * @param source The display source.
+ * @returns The observation, or the explicit state.
+ */
+function retrievalOf(
+    value: Record<string, unknown>,
+    source: string,
+): Loaded<RetrievalObservation> {
+    const entry = value.retrievalApplication;
+    if (entry === undefined) return { state: "missing", source };
+    if (!isRecord(entry)) {
+        return {
+            state: "malformed",
+            source,
+            problems: ["retrievalApplication is not an object"],
+        };
+    }
+    if (typeof entry.state !== "string" || typeof entry.quote !== "string") {
+        return {
+            state: "malformed",
+            source,
+            problems: ["retrievalApplication needs string state and quote"],
+        };
+    }
+    return {
+        state: "available",
+        value: { state: entry.state, quote: entry.quote },
+        source,
     };
 }
 
@@ -794,18 +859,19 @@ function loadAssessment(
     options: TrialRecordOptions,
 ): TrialAssessment {
     const acDir = joinPath(dir, "ac");
-    const problems = unselectedAttemptProblems(reader, acDir);
+    const attemptId = options.attemptId ?? "attempt-001";
+    const problems = unselectedAttemptProblems(reader, acDir, attemptId);
     if (attempt === "absent") {
         return unassessedResult("not-run", acDir, problems);
     }
     if (attempt !== "recorded") {
         return unassessedResult("unknown", acDir, problems);
     }
-    const selected = joinPath(acDir, "attempt-001");
+    const selected = joinPath(acDir, attemptId);
     const attemptDirs = reader.readDirectoryEntries(acDir);
     if (
         attemptDirs.state !== "available" ||
-        !attemptDirs.value.includes("attempt-001")
+        !attemptDirs.value.includes(attemptId)
     ) {
         return unassessedResult("unassessed", selected, problems);
     }
@@ -977,7 +1043,11 @@ export function loadTrialRecord(
             loadJson(reader, joinPath(dir, "primary-check.json")),
         ),
         assessment: loadAssessment(reader, dir, attempt.state, options),
-        judgeModel: loadJudgeModel(reader, dir),
+        judgeModel: loadJudgeModel(
+            reader,
+            dir,
+            options.attemptId ?? "attempt-001",
+        ),
         tokens: loadTokens(reader, joinPath(dir, "stdout.jsonl")),
         artefacts: {
             finalAnswer: reader.readTextFile(joinPath(dir, "final.md")),
@@ -997,8 +1067,15 @@ export function loadTrialRecord(
  * @param dir The trial directory, relative to the evidence root.
  * @returns The judge model, or the explicit state.
  */
-function loadJudgeModel(reader: EvidenceReader, dir: string): Loaded<string> {
-    const meta = loadJson(reader, joinPath(dir, "ac/attempt-001/meta.json"));
+function loadJudgeModel(
+    reader: EvidenceReader,
+    dir: string,
+    attemptId: string,
+): Loaded<string> {
+    const meta = loadJson(
+        reader,
+        joinPath(dir, joinPath("ac", joinPath(attemptId, "meta.json"))),
+    );
     if (meta.state === "available" && isRecord(meta.value)) {
         const model = meta.value.judgeModel;
         if (typeof model === "string" && model.trim() !== "") {

@@ -36,6 +36,12 @@ fs.writeFileSync(
 JS
 # The caveman MCP is a host convenience the judge does not need.
 clean=$(node -e 'const fs=require("fs");let d={};try{d=JSON.parse(process.env.OPENCODE_CONFIG_CONTENT||"{}")}catch{};delete d.mcp;process.stdout.write(JSON.stringify(d))')
+# A provider that needs a local key gets it only when the caller exported one;
+# the value is forwarded into the container and never printed or written here.
+key_env=()
+if [ -n "${ZAI_API_KEY:-}" ]; then
+    key_env=(-e "ZAI_API_KEY=$ZAI_API_KEY")
+fi
 exec podman run --rm --network host --userns=keep-id --read-only \
     --tmpfs /tmp:rw,nosuid,size=256m \
     -v "$run_dir:$run_dir:rw" \
@@ -46,4 +52,5 @@ exec podman run --rm --network host --userns=keep-id --read-only \
     -e XDG_CACHE_HOME=/tmp/agent-home/.cache \
     -e HOME=/tmp/agent-home \
     -e OPENCODE_CONFIG_CONTENT="$clean" \
+    "${key_env[@]}" \
     "$image" opencode "$@"

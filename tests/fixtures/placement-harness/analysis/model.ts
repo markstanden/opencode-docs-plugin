@@ -147,6 +147,11 @@ export interface EvidenceSpec {
 export interface AssessmentSpec {
     /** A known selection policy id; never implicitly "newest wins". */
     selectionPolicy: SelectionPolicy;
+    /**
+     * The judge attempt directory to read, e.g. `attempt-002`. Absent means
+     * `attempt-001`; a preserved earlier attempt is never overwritten.
+     */
+    attemptId?: string;
 }
 
 /** One non-compensable guardrail. */
@@ -853,6 +858,13 @@ function assessmentProblems(value: unknown): string[] {
         return [
             `assessment.selectionPolicy must be one of ${SELECTION_POLICIES.join("|")}`,
         ];
+    }
+    if (
+        "attemptId" in value &&
+        (typeof value.attemptId !== "string" ||
+            !/^attempt-\d{3}$/.test(value.attemptId))
+    ) {
+        return ['assessment.attemptId must match "attempt-NNN"'];
     }
     return [];
 }
