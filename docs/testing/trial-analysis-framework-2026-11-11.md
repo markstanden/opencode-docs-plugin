@@ -154,10 +154,10 @@ node --test --experimental-test-coverage \
 
 | Area                               | Line   | Branch | Function |
 | ---------------------------------- | ------ | ------ | -------- |
-| all analysis modules, CLI included | 95.11% | 82.70% | 98.64%   |
-| `analyse.mts` (the CLI)            | 93.90% | 68.79% | 98.15%   |
+| all analysis modules, CLI included | 95.27% | 82.87% | 98.70%   |
+| `analyse.mts` (the CLI)            | 94.58% | 70.00% | 98.39%   |
 | `model.ts`                         | 90.98% | 71.35% | 100%     |
-| `scan.ts`                          | 91.04% | 92.11% | 90.48%   |
+| `scan.ts`                          | 92.40% | 92.77% | 92.31%   |
 | `records.ts`                       | 92.39% | 82.63% | 100%     |
 
 The gate's coverage include is still `src/**/*.ts` and Sonar's `sonar.sources`
