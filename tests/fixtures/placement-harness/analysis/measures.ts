@@ -11,7 +11,7 @@
 import type { DocumentationOutcome } from "../ac-scoring.mts";
 import type { AccountingCounts } from "./accounting.ts";
 import type { SlotSpec } from "./model.ts";
-import type { Loaded, TrialRecord } from "./records.ts";
+import type { TrialRecord } from "./records.ts";
 
 /** The measurement declaration schema version this module parses. */
 export const MEASURES_SCHEMA_VERSION = 1;
@@ -161,6 +161,14 @@ export interface PersonalTrialDecision {
     };
 }
 
+/** A criterion's decision. */
+interface Criterion {
+    /** The criterion outcome. */
+    status: "pass" | "fail" | "inconclusive";
+    /** Supporting reasons. */
+    reasons: string[];
+}
+
 /** Whether a value is a plain object. */
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -176,6 +184,77 @@ function stringArray(value: unknown): string[] | undefined {
     return strings.length === value.length ? strings : undefined;
 }
 
+/** Parse one eligible-scenario list, collecting its problem. */
+function idList(
+    value: unknown,
+    label: string,
+    problems: string[],
+): string[] | undefined {
+    const ids = stringArray(value);
+    if (ids === undefined) {
+        problems.push(`${label} must be a nonblank string array`);
+        return undefined;
+    }
+    if (new Set(ids).size !== ids.length) {
+        problems.push(`${label} repeats a scenario`);
+    }
+    return ids;
+}
+
+/** Parse one retrieval scenario's preservation fact ids. */
+function factIds(
+    entry: Record<string, unknown>,
+    id: string,
+    problems: string[],
+): string[] | undefined {
+    const preservation = entry.preservation;
+    if (preservation === undefined) return [];
+    if (!isRecord(preservation)) {
+        problems.push(`scenarios.${id}.preservation must be an object`);
+        return undefined;
+    }
+    const facts = preservation.facts;
+    if (facts === undefined) return [];
+    if (!Array.isArray(facts)) {
+        problems.push(`scenarios.${id}.preservation.facts must be an array`);
+        return undefined;
+    }
+    const ids = facts.map((fact) =>
+        isRecord(fact) && typeof fact.id === "string" ? fact.id.trim() : "",
+    );
+    if (ids.some((value) => value === "")) {
+        problems.push(
+            `scenarios.${id}.preservation.facts must carry nonblank ids`,
+        );
+        return undefined;
+    }
+    return ids;
+}
+
+/** Parse one retrieval scenario declaration. */
+function retrievalDeclaration(
+    entry: unknown,
+    id: string,
+    problems: string[],
+): RetrievalDeclaration | undefined {
+    if (!isRecord(entry)) {
+        problems.push(`scenarios.${id} is missing`);
+        return undefined;
+    }
+    const retrieval = entry.retrieval;
+    if (!isRecord(retrieval)) {
+        problems.push(`scenarios.${id}.retrieval is missing`);
+        return undefined;
+    }
+    if (typeof retrieval.note !== "string" || retrieval.note.trim() === "") {
+        problems.push(`scenarios.${id}.retrieval.note must be nonblank`);
+        return undefined;
+    }
+    const facts = factIds(entry, id, problems);
+    if (facts === undefined) return undefined;
+    return { note: retrieval.note, facts };
+}
+
 /**
  * Parse and validate the measurement declaration. The declaration is data:
  * every problem is collected instead of throwing.
@@ -189,66 +268,78 @@ export function parseMeasureDeclarations(
         return { problems: ["measurement declaration is not an object"] };
     }
     const problems: string[] = [];
-    const recording = stringArray(value.recordingOpportunities);
-    if (recording === undefined) {
-        problems.push("recordingOpportunities must be a nonblank string array");
-    } else if (new Set(recording).size !== recording.length) {
-        problems.push("recordingOpportunities repeats a scenario");
-    }
-    const retrievalIds = stringArray(value.retrievalOpportunities);
-    if (retrievalIds === undefined) {
-        problems.push("retrievalOpportunities must be a nonblank string array");
-    } else if (new Set(retrievalIds).size !== retrievalIds.length) {
-        problems.push("retrievalOpportunities repeats a scenario");
-    }
+    const recording = idList(
+        value.recordingOpportunities,
+        "recordingOpportunities",
+        problems,
+    );
+    const retrievalIds = idList(
+        value.retrievalOpportunities,
+        "retrievalOpportunities",
+        problems,
+    );
     const scenarios = isRecord(value.scenarios) ? value.scenarios : {};
     const retrieval: Record<string, RetrievalDeclaration> = {};
     for (const id of retrievalIds ?? []) {
-        const entry = scenarios[id];
-        if (!isRecord(entry)) {
-            problems.push(`scenarios.${id} is missing`);
-            continue;
-        }
-        const retrievalEntry = entry.retrieval;
-        if (!isRecord(retrievalEntry)) {
-            problems.push(`scenarios.${id}.retrieval is missing`);
-            continue;
-        }
-        if (
-            typeof retrievalEntry.note !== "string" ||
-            retrievalEntry.note.trim() === ""
-        ) {
-            problems.push(`scenarios.${id}.retrieval.note must be nonblank`);
-            continue;
-        }
-        const preservation = entry.preservation;
-        const facts = isRecord(preservation)
-            ? stringArray(
-                  Array.isArray(preservation.facts)
-                      ? preservation.facts.map((fact) =>
-                            isRecord(fact) ? fact.id : undefined,
-                        )
-                      : undefined,
-              )
-            : [];
-        if (facts === undefined) {
-            problems.push(
-                `scenarios.${id}.preservation.facts must carry nonblank ids`,
-            );
-            continue;
-        }
-        retrieval[id] = {
-            note: retrievalEntry.note,
-            facts: facts ?? [],
-        };
+        const declaration = retrievalDeclaration(scenarios[id], id, problems);
+        if (declaration !== undefined) retrieval[id] = declaration;
     }
     if (problems.length > 0 || recording === undefined) {
         return { problems };
     }
+    return { declarations: { recording, retrieval }, problems };
+}
+
+/** Parse one journal line into an operation, or a problem. */
+function operationOf(
+    line: string,
+    index: number,
+): { operation?: DocsOperation; problem?: string } {
+    let value: unknown;
+    try {
+        value = JSON.parse(line);
+    } catch {
+        return { problem: `journal line ${String(index + 1)} is not JSON` };
+    }
+    if (!isRecord(value) || !isRecord(value.input)) {
+        return {
+            problem: `journal line ${String(index + 1)} has no input`,
+        };
+    }
+    const input = value.input;
+    const add = isRecord(input.add) ? input.add : undefined;
     return {
-        declarations: { recording, retrieval },
-        problems,
+        operation: {
+            status: typeof value.status === "string" ? value.status : "unknown",
+            surface:
+                typeof value.surface === "string" ? value.surface : "unknown",
+            verb: verbOf(input, add),
+            target: targetOf(input, add),
+            line,
+        },
     };
+}
+
+/** The verb one journal input expresses. */
+function verbOf(
+    input: Record<string, unknown>,
+    add: Record<string, unknown> | undefined,
+): DocsOperation["verb"] {
+    if (add !== undefined) return "add";
+    if (typeof input.read === "string") return "read";
+    if (typeof input.search === "string") return "search";
+    if (input.check !== undefined) return "check";
+    return "help";
+}
+
+/** The typed target one journal input names, when any. */
+function targetOf(
+    input: Record<string, unknown>,
+    add: Record<string, unknown> | undefined,
+): string | null {
+    if (typeof input.read === "string") return input.read;
+    if (add !== undefined && typeof add.path === "string") return add.path;
+    return null;
 }
 
 /**
@@ -264,42 +355,9 @@ export function parseOperations(lines: readonly string[]): {
     const operations: DocsOperation[] = [];
     const problems: string[] = [];
     for (const [index, line] of lines.entries()) {
-        let value: unknown;
-        try {
-            value = JSON.parse(line);
-        } catch {
-            problems.push(`journal line ${String(index + 1)} is not JSON`);
-            continue;
-        }
-        if (!isRecord(value) || !isRecord(value.input)) {
-            problems.push(`journal line ${String(index + 1)} has no input`);
-            continue;
-        }
-        const input = value.input;
-        const add = isRecord(input.add) ? input.add : undefined;
-        const verb: DocsOperation["verb"] = add
-            ? "add"
-            : typeof input.read === "string"
-              ? "read"
-              : typeof input.search === "string"
-                ? "search"
-                : input.check !== undefined
-                  ? "check"
-                  : "help";
-        const target =
-            typeof input.read === "string"
-                ? input.read
-                : add !== undefined && typeof add.path === "string"
-                  ? add.path
-                  : null;
-        operations.push({
-            status: typeof value.status === "string" ? value.status : "unknown",
-            surface:
-                typeof value.surface === "string" ? value.surface : "unknown",
-            verb,
-            target,
-            line,
-        });
+        const parsed = operationOf(line, index);
+        if (parsed.operation !== undefined) operations.push(parsed.operation);
+        if (parsed.problem !== undefined) problems.push(parsed.problem);
     }
     return { operations, problems };
 }
@@ -322,21 +380,232 @@ export function targetsNote(target: string, note: string): boolean {
     );
 }
 
-/** The judge's retrieval state, from the loaded assessment. */
-function judgeRetrieval(
+/** The shared, evidence-only facts one trial's measures read. */
+interface MeasureContext {
+    record: TrialRecord;
+    operations: DocsOperation[];
+    parsed: boolean;
+    gate: string | null;
+    outcome: DocumentationOutcome | null;
+    primary: string;
+    recordingEligible: boolean;
+    retrievalDeclaration: RetrievalDeclaration | undefined;
+}
+
+/** Build the context once so each measure stays small. */
+function contextOf(
     record: TrialRecord,
-): { state: string | null; quote: string | null } {
-    const retrieval = record.assessment.retrieval;
-    if (retrieval.state === "available") {
-        return { state: retrieval.value.state, quote: retrieval.value.quote };
+    declarations: MeasureDeclarations,
+): MeasureContext {
+    const journal = record.artefacts.docsOperations;
+    const parsed =
+        journal.state === "available"
+            ? parseOperations(journal.value)
+            : undefined;
+    return {
+        record,
+        operations: parsed?.operations ?? [],
+        parsed: parsed !== undefined,
+        gate:
+            record.gate.state === "available" ? record.gate.value.status : null,
+        outcome: record.assessment.outcome ?? null,
+        primary: record.primary.status,
+        recordingEligible: declarations.recording.includes(
+            record.identity.scenario,
+        ),
+        retrievalDeclaration: declarations.retrieval[record.identity.scenario],
+    };
+}
+
+/** The deterministic disposition of a trial's documentation write. */
+function dispositionOf(
+    context: MeasureContext,
+    completedAdds: DocsOperation[],
+    failedAdds: DocsOperation[],
+): { disposition: RecordingMeasure["disposition"]; evidence: string[] } {
+    if (!context.recordingEligible) {
+        return { disposition: "not-eligible", evidence: [] };
     }
-    return { state: null, quote: null };
+    if (context.gate === "blocked") {
+        const reason =
+            context.record.gate.state === "available"
+                ? String(context.record.gate.value.reason)
+                : "unknown";
+        return {
+            disposition: "gate-blocked",
+            evidence: [`gate blocked: ${reason}`],
+        };
+    }
+    if (!context.parsed) {
+        return {
+            disposition: "unknown",
+            evidence: [
+                "no readable docs-operation journal; a write cannot be attributed",
+            ],
+        };
+    }
+    if (completedAdds.length > 0) {
+        return completedWrite(context);
+    }
+    if (failedAdds.length > 0) {
+        return {
+            disposition: "tool-error",
+            evidence: ["a docs add operation failed"],
+        };
+    }
+    if (
+        (context.outcome === "useful-create" ||
+            context.outcome === "useful-update") &&
+        context.gate === "pass"
+    ) {
+        return {
+            disposition: "filesystem-only",
+            evidence: [
+                "the documentation surface changed and passed the gate, but no completed docs add operation was journaled",
+            ],
+        };
+    }
+    return { disposition: "no-write", evidence: [] };
+}
+
+/** The disposition when at least one completed plugin write exists. */
+function completedWrite(context: MeasureContext): {
+    disposition: RecordingMeasure["disposition"];
+    evidence: string[];
+} {
+    if (
+        context.outcome === "useful-create" ||
+        context.outcome === "useful-update"
+    ) {
+        return context.gate === "pass"
+            ? { disposition: "verified-write", evidence: [] }
+            : { disposition: "gate-blocked", evidence: [] };
+    }
+    if (context.outcome === null) {
+        return {
+            disposition: "unknown",
+            evidence: [
+                "a completed plugin write exists but no judgement was recorded",
+            ],
+        };
+    }
+    return {
+        disposition: "no-write",
+        evidence: [
+            `judgement recorded ${context.outcome} for a completed plugin write`,
+        ],
+    };
+}
+
+/** The judge's retrieval state, from the loaded assessment. */
+function judgeRetrieval(record: TrialRecord): {
+    state: string | null;
+    quote: string | null;
+} {
+    const retrieval = record.assessment.retrieval;
+    return retrieval.state === "available"
+        ? { state: retrieval.value.state, quote: retrieval.value.quote }
+        : { state: null, quote: null };
+}
+
+/** The retrieval state and evidence for one trial. */
+function retrievalOf(context: MeasureContext): {
+    state: RetrievalMeasure["state"];
+    read: boolean;
+    judgeState: string | null;
+    note: string | null;
+    trace: string[];
+    evidence: string[];
+} {
+    const declaration = context.retrievalDeclaration;
+    if (declaration === undefined) {
+        return {
+            state: "not-eligible",
+            read: false,
+            judgeState: null,
+            note: null,
+            trace: [],
+            evidence: [],
+        };
+    }
+    const reads = context.operations.filter(
+        (operation) =>
+            operation.verb === "read" &&
+            operation.status === "completed" &&
+            operation.target !== null &&
+            targetsNote(operation.target, declaration.note),
+    );
+    const judge = judgeRetrieval(context.record);
+    const base = {
+        read: reads.length > 0,
+        judgeState: judge.state,
+        note: declaration.note,
+        trace: reads.map((operation) => operation.line),
+    };
+    if (!context.parsed) {
+        return {
+            ...base,
+            state: "unknown",
+            evidence: [
+                `docs-operation journal is ${context.record.artefacts.docsOperations.state}; attribution is unknown`,
+            ],
+        };
+    }
+    if (!base.read) {
+        return {
+            ...base,
+            state: "miss",
+            evidence: [
+                `no completed read of ${declaration.note} was attributed to the session`,
+            ],
+        };
+    }
+    return { ...base, ...appliedState(context, judge) };
+}
+
+/** The applied/miss/unknown decision once an attributable read exists. */
+function appliedState(
+    context: MeasureContext,
+    judge: { state: string | null; quote: string | null },
+): { state: RetrievalMeasure["state"]; evidence: string[] } {
+    if (judge.state === null) {
+        return {
+            state: "unknown",
+            evidence: [
+                "an attributable read exists but no retrieval judgement was recorded",
+            ],
+        };
+    }
+    if (judge.state === "applied" && context.primary === "pass") {
+        return {
+            state: "applied",
+            evidence: [
+                `judge applied the note: ${judge.quote ?? "(no quote)"}`,
+            ],
+        };
+    }
+    if (judge.state === "applied") {
+        return {
+            state: "unknown",
+            evidence: [
+                `judge reports applied but the independent primary check is ${context.primary}`,
+            ],
+        };
+    }
+    if (judge.state === "unknown") {
+        return { state: "unknown", evidence: [] };
+    }
+    return {
+        state: "miss",
+        evidence: [`judge recorded ${judge.state}`],
+    };
 }
 
 /**
  * Measure one trial against the declared opportunities.
  * @param record The loaded trial record.
  * @param declarations The validated declarations.
+ * @param arm The declared arm id.
  * @returns The trial measures.
  */
 export function measureTrial(
@@ -344,154 +613,38 @@ export function measureTrial(
     declarations: MeasureDeclarations,
     arm: string,
 ): TrialMeasures {
-    const { scenario, stamp } = {
-        scenario: record.identity.scenario,
-        stamp: record.identity.stamp,
-    };
-    const journal = record.artefacts.docsOperations;
-    const parsed =
-        journal.state === "available"
-            ? parseOperations(journal.value)
-            : undefined;
-    const operations = parsed?.operations ?? [];
-    const gate =
-        record.gate.state === "available" ? record.gate.value.status : null;
-    const outcome = record.assessment.outcome ?? null;
-    const primary = record.primary.status;
-    const recordingEligible = declarations.recording.includes(scenario);
-    const retrievalDeclaration = declarations.retrieval[scenario];
-    const retrievalEligible = retrievalDeclaration !== undefined;
-
-    const completedAdds = operations.filter(
+    const context = contextOf(record, declarations);
+    const completedAdds = context.operations.filter(
         (operation) =>
             operation.verb === "add" && operation.status === "completed",
     );
-    const failedAdds = operations.filter(
+    const failedAdds = context.operations.filter(
         (operation) =>
             operation.verb === "add" && operation.status !== "completed",
     );
-
-    let disposition: RecordingMeasure["disposition"] = "not-eligible";
-    let success = false;
-    const recordingEvidence: string[] = [];
-    if (recordingEligible) {
-        if (gate === "blocked") {
-            disposition = "gate-blocked";
-            recordingEvidence.push(
-                `gate blocked: ${record.gate.state === "available" ? String(record.gate.value.reason) : "unknown"}`,
-            );
-        } else if (completedAdds.length > 0) {
-            if (outcome === "useful-create" || outcome === "useful-update") {
-                if (gate === "pass") {
-                    disposition = "verified-write";
-                    success = true;
-                } else {
-                    disposition = "gate-blocked";
-                }
-            } else if (outcome === null) {
-                disposition = "unknown";
-                recordingEvidence.push(
-                    "a completed plugin write exists but no judgement was recorded",
-                );
-            } else {
-                disposition = "no-write";
-                recordingEvidence.push(
-                    `judgement recorded ${outcome} for a completed plugin write`,
-                );
-            }
-        } else if (parsed === undefined) {
-            disposition = "unknown";
-            recordingEvidence.push(
-                "no readable docs-operation journal; a write cannot be attributed",
-            );
-        } else if (failedAdds.length > 0) {
-            disposition = "tool-error";
-            recordingEvidence.push("a docs add operation failed");
-        } else if (
-            (outcome === "useful-create" || outcome === "useful-update") &&
-            gate === "pass"
-        ) {
-            disposition = "filesystem-only";
-            recordingEvidence.push(
-                "the documentation surface changed and passed the gate, but no completed docs add operation was journaled",
-            );
-        } else {
-            disposition = "no-write";
-        }
-    }
-
-    let retrievalState: RetrievalMeasure["state"] = "not-eligible";
-    const retrievalTrace: string[] = [];
-    const retrievalEvidence: string[] = [];
-    let read = false;
-    let judgeState: string | null = null;
-    if (retrievalEligible) {
-        const note = retrievalDeclaration.note;
-        const reads = operations.filter(
-            (operation) =>
-                operation.verb === "read" &&
-                operation.status === "completed" &&
-                operation.target !== null &&
-                targetsNote(operation.target, note),
-        );
-        read = reads.length > 0;
-        retrievalTrace.push(...reads.map((operation) => operation.line));
-        const judge = judgeRetrieval(record);
-        judgeState = judge.state;
-        if (journal.state !== "available") {
-            retrievalState = "unknown";
-            retrievalEvidence.push(
-                `docs-operation journal is ${journal.state}; attribution is unknown`,
-            );
-        } else if (!read) {
-            retrievalState = "miss";
-            retrievalEvidence.push(
-                `no completed read of ${note} was attributed to the session`,
-            );
-        } else if (judge.state === null) {
-            retrievalState = "unknown";
-            retrievalEvidence.push(
-                "an attributable read exists but no retrieval judgement was recorded",
-            );
-        } else if (judge.state === "applied" && primary === "pass") {
-            retrievalState = "applied";
-            retrievalEvidence.push(
-                `judge applied the note: ${judge.quote ?? "(no quote)"}`,
-            );
-        } else if (judge.state === "applied" && primary !== "pass") {
-            retrievalState = "unknown";
-            retrievalEvidence.push(
-                `judge reports applied but the independent primary check is ${primary}`,
-            );
-        } else if (judge.state === "unknown") {
-            retrievalState = "unknown";
-        } else {
-            retrievalState = "miss";
-            retrievalEvidence.push(`judge recorded ${judge.state}`);
-        }
-    }
-
+    const write = dispositionOf(context, completedAdds, failedAdds);
+    const retrieval = retrievalOf(context);
     return {
-        stamp,
-        scenario,
+        stamp: record.identity.stamp,
+        scenario: record.identity.scenario,
         arm,
         recording: {
-            eligible: recordingEligible,
-            disposition,
-            success,
-            outcome,
-            gate,
+            eligible: context.recordingEligible,
+            disposition: write.disposition,
+            success: write.disposition === "verified-write",
+            outcome: context.outcome,
+            gate: context.gate,
             writes: completedAdds.map((operation) => operation.line),
-            evidence: recordingEvidence,
+            evidence: write.evidence,
         },
         retrieval: {
-            eligible: retrievalEligible,
-            state: retrievalState,
-            read,
-            judgeState,
-            note: retrievalDeclaration?.note ?? null,
-            trace: retrievalTrace,
-            evidence: retrievalEvidence,
+            eligible: context.retrievalDeclaration !== undefined,
+            state: retrieval.state,
+            read: retrieval.read,
+            judgeState: retrieval.judgeState,
+            note: retrieval.note,
+            trace: retrieval.trace,
+            evidence: retrieval.evidence,
         },
     };
 }
@@ -510,6 +663,7 @@ function emptyCounts(): {
  * Summarise the measures per arm.
  * @param trials The trial measures.
  * @param planned The frozen slots.
+ * @param declarations The validated declarations.
  * @returns The per-arm counts.
  */
 export function summariseMeasures(
@@ -564,207 +718,286 @@ export function summariseMeasures(
     return result;
 }
 
-/**
- * The personal-trial screen. The utility threshold is one component; the
- * opportunity counts and quality checks decide the recommendation alongside
- * it.
- * @param input The frozen decision inputs.
- * @returns The recommendation and every criterion's reason.
- */
-export function personalTrialDecision(input: {
-    controlArm: string;
-    candidateArm: string;
-    measures: Record<string, ArmMeasureSummary>;
-    counts: Record<string, AccountingCounts>;
-    guardrails: { status: string; detail: string };
-    coverage: { status: string; detail: string };
-    utilityThreshold: {
-        status: string;
-        lead: number | null;
-        interval: { low: number; high: number } | null;
-    };
-}): PersonalTrialDecision {
-    const reasons: string[] = [];
-    const control = input.measures[input.controlArm];
-    const candidate = input.measures[input.candidateArm];
-    const utilityThreshold = {
-        component: "utility-threshold" as const,
-        status: input.utilityThreshold.status,
-        lead: input.utilityThreshold.lead,
-        interval: input.utilityThreshold.interval,
+/** The labelled utility-threshold component. */
+function thresholdComponent(threshold: {
+    status: string;
+    lead: number | null;
+    interval: { low: number; high: number } | null;
+}): PersonalTrialDecision["utilityThreshold"] {
+    return {
+        component: "utility-threshold",
+        status: threshold.status,
+        lead: threshold.lead,
+        interval: threshold.interval,
         note: "One component only: a zero-delta 'qualified' at threshold 0 is not the personal-trial recommendation.",
     };
+}
+
+/** The known and possible bounds of the two opportunity counts. */
+function countBounds(
+    control: ArmMeasureSummary,
+    candidate: ArmMeasureSummary,
+): {
+    extraKnown: boolean;
+    neitherLowerKnown: boolean;
+    neitherLowerRobust: boolean;
+    impossibleExtra: boolean;
+    unknowns: number;
+} {
+    return {
+        extraKnown:
+            candidate.recording.success >= control.recording.success + 1 ||
+            candidate.retrieval.applied >= control.retrieval.applied + 1,
+        neitherLowerKnown:
+            candidate.recording.success >= control.recording.success &&
+            candidate.retrieval.applied >= control.retrieval.applied,
+        neitherLowerRobust:
+            candidate.recording.success >=
+                control.recording.success + control.recording.unknown &&
+            candidate.retrieval.applied >=
+                control.retrieval.applied + control.retrieval.unknown,
+        impossibleExtra:
+            candidate.recording.success + candidate.recording.unknown <
+                control.recording.success + 1 &&
+            candidate.retrieval.applied + candidate.retrieval.unknown <
+                control.retrieval.applied + 1,
+        unknowns:
+            control.recording.unknown +
+            candidate.recording.unknown +
+            control.retrieval.unknown +
+            candidate.retrieval.unknown,
+    };
+}
+
+/** The opportunity-count criterion, with unknowns kept explicit. */
+function opportunityCriterion(
+    control: ArmMeasureSummary,
+    candidate: ArmMeasureSummary,
+): Criterion {
+    const bounds = countBounds(control, candidate);
+    const reasons = [
+        `recording: control ${String(control.recording.success)}/${String(control.recording.planned)}, candidate ${String(candidate.recording.success)}/${String(candidate.recording.planned)} (unknown control ${String(control.recording.unknown)}, candidate ${String(candidate.recording.unknown)})`,
+        `retrieval: control ${String(control.retrieval.applied)}/${String(control.retrieval.planned)}, candidate ${String(candidate.retrieval.applied)}/${String(candidate.retrieval.planned)} (unknown control ${String(control.retrieval.unknown)}, candidate ${String(candidate.retrieval.unknown)})`,
+    ];
+    if (
+        bounds.unknowns > 0 &&
+        !(bounds.extraKnown && bounds.neitherLowerRobust) &&
+        !bounds.impossibleExtra
+    ) {
+        return {
+            status: "inconclusive",
+            reasons: [
+                ...reasons,
+                "opportunity outcomes or attribution are unknown and could change the count criterion",
+            ],
+        };
+    }
+    if (!bounds.extraKnown || !bounds.neitherLowerKnown) {
+        return {
+            status: "fail",
+            reasons: [
+                ...reasons,
+                "the candidate has no additional successful recording or applied retrieval with neither count lower (a tie gives no promotion)",
+            ],
+        };
+    }
+    return {
+        status: "pass",
+        reasons: [
+            ...reasons,
+            "the candidate has at least one additional opportunity with neither count lower",
+        ],
+    };
+}
+
+/** The utility, primary and guardrail quality criterion. */
+function qualityCriterion(
+    control: AccountingCounts,
+    candidate: AccountingCounts,
+    guardrails: { status: string; detail: string },
+): Criterion {
+    if (candidate.utilityTotal < control.utilityTotal) {
+        return {
+            status: "fail",
+            reasons: [
+                `weighted utility is lower (control ${String(control.utilityTotal)}, candidate ${String(candidate.utilityTotal)})`,
+            ],
+        };
+    }
+    if (candidate.primary.pass < control.primary.pass) {
+        return {
+            status: "fail",
+            reasons: [
+                `primary passes are lower (control ${String(control.primary.pass)}, candidate ${String(candidate.primary.pass)})`,
+            ],
+        };
+    }
+    if (candidate.outcomes.misleading > control.outcomes.misleading) {
+        return {
+            status: "fail",
+            reasons: [
+                `misleading outcomes increased (control ${String(control.outcomes.misleading)}, candidate ${String(candidate.outcomes.misleading)})`,
+            ],
+        };
+    }
+    if (guardrails.status === "breached") {
+        return {
+            status: "fail",
+            reasons: [
+                `a candidate guardrail is breached: ${guardrails.detail}`,
+            ],
+        };
+    }
+    if (guardrails.status === "unresolved") {
+        return {
+            status: "inconclusive",
+            reasons: [
+                `a candidate guardrail is unresolved: ${guardrails.detail}`,
+            ],
+        };
+    }
+    return {
+        status: "pass",
+        reasons: [
+            "weighted utility and primary passes are not lower, no new misleading outcome, and the candidate guardrails are clean",
+        ],
+    };
+}
+
+/**
+ * The incomplete-input checks that make the screen inconclusive before any
+ * opportunity or quality comparison.
+ * @param control The control arm summary, when present.
+ * @param candidate The candidate arm summary, when present.
+ * @param controlCounts The control accounting counts, when present.
+ * @param candidateCounts The candidate accounting counts, when present.
+ * @param coverage The assessment-coverage limb.
+ * @param coverage.status The limb's status.
+ * @param coverage.detail The limb's reason.
+ * @param threshold The labelled utility-threshold component.
+ * @returns An inconclusive decision, or null when the inputs are complete.
+ */
+function earlyInconclusive(
+    control: ArmMeasureSummary | undefined,
+    candidate: ArmMeasureSummary | undefined,
+    controlCounts: AccountingCounts | undefined,
+    candidateCounts: AccountingCounts | undefined,
+    coverage: { status: string; detail: string },
+    threshold: PersonalTrialDecision["utilityThreshold"],
+): PersonalTrialDecision | null {
     if (control === undefined || candidate === undefined) {
         return {
             recommendation: "inconclusive",
             reasons: ["an arm has no opportunity summary"],
-            utilityThreshold,
+            utilityThreshold: threshold,
         };
     }
-    if (input.coverage.status !== "pass") {
+    if (coverage.status !== "pass") {
         return {
             recommendation: "inconclusive",
-            reasons: [`coverage: ${input.coverage.detail}`],
-            utilityThreshold,
+            reasons: [`coverage: ${coverage.detail}`],
+            utilityThreshold: threshold,
         };
     }
-
-    const controlCountsForPrimary = input.counts[input.controlArm];
-    const candidateCountsForPrimary = input.counts[input.candidateArm];
+    if (controlCounts === undefined || candidateCounts === undefined) {
+        return {
+            recommendation: "inconclusive",
+            reasons: ["accounting counts are missing for an arm"],
+            utilityThreshold: threshold,
+        };
+    }
     if (
-        (controlCountsForPrimary?.primary.unknown ?? 0) > 0 ||
-        (candidateCountsForPrimary?.primary.unknown ?? 0) > 0
+        controlCounts.primary.unknown > 0 ||
+        candidateCounts.primary.unknown > 0
     ) {
         return {
             recommendation: "inconclusive",
             reasons: [
                 "a primary-task result is unknown and could change the pass-count criterion",
             ],
-            utilityThreshold,
+            utilityThreshold: threshold,
         };
     }
-    const recording = {
-        control: control.recording.success,
-        candidate: candidate.recording.success,
-        controlUnknown: control.recording.unknown,
-        candidateUnknown: candidate.recording.unknown,
-    };
-    const retrieval = {
-        control: control.retrieval.applied,
-        candidate: candidate.retrieval.applied,
-        controlUnknown: control.retrieval.unknown,
-        candidateUnknown: candidate.retrieval.unknown,
-    };
-    const extraKnown =
-        candidate.recording.success >= control.recording.success + 1 ||
-        candidate.retrieval.applied >= control.retrieval.applied + 1;
-    const neitherLowerKnown =
-        candidate.recording.success >= control.recording.success &&
-        candidate.retrieval.applied >= control.retrieval.applied;
-    const neitherLowerRobust =
-        candidate.recording.success >=
-            control.recording.success + control.recording.unknown &&
-        candidate.retrieval.applied >=
-            control.retrieval.applied + control.retrieval.unknown;
-    const impossibleExtra =
-        candidate.recording.success + candidate.recording.unknown <
-            control.recording.success + 1 &&
-        candidate.retrieval.applied + candidate.retrieval.unknown <
-            control.retrieval.applied + 1;
+    return null;
+}
 
-    if (control.recording.unknown > 0 || candidate.recording.unknown > 0) {
-        // Unknowns can only help the candidate or the control; decide whether
-        // the interval already settles the opportunity criterion.
-        if (!(extraKnown && neitherLowerRobust) && !impossibleExtra) {
-            return {
-                recommendation: "inconclusive",
-                reasons: [
-                    `recording opportunities have unknown outcomes (control ${String(control.recording.unknown)}, candidate ${String(candidate.recording.unknown)}) that could change the count criterion`,
-                ],
-                utilityThreshold,
-            };
-        }
-    }
-    if (control.retrieval.unknown > 0 || candidate.retrieval.unknown > 0) {
-        if (!(extraKnown && neitherLowerRobust) && !impossibleExtra) {
-            return {
-                recommendation: "inconclusive",
-                reasons: [
-                    `retrieval opportunities have unknown attribution (control ${String(control.retrieval.unknown)}, candidate ${String(candidate.retrieval.unknown)}) that could change the count criterion`,
-                ],
-                utilityThreshold,
-            };
-        }
-    }
-
-    reasons.push(
-        `recording: control ${String(recording.control)}/${String(control.recording.planned)}, candidate ${String(recording.candidate)}/${String(candidate.recording.planned)} (unknown control ${String(recording.controlUnknown)}, candidate ${String(recording.candidateUnknown)})`,
+/**
+ * The personal-trial screen. The utility threshold is one component; the
+ * opportunity counts and quality checks decide the recommendation alongside
+ * it.
+ * @param controlArm The control arm id.
+ * @param candidateArm The candidate arm id.
+ * @param measures The per-arm opportunity summaries.
+ * @param counts The per-arm accounting counts.
+ * @param guardrails The candidate arm's aggregate guardrail status and detail.
+ * @param guardrails.status The aggregate status (clean, breached, unresolved).
+ * @param guardrails.detail The guardrail evidence.
+ * @param coverage The assessment-coverage limb.
+ * @param coverage.status The limb's status.
+ * @param coverage.detail The limb's reason.
+ * @param utilityThreshold The analyser's utility-threshold limb.
+ * @param utilityThreshold.status The limb's status.
+ * @param utilityThreshold.lead The assessed lead.
+ * @param utilityThreshold.interval The full-population interval.
+ * @returns The recommendation and every criterion's reason.
+ */
+export function personalTrialDecision(
+    controlArm: string,
+    candidateArm: string,
+    measures: Record<string, ArmMeasureSummary>,
+    counts: Record<string, AccountingCounts>,
+    guardrails: { status: string; detail: string },
+    coverage: { status: string; detail: string },
+    utilityThreshold: {
+        status: string;
+        lead: number | null;
+        interval: { low: number; high: number } | null;
+    },
+): PersonalTrialDecision {
+    const threshold = thresholdComponent(utilityThreshold);
+    const control = measures[controlArm];
+    const candidate = measures[candidateArm];
+    const controlCounts = counts[controlArm];
+    const candidateCounts = counts[candidateArm];
+    const early = earlyInconclusive(
+        control,
+        candidate,
+        controlCounts,
+        candidateCounts,
+        coverage,
+        threshold,
     );
-    reasons.push(
-        `retrieval: control ${String(retrieval.control)}/${String(control.retrieval.planned)}, candidate ${String(retrieval.candidate)}/${String(candidate.retrieval.planned)} (unknown control ${String(retrieval.controlUnknown)}, candidate ${String(retrieval.candidateUnknown)})`,
+    if (early !== null) return early;
+    const opportunities = opportunityCriterion(
+        control as ArmMeasureSummary,
+        candidate as ArmMeasureSummary,
     );
-
-    if (!extraKnown || !neitherLowerKnown) {
+    if (opportunities.status !== "pass") {
         return {
-            recommendation: "no-promotion",
-            reasons: [
-                ...reasons,
-                "the candidate has no additional successful recording or applied retrieval with neither count lower (a tie gives no promotion)",
-            ],
-            utilityThreshold,
+            recommendation:
+                opportunities.status === "fail"
+                    ? "no-promotion"
+                    : "inconclusive",
+            reasons: opportunities.reasons,
+            utilityThreshold: threshold,
         };
     }
-    reasons.push(
-        "the candidate has at least one additional opportunity with neither count lower",
+    const quality = qualityCriterion(
+        controlCounts as AccountingCounts,
+        candidateCounts as AccountingCounts,
+        guardrails,
     );
-
-    const controlCounts = input.counts[input.controlArm];
-    const candidateCounts = input.counts[input.candidateArm];
-    if (controlCounts === undefined || candidateCounts === undefined) {
+    if (quality.status !== "pass") {
         return {
-            recommendation: "inconclusive",
-            reasons: [...reasons, "accounting counts are missing for an arm"],
-            utilityThreshold,
-        };
-    }
-    if (candidateCounts.utilityTotal < controlCounts.utilityTotal) {
-        return {
-            recommendation: "no-promotion",
-            reasons: [
-                ...reasons,
-                `weighted utility is lower (control ${String(controlCounts.utilityTotal)}, candidate ${String(candidateCounts.utilityTotal)})`,
-            ],
-            utilityThreshold,
-        };
-    }
-    if (candidateCounts.primary.pass < controlCounts.primary.pass) {
-        return {
-            recommendation: "no-promotion",
-            reasons: [
-                ...reasons,
-                `primary passes are lower (control ${String(controlCounts.primary.pass)}, candidate ${String(candidateCounts.primary.pass)})`,
-            ],
-            utilityThreshold,
-        };
-    }
-    if (
-        candidateCounts.outcomes.misleading > controlCounts.outcomes.misleading
-    ) {
-        return {
-            recommendation: "no-promotion",
-            reasons: [
-                ...reasons,
-                `misleading outcomes increased (control ${String(controlCounts.outcomes.misleading)}, candidate ${String(candidateCounts.outcomes.misleading)})`,
-            ],
-            utilityThreshold,
-        };
-    }
-    if (input.guardrails.status === "breached") {
-        return {
-            recommendation: "no-promotion",
-            reasons: [
-                ...reasons,
-                `a candidate guardrail is breached: ${input.guardrails.detail}`,
-            ],
-            utilityThreshold,
-        };
-    }
-    if (input.guardrails.status === "unresolved") {
-        return {
-            recommendation: "inconclusive",
-            reasons: [
-                ...reasons,
-                `a candidate guardrail is unresolved: ${input.guardrails.detail}`,
-            ],
-            utilityThreshold,
+            recommendation:
+                quality.status === "fail" ? "no-promotion" : "inconclusive",
+            reasons: [...opportunities.reasons, ...quality.reasons],
+            utilityThreshold: threshold,
         };
     }
     return {
         recommendation: "personal-trial",
-        reasons: [
-            ...reasons,
-            "weighted utility and primary passes are not lower, no new misleading outcome, and the candidate guardrails are clean",
-        ],
-        utilityThreshold,
+        reasons: [...opportunities.reasons, ...quality.reasons],
+        utilityThreshold: threshold,
     };
 }

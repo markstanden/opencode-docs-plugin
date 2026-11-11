@@ -6,6 +6,7 @@ import {
     parseOperations,
     personalTrialDecision,
     targetsNote,
+    type ArmMeasureSummary,
     type MeasureDeclarations,
 } from "./fixtures/placement-harness/analysis/measures.ts";
 import type { AccountingCounts } from "./fixtures/placement-harness/analysis/accounting.ts";
@@ -290,11 +291,7 @@ describe("recording measure", () => {
 
     it("counts a verified plugin-mediated write to a shared lake", () => {
         // Act
-        const measured = measureTrial(
-            create(),
-            recordingDeclarations,
-            "A",
-        );
+        const measured = measureTrial(create(), recordingDeclarations, "A");
 
         // Assert
         assert.equal(measured.recording.success, true);
@@ -333,11 +330,7 @@ describe("recording measure", () => {
         value.assessment.status = "judge-error";
 
         // Act
-        const measured = measureTrial(
-            value,
-            recordingDeclarations,
-            "A",
-        );
+        const measured = measureTrial(value, recordingDeclarations, "A");
 
         // Assert
         assert.equal(measured.recording.disposition, "unknown");
@@ -345,54 +338,53 @@ describe("recording measure", () => {
 });
 
 describe("personal-trial screen", () => {
-    const screen = (overrides = {}) =>
-        personalTrialDecision({
-            controlArm: "A",
-            candidateArm: "B",
-            measures: {
-                A: {
-                    recording: {
-                        planned: 4,
-                        success: 2,
-                        miss: 2,
-                        unknown: 0,
-                        dispositions: {},
-                    },
-                    retrieval: {
-                        planned: 5,
-                        applied: 2,
-                        miss: 3,
-                        unknown: 0,
-                        states: {},
-                    },
-                },
-                B: {
-                    recording: {
-                        planned: 4,
-                        success: 2,
-                        miss: 2,
-                        unknown: 0,
-                        dispositions: {},
-                    },
-                    retrieval: {
-                        planned: 5,
-                        applied: 2,
-                        miss: 3,
-                        unknown: 0,
-                        states: {},
-                    },
-                },
-            },
-            counts: { A: counts(), B: counts() },
-            guardrails: { status: "clean", detail: "clean" },
-            coverage: { status: "pass", detail: "complete" },
-            utilityThreshold: {
+    type ArmOverrides = {
+        recording?: Partial<ArmMeasureSummary["recording"]>;
+        retrieval?: Partial<ArmMeasureSummary["retrieval"]>;
+    };
+    const arm = (overrides: ArmOverrides = {}) => ({
+        recording: {
+            planned: 4,
+            success: 2,
+            miss: 2,
+            unknown: 0,
+            dispositions: {},
+            ...(overrides.recording ?? {}),
+        },
+        retrieval: {
+            planned: 5,
+            applied: 2,
+            miss: 3,
+            unknown: 0,
+            states: {},
+            ...(overrides.retrieval ?? {}),
+        },
+    });
+    type ScreenOverrides = {
+        measures?: Record<string, ArmMeasureSummary>;
+        counts?: Record<string, AccountingCounts>;
+        guardrails?: { status: string; detail: string };
+        coverage?: { status: string; detail: string };
+        utilityThreshold?: {
+            status: string;
+            lead: number | null;
+            interval: { low: number; high: number } | null;
+        };
+    };
+    const screen = (overrides: ScreenOverrides = {}) =>
+        personalTrialDecision(
+            "A",
+            "B",
+            overrides.measures ?? { A: arm(), B: arm() },
+            overrides.counts ?? { A: counts(), B: counts() },
+            overrides.guardrails ?? { status: "clean", detail: "clean" },
+            overrides.coverage ?? { status: "pass", detail: "complete" },
+            overrides.utilityThreshold ?? {
                 status: "pass",
                 lead: 0,
                 interval: { low: 0, high: 0 },
             },
-            ...overrides,
-        });
+        );
 
     it("gives no promotion on a dead heat", () => {
         // Act
@@ -406,46 +398,14 @@ describe("personal-trial screen", () => {
 
     it("earns a personal trial on one extra applied retrieval", () => {
         // Arrange
-        const base = screen();
         const extra = screen({
             measures: {
-                A: {
-                    recording: {
-                        planned: 4,
-                        success: 2,
-                        miss: 2,
-                        unknown: 0,
-                        dispositions: {},
-                    },
-                    retrieval: {
-                        planned: 5,
-                        applied: 2,
-                        miss: 3,
-                        unknown: 0,
-                        states: {},
-                    },
-                },
-                B: {
-                    recording: {
-                        planned: 4,
-                        success: 2,
-                        miss: 2,
-                        unknown: 0,
-                        dispositions: {},
-                    },
-                    retrieval: {
-                        planned: 5,
-                        applied: 3,
-                        miss: 2,
-                        unknown: 0,
-                        states: {},
-                    },
-                },
+                A: arm(),
+                B: arm({ retrieval: { applied: 3, miss: 2 } }),
             },
         });
 
         // Assert
-        assert.equal(base.recommendation, "no-promotion");
         assert.equal(extra.recommendation, "personal-trial");
     });
 
@@ -453,43 +413,15 @@ describe("personal-trial screen", () => {
         // Arrange
         const unknown = screen({
             measures: {
-                A: {
-                    recording: {
-                        planned: 4,
-                        success: 2,
-                        miss: 2,
-                        unknown: 0,
-                        dispositions: {},
-                    },
-                    retrieval: {
-                        planned: 5,
-                        applied: 2,
-                        miss: 3,
-                        unknown: 0,
-                        states: {},
-                    },
-                },
-                B: {
-                    recording: {
-                        planned: 4,
-                        success: 2,
-                        miss: 1,
-                        unknown: 1,
-                        dispositions: {},
-                    },
-                    retrieval: {
-                        planned: 5,
-                        applied: 2,
-                        miss: 3,
-                        unknown: 0,
-                        states: {},
-                    },
-                },
+                A: arm(),
+                B: arm({
+                    recording: { success: 2, miss: 1, unknown: 1 },
+                }),
             },
         });
 
         // Assert
         assert.equal(unknown.recommendation, "inconclusive");
-        assert.match(unknown.reasons.join("; "), /unknown outcomes/);
+        assert.match(unknown.reasons.join("; "), /unknown/);
     });
 });

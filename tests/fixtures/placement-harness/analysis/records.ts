@@ -803,7 +803,9 @@ function selectedAssessment(
             options.inventoryFactIds,
         ),
         retrieval:
-            status === "judged" ? retrievalOf(value, attemptDir) : { state: "missing", source: attemptDir },
+            status === "judged"
+                ? retrievalOf(value, attemptDir)
+                : { state: "missing", source: attemptDir },
         problems,
     };
 }

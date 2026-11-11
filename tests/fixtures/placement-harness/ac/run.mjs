@@ -435,14 +435,7 @@ function judge(args) {
         console.error(`invalid --attempt ${JSON.stringify(attemptId)}`);
         return 1;
     }
-    const attemptDir = join(
-        base,
-        "results",
-        stamp,
-        caseId,
-        "ac",
-        attemptId,
-    );
+    const attemptDir = join(base, "results", stamp, caseId, "ac", attemptId);
     if (existsSync(join(attemptDir, "judgement.json"))) return 0;
     if (existsSync(attemptDir)) {
         console.error(

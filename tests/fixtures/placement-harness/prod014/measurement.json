@@ -13,6 +13,27 @@
             "retrieval": {
                 "note": "db/pool.md",
                 "detail": "after the 2026 upgrade connections must require TLS; sslmode=disable is obsolete while the 10-connection pool, 5-second acquire timeout and startup migrations stay valid"
+            },
+            "preservation": {
+                "facts": [
+                    {
+                        "id": "poolSize",
+                        "label": "10-connection pool cap"
+                    },
+                    {
+                        "id": "acquireTimeout",
+                        "label": "5-second acquire timeout"
+                    },
+                    {
+                        "id": "startupMigrations",
+                        "label": "startup migrations"
+                    },
+                    {
+                        "id": "obsoleteTlsClaim",
+                        "label": "obsolete sslmode=disable claim",
+                        "obsolete": true
+                    }
+                ]
             }
         },
         "S06": {

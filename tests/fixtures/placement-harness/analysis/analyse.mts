@@ -48,6 +48,8 @@ import {
     parseMeasureDeclarations,
     personalTrialDecision,
     summariseMeasures,
+    type ArmMeasureSummary,
+    type MeasureDeclarations,
     type MeasuresReport,
 } from "./measures.ts";
 import { evaluateDecision, type DecisionResult } from "./decision.ts";
@@ -975,6 +977,204 @@ function limitationsOf(
     ];
 }
 
+/** One measurement-declaration load. */
+interface DeclarationsLoad {
+    /** The explicit load state. */
+    status: "available" | "missing" | "malformed";
+    /** SHA-256 of the declaration bytes, when available. */
+    sha: string | null;
+    /** The parsed declarations, when usable. */
+    declarations?: MeasureDeclarations;
+    /** Why the declaration is unusable, when it is. */
+    problem?: string;
+}
+
+/**
+ * Load and parse the declared measurement file through the evidence reader,
+ * so the receipt binds to its bytes.
+ * @param manifest The validated manifest.
+ * @param reader The evidence reader.
+ * @returns The declaration load.
+ */
+function declarationsOf(
+    manifest: CampaignManifest,
+    reader: EvidenceReader,
+): DeclarationsLoad {
+    const path = manifest.evidence.inputs?.measures;
+    if (path === undefined) {
+        return {
+            status: "missing",
+            sha: null,
+            problem: "no measurement declaration is declared in the manifest",
+        };
+    }
+    const text = reader.readTextFile(path);
+    if (text.state !== "available") {
+        return {
+            status: "missing",
+            sha: null,
+            problem: `measurement declaration ${path} is ${text.state}`,
+        };
+    }
+    const sha = sha256OfText(text.value);
+    let raw: unknown;
+    try {
+        raw = JSON.parse(text.value) as unknown;
+    } catch {
+        return {
+            status: "malformed",
+            sha,
+            problem: `measurement declaration ${path} is not JSON`,
+        };
+    }
+    const parsed = parseMeasureDeclarations(raw);
+    if (parsed.declarations === undefined) {
+        return {
+            status: "malformed",
+            sha,
+            problem: `measurement declaration ${path} is malformed: ${parsed.problems.join("; ")}`,
+        };
+    }
+    return { status: "available", sha, declarations: parsed.declarations };
+}
+
+/**
+ * The measures block when no usable declaration exists.
+ * @param reason Why the declaration is unusable.
+ * @param status The explicit declaration state.
+ * @param decision The utility-threshold decision.
+ * @returns An inconclusive measures report.
+ */
+function emptyMeasuresReport(
+    reason: string,
+    status: "missing" | "malformed",
+    decision: DecisionResult,
+): MeasuresReport {
+    return {
+        status,
+        declarationSha256: null,
+        arms: {},
+        trials: [],
+        personalTrial: {
+            recommendation: "inconclusive",
+            reasons: [reason],
+            utilityThreshold: {
+                component: "utility-threshold",
+                status: decision.threshold.status,
+                lead: decision.threshold.lead,
+                interval: decision.threshold.interval,
+                note: "One component only: a zero-delta 'qualified' at threshold 0 is not the personal-trial recommendation.",
+            },
+        },
+    };
+}
+
+/**
+ * The personal-trial screen from the assembled counts.
+ * @param manifest The validated manifest.
+ * @param arms The per-arm opportunity summaries.
+ * @param counts The per-arm accounting counts.
+ * @param guardrails The per-arm guardrail summaries.
+ * @param decision The utility-threshold decision.
+ * @returns The screen.
+ */
+function screenOf(
+    manifest: CampaignManifest,
+    arms: Record<string, ArmMeasureSummary>,
+    counts: Record<string, AccountingCounts>,
+    guardrails: Record<string, GuardrailArmSummary[]>,
+    decision: DecisionResult,
+): MeasuresReport["personalTrial"] {
+    const selection = manifest.policy.selection;
+    if (selection === undefined) {
+        return {
+            recommendation: "inconclusive",
+            reasons: ["the manifest declares no control/candidate selection"],
+            utilityThreshold: {
+                component: "utility-threshold",
+                status: "not-defined",
+                lead: null,
+                interval: null,
+                note: "One component only: a zero-delta 'qualified' at threshold 0 is not the personal-trial recommendation.",
+            },
+        };
+    }
+    const candidate = guardrails[selection.candidateArm] ?? [];
+    const breached = candidate.filter((one) => one.status === "breached");
+    const unresolved = candidate.filter((one) => one.status === "unresolved");
+    return personalTrialDecision(
+        selection.controlArm,
+        selection.candidateArm,
+        arms,
+        counts,
+        {
+            status:
+                breached.length > 0
+                    ? "breached"
+                    : unresolved.length > 0
+                      ? "unresolved"
+                      : "clean",
+            detail:
+                [...breached, ...unresolved]
+                    .map((one) => `${one.guardrailId}: ${one.status}`)
+                    .join("; ") || "no candidate guardrail concern",
+        },
+        decision.coverage,
+        {
+            status: decision.threshold.status,
+            lead: decision.threshold.lead,
+            interval: decision.threshold.interval,
+        },
+    );
+}
+
+/**
+ * Build the measures report from a usable declaration.
+ * @param manifest The validated manifest.
+ * @param loaded The loaded declaration.
+ * @param records The loaded records.
+ * @param scored The scored trials.
+ * @param counts The per-arm accounting counts.
+ * @param guardrails The per-arm guardrail summaries.
+ * @param decision The utility-threshold decision.
+ * @returns The measures report.
+ */
+function completeMeasuresReport(
+    manifest: CampaignManifest,
+    loaded: DeclarationsLoad & { declarations: MeasureDeclarations },
+    records: readonly TrialRecord[],
+    scored: readonly TrialScored[],
+    counts: Record<string, AccountingCounts>,
+    guardrails: Record<string, GuardrailArmSummary[]>,
+    decision: DecisionResult,
+): MeasuresReport {
+    const declarations = loaded.declarations;
+    const trials = scored.map((trial) => {
+        const record = records.find(
+            (one) => one.identity.stamp === trial.identity.stamp,
+        );
+        if (record === undefined) {
+            throw new Error(
+                `missing loaded record for ${trial.identity.stamp}`,
+            );
+        }
+        return measureTrial(record, declarations, trial.identity.arm);
+    });
+    return {
+        status: "available",
+        declarationSha256: loaded.sha,
+        arms: summariseMeasures(trials, manifest.schedule.slots, declarations),
+        trials,
+        personalTrial: screenOf(
+            manifest,
+            summariseMeasures(trials, manifest.schedule.slots, declarations),
+            counts,
+            guardrails,
+            decision,
+        ),
+    };
+}
+
 /**
  * Build the recording and retrieval measures from the declared measurement
  * file, binding the file to the analysis receipt through the evidence reader.
@@ -996,125 +1196,23 @@ function measuresOf(
     guardrails: Record<string, GuardrailArmSummary[]>,
     decision: DecisionResult,
 ): MeasuresReport {
-    const empty = (reason: string): MeasuresReport => ({
-        status: "missing",
-        declarationSha256: null,
-        arms: {},
-        trials: [],
-        personalTrial: {
-            recommendation: "inconclusive",
-            reasons: [reason],
-            utilityThreshold: {
-                component: "utility-threshold",
-                status: decision.threshold.status,
-                lead: decision.threshold.lead,
-                interval: decision.threshold.interval,
-                note: "One component only: a zero-delta 'qualified' at threshold 0 is not the personal-trial recommendation.",
-            },
-        },
-    });
-    const path = manifest.evidence.inputs?.measures;
-    if (path === undefined) {
-        return empty("no measurement declaration is declared in the manifest");
-    }
-    const text = reader.readTextFile(path);
-    if (text.state !== "available") {
-        return empty(`measurement declaration ${path} is ${text.state}`);
-    }
-    const declarationSha256 = sha256OfText(text.value);
-    let raw: unknown;
-    try {
-        raw = JSON.parse(text.value) as unknown;
-    } catch {
-        return {
-            ...empty(`measurement declaration ${path} is not JSON`),
-            status: "malformed",
-        };
-    }
-    const parsed = parseMeasureDeclarations(raw);
-    if (parsed.declarations === undefined) {
-        return {
-            ...empty(
-                `measurement declaration ${path} is malformed: ${parsed.problems.join("; ")}`,
-            ),
-            status: "malformed",
-        };
-    }
-    const declarations = parsed.declarations;
-    const trials = scored.map((trial) => {
-        const record = records.find(
-            (one) => one.identity.stamp === trial.identity.stamp,
+    const loaded = declarationsOf(manifest, reader);
+    if (loaded.declarations === undefined) {
+        return emptyMeasuresReport(
+            loaded.problem ?? "measurement declaration is unusable",
+            loaded.status === "malformed" ? "malformed" : "missing",
+            decision,
         );
-        if (record === undefined) {
-            throw new Error(
-                `missing loaded record for ${trial.identity.stamp}`,
-            );
-        }
-        return measureTrial(record, declarations, trial.identity.arm);
-    });
-    const arms = summariseMeasures(
-        trials,
-        manifest.schedule.slots,
-        declarations,
-    );
-    const selection = manifest.policy.selection;
-    if (selection === undefined) {
-        return {
-            status: "available",
-            declarationSha256,
-            arms,
-            trials,
-            personalTrial: {
-                recommendation: "inconclusive",
-                reasons: ["the manifest declares no control/candidate selection"],
-                utilityThreshold: {
-                    component: "utility-threshold",
-                    status: "not-defined",
-                    lead: null,
-                    interval: null,
-                    note: "One component only: a zero-delta 'qualified' at threshold 0 is not the personal-trial recommendation.",
-                },
-            },
-        };
     }
-    const candidateGuardrails = guardrails[selection.candidateArm] ?? [];
-    const breached = candidateGuardrails.filter(
-        (one) => one.status === "breached",
+    return completeMeasuresReport(
+        manifest,
+        { ...loaded, declarations: loaded.declarations },
+        records,
+        scored,
+        counts,
+        guardrails,
+        decision,
     );
-    const unresolved = candidateGuardrails.filter(
-        (one) => one.status === "unresolved",
-    );
-    const guardrailStatus =
-        breached.length > 0
-            ? "breached"
-            : unresolved.length > 0
-              ? "unresolved"
-              : "clean";
-    return {
-        status: "available",
-        declarationSha256,
-        arms,
-        trials,
-        personalTrial: personalTrialDecision({
-            controlArm: selection.controlArm,
-            candidateArm: selection.candidateArm,
-            measures: arms,
-            counts,
-            guardrails: {
-                status: guardrailStatus,
-                detail:
-                    [...breached, ...unresolved]
-                        .map((one) => `${one.guardrailId}: ${one.status}`)
-                        .join("; ") || "no candidate guardrail concern",
-            },
-            coverage: decision.coverage,
-            utilityThreshold: {
-                status: decision.threshold.status,
-                lead: decision.threshold.lead,
-                interval: decision.threshold.interval,
-            },
-        }),
-    };
 }
 
 /**

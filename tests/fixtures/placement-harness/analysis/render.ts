@@ -658,6 +658,56 @@ export function renderReport(result: AnalysisResult): string {
 }
 
 /**
+ * Render one arm's opportunity-count row.
+ * @param arm The arm id.
+ * @param measures The measures report.
+ * @returns The table row.
+ */
+function countRow(arm: string, measures: MeasuresReport): string[] {
+    const one = measures.arms[arm];
+    const recording = one?.recording ?? {
+        success: 0,
+        planned: 0,
+        unknown: 0,
+    };
+    const retrieval = one?.retrieval ?? {
+        applied: 0,
+        planned: 0,
+        unknown: 0,
+    };
+    return [
+        arm,
+        `${String(recording.success)}/${String(recording.planned)}`,
+        String(recording.unknown),
+        `${String(retrieval.applied)}/${String(retrieval.planned)}`,
+        String(retrieval.unknown),
+    ];
+}
+
+/**
+ * Render one eligible trial's measure row.
+ * @param trial The trial measures.
+ * @returns The table row.
+ */
+function measureRow(trial: MeasuresReport["trials"][number]): string[] {
+    const recording = trial.recording.eligible
+        ? `${trial.recording.success ? "success" : "miss"} (${trial.recording.disposition})`
+        : "—";
+    const retrieval = trial.retrieval.eligible
+        ? `${trial.retrieval.state}${trial.retrieval.read ? " (read)" : " (no read)"}`
+        : "—";
+    return [
+        trial.stamp,
+        trial.scenario,
+        trial.arm,
+        recording,
+        retrieval,
+        [...trial.recording.evidence, ...trial.retrieval.evidence].join(" ") ||
+            "—",
+    ];
+}
+
+/**
  * Render the opportunity measures and the personal-trial screen.
  * @param result The analysis result.
  * @returns Markdown.
@@ -672,34 +722,19 @@ function measuresSection(result: AnalysisResult): string {
     ];
     const arms = Object.keys(measures.arms).sort();
     const counts = table(
-        ["Arm", "Recording", "Recording unknown", "Retrieval", "Retrieval unknown"],
-        arms.map((arm) => {
-            const one = measures.arms[arm];
-            return [
-                arm,
-                `${String(one?.recording.success ?? 0)}/${String(one?.recording.planned ?? 0)}`,
-                String(one?.recording.unknown ?? 0),
-                `${String(one?.retrieval.applied ?? 0)}/${String(one?.retrieval.planned ?? 0)}`,
-                String(one?.retrieval.unknown ?? 0),
-            ];
-        }),
+        [
+            "Arm",
+            "Recording",
+            "Recording unknown",
+            "Retrieval",
+            "Retrieval unknown",
+        ],
+        arms.map((arm) => countRow(arm, measures)),
     );
     const eligible = measures.trials.filter(
         (trial) => trial.recording.eligible || trial.retrieval.eligible,
     );
-    const rows = eligible.map((trial) => [
-        trial.stamp,
-        trial.scenario,
-        trial.arm,
-        trial.recording.eligible
-            ? `${trial.recording.success ? "success" : "miss"} (${trial.recording.disposition})`
-            : "—",
-        trial.retrieval.eligible
-            ? `${trial.retrieval.state}${trial.retrieval.read ? " (read)" : " (no read)"}`
-            : "—",
-        [...trial.recording.evidence, ...trial.retrieval.evidence].join(" ") ||
-            "—",
-    ]);
+    const rows = eligible.map(measureRow);
     const screen = measures.personalTrial;
     return [
         ...header,
