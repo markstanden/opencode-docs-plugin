@@ -1,0 +1,440 @@
+{
+    "schemaVersion": 1,
+    "campaign": {
+        "id": "rc-20261110",
+        "question": "does exact B improve weighted useful documentation relative to exact A on the repaired R01\u2013R04 corpus?"
+    },
+    "arms": [
+        {
+            "id": "A",
+            "label": "control 415-char native description"
+        },
+        {
+            "id": "B",
+            "label": "candidate 429-char native description"
+        }
+    ],
+    "scenarios": [
+        {
+            "id": "R01",
+            "kind": "reuse-create"
+        },
+        {
+            "id": "R02",
+            "kind": "reuse-update",
+            "preservationInventory": {
+                "facts": [
+                    {
+                        "id": "poolSize",
+                        "label": "10-connection pool cap",
+                        "mentionPatterns": [
+                            "\\b(?:max(?:imum)?|pool|connections?)\\b[^\\n.]{0,60}\\b(?:10|ten)\\b",
+                            "\\b(?:10|ten)\\b[^\\n.]{0,60}\\b(?:connections?|pool)\\b"
+                        ]
+                    },
+                    {
+                        "id": "acquireTimeout",
+                        "label": "5-second acquire timeout",
+                        "mentionPatterns": [
+                            "\\b(?:acquire|acquiring|wait|waits|timeout|connection)\\b[^\\n.]{0,60}\\b(?:5|five)\\s*(?:(?:\\.0)\\s*)?(?:s\\b|sec(?:ond)?s?\\b|ms\\b|milliseconds?)\\b",
+                            "\\b(?:5|five)\\s*(?:(?:\\.0)\\s*)?(?:s\\b|sec(?:ond)?s?\\b|ms\\b|milliseconds?)\\b[^\\n.]{0,60}\\b(?:acquire|acquiring|wait|waits|timeout|connection)\\b",
+                            "\\b5000\\s*(?:ms|milliseconds?)\\b"
+                        ]
+                    },
+                    {
+                        "id": "startupMigrations",
+                        "label": "startup migrations",
+                        "mentionPatterns": ["\\bmigrat"]
+                    },
+                    {
+                        "id": "obsoleteTlsClaim",
+                        "label": "obsolete sslmode=disable claim",
+                        "obsoleteCurrentPatterns": [
+                            "(?:sslmode\\s*=\\s*disable|ssl[^\\n.]{0,20}\\bdisable\\b)"
+                        ]
+                    }
+                ],
+                "negationCues": [
+                    "\\b(?:no longer|not|never|unsupported|deprecated|superseded|must not|do not use|removed|obsolete)\\b"
+                ]
+            }
+        },
+        {
+            "id": "R03",
+            "kind": "transient-restraint"
+        },
+        {
+            "id": "R04",
+            "kind": "already-covered"
+        }
+    ],
+    "schedule": {
+        "slots": [
+            {
+                "slot": 1,
+                "stamp": "cc-A-r0-R01",
+                "scenario": "R01",
+                "arm": "A",
+                "repetition": 0,
+                "pairId": "P01"
+            },
+            {
+                "slot": 2,
+                "stamp": "cc-B-r0-R01",
+                "scenario": "R01",
+                "arm": "B",
+                "repetition": 0,
+                "pairId": "P01"
+            },
+            {
+                "slot": 3,
+                "stamp": "cc-B-r0-R02",
+                "scenario": "R02",
+                "arm": "B",
+                "repetition": 0,
+                "pairId": "P02"
+            },
+            {
+                "slot": 4,
+                "stamp": "cc-A-r0-R02",
+                "scenario": "R02",
+                "arm": "A",
+                "repetition": 0,
+                "pairId": "P02"
+            },
+            {
+                "slot": 5,
+                "stamp": "cc-A-r0-R03",
+                "scenario": "R03",
+                "arm": "A",
+                "repetition": 0,
+                "pairId": "P03"
+            },
+            {
+                "slot": 6,
+                "stamp": "cc-B-r0-R03",
+                "scenario": "R03",
+                "arm": "B",
+                "repetition": 0,
+                "pairId": "P03"
+            },
+            {
+                "slot": 7,
+                "stamp": "cc-B-r0-R04",
+                "scenario": "R04",
+                "arm": "B",
+                "repetition": 0,
+                "pairId": "P04"
+            },
+            {
+                "slot": 8,
+                "stamp": "cc-A-r0-R04",
+                "scenario": "R04",
+                "arm": "A",
+                "repetition": 0,
+                "pairId": "P04"
+            },
+            {
+                "slot": 9,
+                "stamp": "cc-A-r1-R02",
+                "scenario": "R02",
+                "arm": "A",
+                "repetition": 1,
+                "pairId": "P05"
+            },
+            {
+                "slot": 10,
+                "stamp": "cc-B-r1-R02",
+                "scenario": "R02",
+                "arm": "B",
+                "repetition": 1,
+                "pairId": "P05"
+            },
+            {
+                "slot": 11,
+                "stamp": "cc-B-r1-R03",
+                "scenario": "R03",
+                "arm": "B",
+                "repetition": 1,
+                "pairId": "P06"
+            },
+            {
+                "slot": 12,
+                "stamp": "cc-A-r1-R03",
+                "scenario": "R03",
+                "arm": "A",
+                "repetition": 1,
+                "pairId": "P06"
+            },
+            {
+                "slot": 13,
+                "stamp": "cc-A-r1-R04",
+                "scenario": "R04",
+                "arm": "A",
+                "repetition": 1,
+                "pairId": "P07"
+            },
+            {
+                "slot": 14,
+                "stamp": "cc-B-r1-R04",
+                "scenario": "R04",
+                "arm": "B",
+                "repetition": 1,
+                "pairId": "P07"
+            },
+            {
+                "slot": 15,
+                "stamp": "cc-B-r1-R01",
+                "scenario": "R01",
+                "arm": "B",
+                "repetition": 1,
+                "pairId": "P08"
+            },
+            {
+                "slot": 16,
+                "stamp": "cc-A-r1-R01",
+                "scenario": "R01",
+                "arm": "A",
+                "repetition": 1,
+                "pairId": "P08"
+            },
+            {
+                "slot": 17,
+                "stamp": "cc-A-r2-R03",
+                "scenario": "R03",
+                "arm": "A",
+                "repetition": 2,
+                "pairId": "P09"
+            },
+            {
+                "slot": 18,
+                "stamp": "cc-B-r2-R03",
+                "scenario": "R03",
+                "arm": "B",
+                "repetition": 2,
+                "pairId": "P09"
+            },
+            {
+                "slot": 19,
+                "stamp": "cc-B-r2-R04",
+                "scenario": "R04",
+                "arm": "B",
+                "repetition": 2,
+                "pairId": "P10"
+            },
+            {
+                "slot": 20,
+                "stamp": "cc-A-r2-R04",
+                "scenario": "R04",
+                "arm": "A",
+                "repetition": 2,
+                "pairId": "P10"
+            },
+            {
+                "slot": 21,
+                "stamp": "cc-A-r2-R01",
+                "scenario": "R01",
+                "arm": "A",
+                "repetition": 2,
+                "pairId": "P11"
+            },
+            {
+                "slot": 22,
+                "stamp": "cc-B-r2-R01",
+                "scenario": "R01",
+                "arm": "B",
+                "repetition": 2,
+                "pairId": "P11"
+            },
+            {
+                "slot": 23,
+                "stamp": "cc-B-r2-R02",
+                "scenario": "R02",
+                "arm": "B",
+                "repetition": 2,
+                "pairId": "P12"
+            },
+            {
+                "slot": 24,
+                "stamp": "cc-A-r2-R02",
+                "scenario": "R02",
+                "arm": "A",
+                "repetition": 2,
+                "pairId": "P12"
+            },
+            {
+                "slot": 25,
+                "stamp": "cc-A-r3-R04",
+                "scenario": "R04",
+                "arm": "A",
+                "repetition": 3,
+                "pairId": "P13"
+            },
+            {
+                "slot": 26,
+                "stamp": "cc-B-r3-R04",
+                "scenario": "R04",
+                "arm": "B",
+                "repetition": 3,
+                "pairId": "P13"
+            },
+            {
+                "slot": 27,
+                "stamp": "cc-B-r3-R01",
+                "scenario": "R01",
+                "arm": "B",
+                "repetition": 3,
+                "pairId": "P14"
+            },
+            {
+                "slot": 28,
+                "stamp": "cc-A-r3-R01",
+                "scenario": "R01",
+                "arm": "A",
+                "repetition": 3,
+                "pairId": "P14"
+            },
+            {
+                "slot": 29,
+                "stamp": "cc-A-r3-R02",
+                "scenario": "R02",
+                "arm": "A",
+                "repetition": 3,
+                "pairId": "P15"
+            },
+            {
+                "slot": 30,
+                "stamp": "cc-B-r3-R02",
+                "scenario": "R02",
+                "arm": "B",
+                "repetition": 3,
+                "pairId": "P15"
+            },
+            {
+                "slot": 31,
+                "stamp": "cc-B-r3-R03",
+                "scenario": "R03",
+                "arm": "B",
+                "repetition": 3,
+                "pairId": "P16"
+            },
+            {
+                "slot": 32,
+                "stamp": "cc-A-r3-R03",
+                "scenario": "R03",
+                "arm": "A",
+                "repetition": 3,
+                "pairId": "P16"
+            },
+            {
+                "slot": 33,
+                "stamp": "cc-A-r4-R01",
+                "scenario": "R01",
+                "arm": "A",
+                "repetition": 4,
+                "pairId": "P17"
+            },
+            {
+                "slot": 34,
+                "stamp": "cc-B-r4-R01",
+                "scenario": "R01",
+                "arm": "B",
+                "repetition": 4,
+                "pairId": "P17"
+            },
+            {
+                "slot": 35,
+                "stamp": "cc-B-r4-R02",
+                "scenario": "R02",
+                "arm": "B",
+                "repetition": 4,
+                "pairId": "P18"
+            },
+            {
+                "slot": 36,
+                "stamp": "cc-A-r4-R02",
+                "scenario": "R02",
+                "arm": "A",
+                "repetition": 4,
+                "pairId": "P18"
+            },
+            {
+                "slot": 37,
+                "stamp": "cc-A-r4-R03",
+                "scenario": "R03",
+                "arm": "A",
+                "repetition": 4,
+                "pairId": "P19"
+            },
+            {
+                "slot": 38,
+                "stamp": "cc-B-r4-R03",
+                "scenario": "R03",
+                "arm": "B",
+                "repetition": 4,
+                "pairId": "P19"
+            },
+            {
+                "slot": 39,
+                "stamp": "cc-B-r4-R04",
+                "scenario": "R04",
+                "arm": "B",
+                "repetition": 4,
+                "pairId": "P20"
+            },
+            {
+                "slot": 40,
+                "stamp": "cc-A-r4-R04",
+                "scenario": "R04",
+                "arm": "A",
+                "repetition": 4,
+                "pairId": "P20"
+            }
+        ]
+    },
+    "evidence": {
+        "layout": "ac-v1",
+        "resultRoots": {
+            "A": "gen/a/results",
+            "B": "gen/b/results"
+        }
+    },
+    "assessment": {
+        "selectionPolicy": "resolution-then-judgement"
+    },
+    "policy": {
+        "policyId": "rc-20261110-frozen-plan",
+        "weights": {
+            "useful": 5,
+            "transient": -1,
+            "duplicate": -2,
+            "misleading": -5,
+            "taskFailure": -5
+        },
+        "guardrails": [
+            {
+                "id": "mutation-policy",
+                "kind": "mutation-policy",
+                "requirement": "no out-of-policy mutation"
+            },
+            {
+                "id": "destructive-loss",
+                "kind": "destructive-loss",
+                "requirement": "no loss of still-valid facts"
+            }
+        ],
+        "selection": {
+            "controlArm": "A",
+            "candidateArm": "B",
+            "threshold": 5,
+            "requireCompleteCoverage": true
+        },
+        "sensitivity": {
+            "usefulWeights": [3, 5, 8],
+            "transientPenalties": [0.5, 1, 2]
+        },
+        "screening": {
+            "rulesVersion": "v1"
+        }
+    }
+}

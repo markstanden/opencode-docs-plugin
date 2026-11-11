@@ -1,0 +1,423 @@
+{
+    "schemaVersion": 1,
+    "campaign": {
+        "id": "fr-20261110",
+        "question": "how do six native descriptions score on the NOTE corpus?"
+    },
+    "arms": [
+        {
+            "id": "A"
+        },
+        {
+            "id": "B"
+        },
+        {
+            "id": "C"
+        },
+        {
+            "id": "D"
+        },
+        {
+            "id": "E"
+        },
+        {
+            "id": "F"
+        }
+    ],
+    "scenarios": [
+        {
+            "id": "NOTE-01",
+            "kind": "automatic-notetaking"
+        },
+        {
+            "id": "NOTE-02",
+            "kind": "automatic-notetaking"
+        },
+        {
+            "id": "NOTE-03",
+            "kind": "automatic-notetaking"
+        },
+        {
+            "id": "NOTE-04",
+            "kind": "automatic-notetaking"
+        }
+    ],
+    "schedule": {
+        "slots": [
+            {
+                "slot": 1,
+                "stamp": "fr-B-s1-NOTE-01",
+                "scenario": "NOTE-01",
+                "arm": "B",
+                "repetition": 1
+            },
+            {
+                "slot": 2,
+                "stamp": "fr-E-s1-NOTE-01",
+                "scenario": "NOTE-01",
+                "arm": "E",
+                "repetition": 1
+            },
+            {
+                "slot": 3,
+                "stamp": "fr-A-s1-NOTE-01",
+                "scenario": "NOTE-01",
+                "arm": "A",
+                "repetition": 1
+            },
+            {
+                "slot": 4,
+                "stamp": "fr-D-s1-NOTE-01",
+                "scenario": "NOTE-01",
+                "arm": "D",
+                "repetition": 1
+            },
+            {
+                "slot": 5,
+                "stamp": "fr-F-s1-NOTE-01",
+                "scenario": "NOTE-01",
+                "arm": "F",
+                "repetition": 1
+            },
+            {
+                "slot": 6,
+                "stamp": "fr-C-s1-NOTE-01",
+                "scenario": "NOTE-01",
+                "arm": "C",
+                "repetition": 1
+            },
+            {
+                "slot": 7,
+                "stamp": "fr-B-s1-NOTE-02",
+                "scenario": "NOTE-02",
+                "arm": "B",
+                "repetition": 1
+            },
+            {
+                "slot": 8,
+                "stamp": "fr-D-s1-NOTE-02",
+                "scenario": "NOTE-02",
+                "arm": "D",
+                "repetition": 1
+            },
+            {
+                "slot": 9,
+                "stamp": "fr-C-s1-NOTE-02",
+                "scenario": "NOTE-02",
+                "arm": "C",
+                "repetition": 1
+            },
+            {
+                "slot": 10,
+                "stamp": "fr-E-s1-NOTE-02",
+                "scenario": "NOTE-02",
+                "arm": "E",
+                "repetition": 1
+            },
+            {
+                "slot": 11,
+                "stamp": "fr-F-s1-NOTE-02",
+                "scenario": "NOTE-02",
+                "arm": "F",
+                "repetition": 1
+            },
+            {
+                "slot": 12,
+                "stamp": "fr-A-s1-NOTE-02",
+                "scenario": "NOTE-02",
+                "arm": "A",
+                "repetition": 1
+            },
+            {
+                "slot": 13,
+                "stamp": "fr-F-s1-NOTE-03",
+                "scenario": "NOTE-03",
+                "arm": "F",
+                "repetition": 1
+            },
+            {
+                "slot": 14,
+                "stamp": "fr-D-s1-NOTE-03",
+                "scenario": "NOTE-03",
+                "arm": "D",
+                "repetition": 1
+            },
+            {
+                "slot": 15,
+                "stamp": "fr-E-s1-NOTE-03",
+                "scenario": "NOTE-03",
+                "arm": "E",
+                "repetition": 1
+            },
+            {
+                "slot": 16,
+                "stamp": "fr-B-s1-NOTE-03",
+                "scenario": "NOTE-03",
+                "arm": "B",
+                "repetition": 1
+            },
+            {
+                "slot": 17,
+                "stamp": "fr-C-s1-NOTE-03",
+                "scenario": "NOTE-03",
+                "arm": "C",
+                "repetition": 1
+            },
+            {
+                "slot": 18,
+                "stamp": "fr-A-s1-NOTE-03",
+                "scenario": "NOTE-03",
+                "arm": "A",
+                "repetition": 1
+            },
+            {
+                "slot": 19,
+                "stamp": "fr-D-s1-NOTE-04",
+                "scenario": "NOTE-04",
+                "arm": "D",
+                "repetition": 1
+            },
+            {
+                "slot": 20,
+                "stamp": "fr-F-s1-NOTE-04",
+                "scenario": "NOTE-04",
+                "arm": "F",
+                "repetition": 1
+            },
+            {
+                "slot": 21,
+                "stamp": "fr-E-s1-NOTE-04",
+                "scenario": "NOTE-04",
+                "arm": "E",
+                "repetition": 1
+            },
+            {
+                "slot": 22,
+                "stamp": "fr-A-s1-NOTE-04",
+                "scenario": "NOTE-04",
+                "arm": "A",
+                "repetition": 1
+            },
+            {
+                "slot": 23,
+                "stamp": "fr-B-s1-NOTE-04",
+                "scenario": "NOTE-04",
+                "arm": "B",
+                "repetition": 1
+            },
+            {
+                "slot": 24,
+                "stamp": "fr-C-s1-NOTE-04",
+                "scenario": "NOTE-04",
+                "arm": "C",
+                "repetition": 1
+            },
+            {
+                "slot": 25,
+                "stamp": "fr-D-s2-NOTE-02",
+                "scenario": "NOTE-02",
+                "arm": "D",
+                "repetition": 2
+            },
+            {
+                "slot": 26,
+                "stamp": "fr-C-s2-NOTE-02",
+                "scenario": "NOTE-02",
+                "arm": "C",
+                "repetition": 2
+            },
+            {
+                "slot": 27,
+                "stamp": "fr-F-s2-NOTE-02",
+                "scenario": "NOTE-02",
+                "arm": "F",
+                "repetition": 2
+            },
+            {
+                "slot": 28,
+                "stamp": "fr-B-s2-NOTE-02",
+                "scenario": "NOTE-02",
+                "arm": "B",
+                "repetition": 2
+            },
+            {
+                "slot": 29,
+                "stamp": "fr-A-s2-NOTE-02",
+                "scenario": "NOTE-02",
+                "arm": "A",
+                "repetition": 2
+            },
+            {
+                "slot": 30,
+                "stamp": "fr-E-s2-NOTE-02",
+                "scenario": "NOTE-02",
+                "arm": "E",
+                "repetition": 2
+            },
+            {
+                "slot": 31,
+                "stamp": "fr-E-s2-NOTE-03",
+                "scenario": "NOTE-03",
+                "arm": "E",
+                "repetition": 2
+            },
+            {
+                "slot": 32,
+                "stamp": "fr-D-s2-NOTE-03",
+                "scenario": "NOTE-03",
+                "arm": "D",
+                "repetition": 2
+            },
+            {
+                "slot": 33,
+                "stamp": "fr-F-s2-NOTE-03",
+                "scenario": "NOTE-03",
+                "arm": "F",
+                "repetition": 2
+            },
+            {
+                "slot": 34,
+                "stamp": "fr-B-s2-NOTE-03",
+                "scenario": "NOTE-03",
+                "arm": "B",
+                "repetition": 2
+            },
+            {
+                "slot": 35,
+                "stamp": "fr-C-s2-NOTE-03",
+                "scenario": "NOTE-03",
+                "arm": "C",
+                "repetition": 2
+            },
+            {
+                "slot": 36,
+                "stamp": "fr-A-s2-NOTE-03",
+                "scenario": "NOTE-03",
+                "arm": "A",
+                "repetition": 2
+            },
+            {
+                "slot": 37,
+                "stamp": "fr-A-s2-NOTE-04",
+                "scenario": "NOTE-04",
+                "arm": "A",
+                "repetition": 2
+            },
+            {
+                "slot": 38,
+                "stamp": "fr-B-s2-NOTE-04",
+                "scenario": "NOTE-04",
+                "arm": "B",
+                "repetition": 2
+            },
+            {
+                "slot": 39,
+                "stamp": "fr-F-s2-NOTE-04",
+                "scenario": "NOTE-04",
+                "arm": "F",
+                "repetition": 2
+            },
+            {
+                "slot": 40,
+                "stamp": "fr-C-s2-NOTE-04",
+                "scenario": "NOTE-04",
+                "arm": "C",
+                "repetition": 2
+            },
+            {
+                "slot": 41,
+                "stamp": "fr-E-s2-NOTE-04",
+                "scenario": "NOTE-04",
+                "arm": "E",
+                "repetition": 2
+            },
+            {
+                "slot": 42,
+                "stamp": "fr-D-s2-NOTE-04",
+                "scenario": "NOTE-04",
+                "arm": "D",
+                "repetition": 2
+            },
+            {
+                "slot": 43,
+                "stamp": "fr-E-s2-NOTE-01",
+                "scenario": "NOTE-01",
+                "arm": "E",
+                "repetition": 2
+            },
+            {
+                "slot": 44,
+                "stamp": "fr-C-s2-NOTE-01",
+                "scenario": "NOTE-01",
+                "arm": "C",
+                "repetition": 2
+            },
+            {
+                "slot": 45,
+                "stamp": "fr-F-s2-NOTE-01",
+                "scenario": "NOTE-01",
+                "arm": "F",
+                "repetition": 2
+            },
+            {
+                "slot": 46,
+                "stamp": "fr-A-s2-NOTE-01",
+                "scenario": "NOTE-01",
+                "arm": "A",
+                "repetition": 2
+            },
+            {
+                "slot": 47,
+                "stamp": "fr-B-s2-NOTE-01",
+                "scenario": "NOTE-01",
+                "arm": "B",
+                "repetition": 2
+            },
+            {
+                "slot": 48,
+                "stamp": "fr-D-s2-NOTE-01",
+                "scenario": "NOTE-01",
+                "arm": "D",
+                "repetition": 2
+            }
+        ]
+    },
+    "evidence": {
+        "layout": "ac-v1",
+        "resultRoots": {
+            "A": "gen/a/results",
+            "B": "gen/b/results",
+            "C": "gen/c/results",
+            "D": "gen/d/results",
+            "E": "gen/e/results",
+            "F": "gen/f/results"
+        }
+    },
+    "assessment": {
+        "selectionPolicy": "resolution-then-judgement"
+    },
+    "policy": {
+        "policyId": "fr-20261110-frozen-plan",
+        "weights": {
+            "useful": 5,
+            "transient": -1,
+            "duplicate": -2,
+            "misleading": -5,
+            "taskFailure": -5
+        },
+        "guardrails": [
+            {
+                "id": "mutation-policy",
+                "kind": "mutation-policy",
+                "requirement": "no out-of-policy mutation"
+            }
+        ],
+        "sensitivity": {
+            "usefulWeights": [3, 5, 8],
+            "transientPenalties": [0.5, 1, 2]
+        },
+        "screening": {
+            "rulesVersion": "v1"
+        }
+    }
+}
