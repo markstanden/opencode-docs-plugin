@@ -901,7 +901,10 @@ export function loadTrialRecord(
     reader: EvidenceReader,
     options: TrialRecordOptions,
 ): TrialRecord {
-    const dir = joinPath(options.resultRoot, options.stamp);
+    const dir = joinPath(
+        joinPath(options.resultRoot, options.stamp),
+        options.scenario,
+    );
     const attempt = attemptOf(reader, dir);
     const run = loadRun(reader, dir);
     const usability = usableOf(run);

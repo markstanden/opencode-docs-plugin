@@ -42,7 +42,7 @@ const judgedJson = (outcome = "useful-create") =>
 
 /** The complete file set of one usable, judged, passing trial. */
 const completeTrial = (stamp: string): Record<string, string> => ({
-    [`results/${stamp}/meta.json`]: JSON.stringify({
+    [`results/${stamp}/R01/meta.json`]: JSON.stringify({
         exit: 0,
         signal: null,
         timedOut: false,
@@ -50,24 +50,24 @@ const completeTrial = (stamp: string): Record<string, string> => ({
         answerValid: true,
         policyViolations: [],
     }),
-    [`results/${stamp}/gate.json`]: JSON.stringify({
+    [`results/${stamp}/R01/gate.json`]: JSON.stringify({
         status: "pass",
         reason: "criteria met",
     }),
-    [`results/${stamp}/primary-check.json`]: JSON.stringify({
+    [`results/${stamp}/R01/primary-check.json`]: JSON.stringify({
         status: "pass",
         exit: 0,
     }),
-    [`results/${stamp}/ac/attempt-001/judgement.json`]: judgedJson(),
-    [`results/${stamp}/ac/attempt-001/meta.json`]: JSON.stringify({
+    [`results/${stamp}/R01/ac/attempt-001/judgement.json`]: judgedJson(),
+    [`results/${stamp}/R01/ac/attempt-001/meta.json`]: JSON.stringify({
         judgeModel: "opencode-go/glm-5.3-flash",
         status: "finished",
     }),
-    [`results/${stamp}/final.md`]: "I created docs/note.md.",
-    [`results/${stamp}/writes.txt`]: "added: docs/note.md (file)",
-    [`results/${stamp}/docs-operations.jsonl`]:
+    [`results/${stamp}/R01/final.md`]: "I created docs/note.md.",
+    [`results/${stamp}/R01/writes.txt`]: "added: docs/note.md (file)",
+    [`results/${stamp}/R01/docs-operations.jsonl`]:
         '{"surface":"native","status":"success","input":{"add":{"mode":"create","path":"docs/note.md"}}}\n',
-    [`results/${stamp}/stdout.jsonl`]:
+    [`results/${stamp}/R01/stdout.jsonl`]:
         '{"type":"step_finish","part":{"tokens":{"input":10,"output":5,"reasoning":0,"cache":{"read":2}}}}\n',
 });
 
@@ -124,7 +124,7 @@ describe("loadTrialRecord", () => {
 
     it("never promotes a bare reservation to a recorded launch", () => {
         // Act
-        const record = load({ "results/cc-A-r0-R01/.reservation": "" });
+        const record = load({ "results/cc-A-r0-R01/R01/.reservation": "" });
 
         // Assert
         assert.equal(record.attempt.state, "reservation-only");
@@ -136,7 +136,7 @@ describe("loadTrialRecord", () => {
     it("stays unknown when a directory exists without a run record", () => {
         // Act
         const record = load({
-            "results/cc-A-r0-R01/prompt.md": "the prompt",
+            "results/cc-A-r0-R01/R01/prompt.md": "the prompt",
         });
 
         // Assert
@@ -150,7 +150,7 @@ describe("loadTrialRecord", () => {
     it("marks a run unusable when validity fields disagree, and limited when absent", () => {
         // Act
         const timedOut = load({
-            "results/cc-A-r0-R01/meta.json": JSON.stringify({
+            "results/cc-A-r0-R01/R01/meta.json": JSON.stringify({
                 exit: 0,
                 signal: null,
                 timedOut: true,
@@ -159,7 +159,7 @@ describe("loadTrialRecord", () => {
             }),
         });
         const limited = load({
-            "results/cc-A-r0-R01/meta.json": JSON.stringify({ exit: 0 }),
+            "results/cc-A-r0-R01/R01/meta.json": JSON.stringify({ exit: 0 }),
         });
 
         // Assert
@@ -178,7 +178,7 @@ describe("loadTrialRecord", () => {
         const missing = load({});
         const malformed = load({
             ...completeTrial("cc-A-r0-R01"),
-            "results/cc-A-r0-R01/primary-check.json": "not json",
+            "results/cc-A-r0-R01/R01/primary-check.json": "not json",
         });
 
         // Assert
@@ -192,7 +192,7 @@ describe("loadTrialRecord", () => {
     it("keeps the gate as explicit evidence with its recorded reason", () => {
         // Act
         const blocked = load({
-            "results/cc-A-r0-R01/gate.json": JSON.stringify({
+            "results/cc-A-r0-R01/R01/gate.json": JSON.stringify({
                 status: "blocked",
                 reason: "preserved content was modified",
             }),
@@ -210,21 +210,19 @@ describe("loadTrialRecord", () => {
         // Act
         const judgeError = load({
             ...completeTrial("cc-A-r0-R01"),
-            "results/cc-A-r0-R01/ac/attempt-001/judgement.json": JSON.stringify(
-                {
+            "results/cc-A-r0-R01/R01/ac/attempt-001/judgement.json":
+                JSON.stringify({
                     status: "judge-error",
                     problems: ["process not ok (exit null)"],
-                },
-            ),
+                }),
         });
         const invalid = load({
             ...completeTrial("cc-A-r0-R01"),
-            "results/cc-A-r0-R01/ac/attempt-001/judgement.json": JSON.stringify(
-                {
+            "results/cc-A-r0-R01/R01/ac/attempt-001/judgement.json":
+                JSON.stringify({
                     status: "invalid-verdict",
                     problems: ["documentationOutcome must be one of ..."],
-                },
-            ),
+                }),
         });
 
         // Assert
@@ -238,14 +236,13 @@ describe("loadTrialRecord", () => {
         // Act
         const record = load({
             ...completeTrial("cc-A-r0-R01"),
-            "results/cc-A-r0-R01/ac/attempt-001/judgement.json": JSON.stringify(
-                {
+            "results/cc-A-r0-R01/R01/ac/attempt-001/judgement.json":
+                JSON.stringify({
                     status: "judged",
                     documentationOutcome: "excellent",
                     documentationReason: "great",
                     evidence: ["quote"],
-                },
-            ),
+                }),
         });
 
         // Assert
@@ -262,13 +259,12 @@ describe("loadTrialRecord", () => {
         // Act
         const record = load({
             ...completeTrial("cc-A-r0-R01"),
-            "results/cc-A-r0-R01/ac/attempt-001/judgement.json": JSON.stringify(
-                {
+            "results/cc-A-r0-R01/R01/ac/attempt-001/judgement.json":
+                JSON.stringify({
                     status: "invalid-verdict",
                     problems: ["verdict is not valid JSON"],
-                },
-            ),
-            "results/cc-A-r0-R01/ac/attempt-001/resolution.json":
+                }),
+            "results/cc-A-r0-R01/R01/ac/attempt-001/resolution.json":
                 JSON.stringify({
                     status: "judged",
                     parsed: {
@@ -288,13 +284,12 @@ describe("loadTrialRecord", () => {
         // Act
         const record = load({
             ...completeTrial("cc-A-r0-R01"),
-            "results/cc-A-r0-R01/ac/attempt-001/judgement.json": JSON.stringify(
-                {
+            "results/cc-A-r0-R01/R01/ac/attempt-001/judgement.json":
+                JSON.stringify({
                     status: "invalid-verdict",
                     problems: ["verdict is not valid JSON"],
-                },
-            ),
-            "results/cc-A-r0-R01/ac/attempt-001/resolution.json":
+                }),
+            "results/cc-A-r0-R01/R01/ac/attempt-001/resolution.json":
                 JSON.stringify({
                     status: "unresolved",
                     method: "first-balanced-object",
@@ -315,9 +310,9 @@ describe("loadTrialRecord", () => {
         const record = load(
             {
                 ...completeTrial("cc-A-r0-R01"),
-                "results/cc-A-r0-R01/ac/attempt-001/judgement.json":
+                "results/cc-A-r0-R01/R01/ac/attempt-001/judgement.json":
                     judgedJson("none"),
-                "results/cc-A-r0-R01/ac/attempt-001/resolution.json":
+                "results/cc-A-r0-R01/R01/ac/attempt-001/resolution.json":
                     JSON.stringify({
                         status: "judged",
                         parsed: {
@@ -356,8 +351,8 @@ describe("loadTrialRecord", () => {
         const files = completeTrial("cc-A-r0-R01");
         const judged = {
             ...files,
-            "results/cc-A-r0-R01/ac/attempt-001/judgement.json": JSON.stringify(
-                {
+            "results/cc-A-r0-R01/R01/ac/attempt-001/judgement.json":
+                JSON.stringify({
                     status: "judged",
                     documentationOutcome: "useful-update",
                     documentationReason: "corrected",
@@ -367,8 +362,7 @@ describe("loadTrialRecord", () => {
                         obsoleteTlsClaim: { state: "removed", quote: "gone" },
                         acquireTimeout: { state: "vibes", quote: "" },
                     },
-                },
-            ),
+                }),
         };
         const factIds = [
             "poolSize",
@@ -447,7 +441,7 @@ describe("loadTrialRecord", () => {
         // Act
         const record = load({
             ...completeTrial("cc-A-r0-R01"),
-            "results/cc-A-r0-R01/stdout.jsonl":
+            "results/cc-A-r0-R01/R01/stdout.jsonl":
                 '{"type":"step_finish","part":{"tokens":{"input":1,"output":1,"reasoning":0,"cache":{"read":0}}}}\noops\n',
         });
 
@@ -464,7 +458,7 @@ describe("loadTrialRecord", () => {
         const files = completeTrial("cc-A-r0-R01");
         const record = load({
             ...files,
-            "results/cc-A-r0-R01/ac/attempt-002/judgement.json":
+            "results/cc-A-r0-R01/R01/ac/attempt-002/judgement.json":
                 judgedJson("misleading"),
         });
 
