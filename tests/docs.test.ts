@@ -1471,15 +1471,70 @@ describe("createDocsCommand", () => {
         assert.match(sent[0] ?? "", /\bdecisions\/serena\.md/);
     });
 
-    it("lists every doc when the query is blank", async () => {
+    /** The recording instruction, spelled independently of the source. */
+    const RECORDING_INSTRUCTION =
+        "Identify the reusable knowledge established in this conversation and " +
+        "preserve it using the docs tool. Search for related documentation " +
+        "first, then update an existing note or create one in the appropriate " +
+        "lake. Capture the findings, reasoning and constraints needed to apply " +
+        "the knowledge later. Verify that the saved content accurately " +
+        "reflects what we established, then briefly report what you stored " +
+        "and where.";
+
+    it("records the conversation for a bare /docs invocation", async () => {
+        // Arrange
         const { command, sent } = harness();
 
+        // Act
         await command.execute({
             sessionID: "ses_test",
-            prompt: { text: "   " },
+            prompt: { text: "" },
         } as never);
 
-        assert.match(sent[0] ?? "", /\bruntime\/other\.md/);
+        // Assert
+        assert.deepEqual(sent, [RECORDING_INSTRUCTION]);
+    });
+
+    it("records the conversation when the argument is only whitespace", async () => {
+        // Arrange
+        const { command, sent } = harness();
+
+        // Act
+        await command.execute({
+            sessionID: "ses_test",
+            prompt: { text: " \t\n " },
+        } as never);
+
+        // Assert
+        assert.deepEqual(sent, [RECORDING_INSTRUCTION]);
+    });
+
+    it("leaves a blank native tool search as the catalogue", async () => {
+        // Arrange
+        const tool = toolOf([entry({ path: "runtime/other.md" })]);
+
+        // Act
+        const result = await tool.execute({ search: "" }, {} as never);
+
+        // Assert
+        assert.notEqual(String(result.content), RECORDING_INSTRUCTION);
+        assert.match(String(result.content), /\bruntime\/other\.md/);
+    });
+
+    it("searches for a non-empty argument instead of recording", async () => {
+        // Arrange
+        const { command, sent } = harness();
+
+        // Act
+        await command.execute({
+            sessionID: "ses_test",
+            prompt: { text: "find the Bruno assertion notes" },
+        } as never);
+
+        // Assert
+        assert.equal(sent.length, 1);
+        assert.notEqual(sent[0], RECORDING_INSTRUCTION);
+        assert.match(sent[0] ?? "", /Closest matches|decisions\/serena\.md/);
     });
 
     it("searches the text after the `search` verb", async () => {
