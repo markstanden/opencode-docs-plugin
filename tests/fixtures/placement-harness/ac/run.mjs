@@ -472,14 +472,24 @@ function judge(args) {
         truth,
         scoringSpec,
     );
-    const leaks = labelLeaks(prompt);
-    if (leaks.length > 0) {
+    const leakProblems = labelLeaks(
+        prompt,
+        need(args, "--workdir"),
+        need(args, "--model"),
+    );
+    // The judge-side run directory is named by a digest, never by the campaign
+    // stamp: cwd, PWD and the mounted path are all judge-visible context.
+    const runDir = join(
+        need(args, "--workdir"),
+        sha256(`${stamp}/${caseId}`).slice(0, 16),
+    );
+    leakProblems.push(...labelLeaks(runDir));
+    if (leakProblems.length > 0) {
         console.error(
-            `refusing a packet with label leaks: ${leaks.join(", ")}`,
+            `refusing a judge request with label leaks: ${leakProblems.join(", ")}`,
         );
         return 3;
     }
-    const runDir = join(need(args, "--workdir"), `${stamp}-${caseId}`);
     mkdirSync(join(runDir, "work"), { recursive: true });
     writeFileSync(join(runDir, "prompt.md"), prompt, "utf8");
     mkdirSync(dirname(attemptDir), { recursive: true });

@@ -264,6 +264,72 @@ prepare_cases_run() {
     mv "$staging" "$CASES_RUN"
 }
 
+# The trial container gets only the runtime files the harness executes for its
+# own case. The full harness directory also holds truth, the whole corpus,
+# measurement assets, other cases' checks and campaign manifests, so it is
+# never mounted.
+prepare_harness_runtime() {
+    local id="$1"
+    local corpus="$RUN_FIXTURES/cases-selected-$id.json"
+    local script
+    script="$(
+        node -e '
+            const fs = require("node:fs");
+            const [path] = process.argv.slice(1);
+            const cases = JSON.parse(fs.readFileSync(path, "utf8"));
+            process.stdout.write(cases[0]?.primaryCheck?.script ?? "");
+        ' "$corpus"
+    )"
+    local sources=("harness.mts" "scenario-names.mts" "analysis/journal.ts")
+    local checks=()
+    if [ -n "$script" ] && [ -f "$HERE/primary-checks/$script" ]; then
+        checks+=("primary-checks/$script")
+        [ -f "$HERE/primary-checks/_replication-shared.mjs" ] &&
+            checks+=("primary-checks/_replication-shared.mjs")
+    fi
+    local hash identity runtime staging file
+    hash="$(
+        cd "$HERE" &&
+            sha256sum "${sources[@]}" ${checks[@]+"${checks[@]}"} |
+            sha256sum | awk '{print $1}'
+    )"
+    identity="${hash:0:16}"
+    runtime="$RUN_FIXTURES/harness-runtime-$identity-$id"
+    [ -d "$runtime" ] && {
+        HARNESS_RUNTIME="$runtime"
+        return 0
+    }
+    staging="$runtime.tmp-$$"
+    rm -rf "$staging"
+    mkdir -p "$staging/analysis"
+    for file in "${sources[@]}"; do
+        cp -a "$HERE/$file" "$staging/$file"
+    done
+    for file in ${checks[@]+"${checks[@]}"}; do
+        mkdir -p "$(dirname "$staging/$file")"
+        cp -a "$HERE/$file" "$staging/$file"
+    done
+    mv "$staging" "$runtime"
+    HARNESS_RUNTIME="$runtime"
+}
+
+# The run container sees only its own case: no other case's criteria, mutation
+# policy or generation metadata is reachable.
+case_corpus() {
+    local id="$1"
+    node -e '
+        const fs = require("node:fs");
+        const [corpusPath, caseId, outPath] = process.argv.slice(1);
+        const cases = JSON.parse(fs.readFileSync(corpusPath, "utf8"));
+        const selected = cases.filter((doc) => doc.id === caseId);
+        if (selected.length !== 1) {
+            console.error("case " + caseId + " is not in the redacted corpus");
+            process.exit(1);
+        }
+        fs.writeFileSync(outPath, JSON.stringify(selected, null, 2) + "\n");
+    ' "$CASES_RUN" "$id" "$RUN_FIXTURES/cases-selected-$id.json"
+}
+
 parse_run_args() {
     STAMP=""
     IDS=()
@@ -361,16 +427,18 @@ run_cases() {
             overall=1
             continue
         }
+        case_corpus "$id"
+        prepare_harness_runtime "$id"
         result_case="$RESULTS/$STAMP/$id"
         mkdir -p "$result_case"
         status=0
         podman run "${CONTAINER_ENV[@]}" \
             --tmpfs /fixtures \
             -v "$RUN_FIXTURES/$STAMP/$id:/fixtures/$id:ro" \
-            -v "$CASES_RUN:/fixtures/cases.json:ro" \
+            -v "$RUN_FIXTURES/cases-selected-$id.json:/fixtures/cases.json:ro" \
             -v "$PROMPTS/$id.md:/prompts/$id.md:ro" \
             -v "$result_case:/results/slot/$id" \
-            -v "$HERE:/harness:ro" \
+            -v "$HARNESS_RUNTIME:/harness:ro" \
             -v "$REPO/package.json:/repo/package.json:ro" \
             -v "$REPO/src:/repo/src:ro" \
             -v "$REPO/node_modules:/repo/node_modules:ro" \

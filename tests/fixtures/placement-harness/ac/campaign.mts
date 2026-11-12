@@ -7,6 +7,8 @@
  * They are pure so a test can pin them without spawning anything.
  */
 
+import { blindingFindings } from "../analysis/blinding.ts";
+
 /** The frozen schedule seed for the 2026-11-10 six-arm campaign. */
 export const CAMPAIGN_SEED = 20261110;
 
@@ -216,8 +218,9 @@ export function docChanges(
 }
 
 /**
- * Patterns that must never reach a judge: campaign and host paths, arm or
- * stamp labels, and the words that frame an experiment.
+ * Patterns that must never reach a judge: campaign and host paths, and the
+ * words that frame an experiment. Arm and stamp detection is shared with the
+ * trial boundary through `blindingFindings`.
  */
 export const LABEL_PATTERNS = [
     /docs-desc-fresh/,
@@ -232,14 +235,20 @@ export const LABEL_PATTERNS = [
 ];
 
 /**
- * Refuse a judge packet that carries any experiment label.
- * @param prompt The assembled packet text.
+ * Refuse a judge request that carries any experiment label.
+ * @param surfaces Every judge-bound text surface: packet, neutral paths, the
+ *   request context. No surface is exempt.
  * @returns The matched pattern sources; empty means arm-blind.
  */
-export function labelLeaks(prompt: string): string[] {
-    return LABEL_PATTERNS.filter((pattern) => pattern.test(prompt)).map(
+export function labelLeaks(...surfaces: string[]): string[] {
+    const text = surfaces.join("\n");
+    const generic = LABEL_PATTERNS.filter((pattern) => pattern.test(text)).map(
         (pattern) => String(pattern),
     );
+    const arm = blindingFindings("judge", text).map(
+        (finding) => finding.fragment,
+    );
+    return [...new Set([...generic, ...arm])];
 }
 
 /**
