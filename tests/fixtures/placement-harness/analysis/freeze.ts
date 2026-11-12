@@ -293,6 +293,18 @@ function armSetProblems(arms: readonly FrozenArm[]): string[] {
  * @returns Problems; empty means identity and rules are recorded.
  */
 function identityProblems(input: FreezeInput): string[] {
+    return [
+        ...requiredIdentities(input),
+        ...ruleProblems(input.ceilings, input.stoppingRules),
+    ];
+}
+
+/**
+ * The image, CLI and measurement identity checks.
+ * @param input The freeze input.
+ * @returns Problems; empty means those identities are recorded.
+ */
+function requiredIdentities(input: FreezeInput): string[] {
     const problems: string[] = [];
     if (input.imageId === null || input.imageId.trim() === "") {
         problems.push("no container image identity was observed");
@@ -306,14 +318,24 @@ function identityProblems(input: FreezeInput): string[] {
     ) {
         problems.push("no measurement declaration was frozen");
     }
-    if (
-        input.ceilings === null ||
-        input.ceilings.trial < 1 ||
-        input.ceilings.judge < 1
-    ) {
+    return problems;
+}
+
+/**
+ * The ceiling and stopping-rule checks.
+ * @param ceilings The declared ceilings, when present.
+ * @param stoppingRules The declared stopping rules.
+ * @returns Problems; empty means the rules are recorded.
+ */
+function ruleProblems(
+    ceilings: { trial: number; judge: number } | null,
+    stoppingRules: readonly string[],
+): string[] {
+    const problems: string[] = [];
+    if (ceilings === null || ceilings.trial < 1 || ceilings.judge < 1) {
         problems.push("the trial and judge ceilings must both be positive");
     }
-    if (input.stoppingRules.length === 0) {
+    if (stoppingRules.length === 0) {
         problems.push("the stopping rules must be recorded");
     }
     return problems;

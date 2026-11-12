@@ -190,6 +190,11 @@ function consumeDispatch(
  * credited. If a journal exists but no usable key does, nothing is credited
  * and the state says why.
  * @param input The captured lines, key and run observations.
+ * @param input.lines The captured journal lines, or undefined when absent.
+ * @param input.key The run's signing key, or null when unavailable.
+ * @param input.identity The run's observed session and message ids.
+ * @param input.callIds The execute call ids in the run's trail.
+ * @param input.dispatches The docs dispatches the host recorded.
  * @returns The explicit verification result.
  */
 export function verifyOperationsJournal(input: {
@@ -239,12 +244,9 @@ export function verifyOperationsJournal(input: {
  * @param line The raw line.
  * @param index The zero-based line index.
  * @param key The run's signing key.
- * @param input The run's identity and call ids.
- * @param input.lines The captured lines (unused per line).
- * @param input.key The captured key (unused per line).
+ * @param input The run's observed identity and call ids.
  * @param input.identity The run's observed session/message ids.
  * @param input.callIds The execute call ids in the trail.
- * @param input.dispatches The host dispatches (unused per line).
  * @param dispatches The mutable remaining dispatches.
  * @returns The credited record or the rejection.
  */
@@ -303,6 +305,8 @@ export function journalIdentityFromTrail(stdoutText: string): JournalIdentity {
  * Add one event's session and message ids, including a nested part's.
  * @param event The parsed event.
  * @param identity The accumulating identity sets.
+ * @param identity.sessions The observed session ids.
+ * @param identity.messages The observed message ids.
  */
 function addEventIdentity(
     event: Record<string, unknown>,
@@ -379,11 +383,23 @@ function addHostDispatches(
         ? entry.metadata.metadata
         : entry.metadata;
     const calls = Array.isArray(envelope.toolCalls) ? envelope.toolCalls : [];
+    appendDispatches(calls, result.dispatches);
+}
+
+/**
+ * Append the docs dispatches one execute result recorded.
+ * @param calls The result's recorded tool calls.
+ * @param dispatches The accumulating dispatches.
+ */
+function appendDispatches(
+    calls: readonly unknown[],
+    dispatches: JournalDispatch[],
+): void {
     for (const call of calls) {
         if (!isRecord(call)) continue;
         const tool = dispatchTool(call.tool);
         if (tool === null) continue;
-        result.dispatches.push({
+        dispatches.push({
             tool,
             status: typeof call.status === "string" ? call.status : "unknown",
             input: call.input,

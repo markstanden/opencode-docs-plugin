@@ -38,9 +38,13 @@ export interface SlotObservation {
 
 /** One token field, kept explicit so a known zero differs from unknown. */
 export type TokenFields = {
+    /** Input-token subtotal, or null when unrecorded on any observation. */
     input: number | null;
+    /** Output-token subtotal, or null when unrecorded on any observation. */
     output: number | null;
+    /** Reasoning-token subtotal, or null when unrecorded on any observation. */
     reasoning: number | null;
+    /** Cache-read-token subtotal, or null when unrecorded on any observation. */
     cacheRead: number | null;
 };
 
@@ -176,85 +180,124 @@ export function unresolvedReservations(
  * @returns The closure report.
  */
 export function deriveClosure(input: ClosureInput): ClosureReport {
-    const problems: string[] = [];
-    const trial = {
-        attempts: 0,
-        inferred: 0,
-        steps: null as number | null,
-        tokens: emptyTokens(),
-        tokenCoverage: emptyCoverage(),
-        durationMs: null as number | null,
-    };
-    const judge = {
-        attempts: 0,
-        inferred: 0,
-        steps: null as number | null,
-        tokens: emptyTokens(),
-        tokenCoverage: emptyCoverage(),
-        durationMs: null as number | null,
-        usableJudgements: 0,
-        unusableJudgements: 0,
-    };
-    const observed = input.observations.filter(
-        (slot) => slot.launched || slot.recorded || slot.judgeAttempts.length > 0,
-    );
-    const observedNumbers = new Set(observed.map((slot) => slot.slot));
-    const unrun = Array.from(
-        { length: input.scheduledSlots },
-        (_, index) => index + 1,
-    ).filter((number) => !observedNumbers.has(number));
+    const trial = emptyAccount();
+    const judge = { ...emptyAccount(), usableJudgements: 0, unusableJudgements: 0 };
+    const observed = input.observations.filter(isObserved);
     for (const slot of observed) {
-        if (slot.launched) {
-            trial.attempts += 1;
-            if (slot.trialSteps !== null && slot.trialSteps > 0) {
-                trial.inferred += 1;
-            }
-            trial.steps = addField(trial.steps, slot.trialSteps);
-            addTokens(trial.tokens, slot.trialTokens);
-            trial.durationMs = addField(trial.durationMs, slot.trialDurationMs);
-            if (slot.trialTokens !== null) {
-                for (const field of [
-                    "input",
-                    "output",
-                    "reasoning",
-                    "cacheRead",
-                ] as const) {
-                    if (slot.trialTokens[field] !== null) {
-                        trial.tokenCoverage[field] += 1;
-                    }
-                }
-            }
-        }
-        for (const attempt of slot.judgeAttempts) {
-            if (attempt.spawned) judge.attempts += 1;
-            if (attempt.reachedInference) judge.inferred += 1;
-            judge.steps = addField(judge.steps, attempt.steps);
-            addTokens(judge.tokens, attempt.tokens);
-            judge.durationMs = addField(judge.durationMs, attempt.durationMs);
-            if (attempt.tokens !== null) {
-                for (const field of [
-                    "input",
-                    "output",
-                    "reasoning",
-                    "cacheRead",
-                ] as const) {
-                    if (attempt.tokens[field] !== null) {
-                        judge.tokenCoverage[field] += 1;
-                    }
-                }
-            }
-            if (attempt.status === "judged") judge.usableJudgements += 1;
-            else judge.unusableJudgements += 1;
-        }
+        addTrial(trial, slot);
+        for (const attempt of slot.judgeAttempts) addJudge(judge, attempt);
     }
-    if (trial.attempts > input.ceilings.trial) {
+    const problems = [
+        ...budgetProblems(input, trial.attempts, judge.attempts),
+        ...observationProblems(observed),
+    ];
+    const recordedTrials = observed.filter((slot) => slot.recorded).length;
+    problems.push(...closureProblems(input.closed, observed.length, recordedTrials));
+    return {
+        state: input.closed ? "closed" : "open",
+        scheduledSlots: input.scheduledSlots,
+        observedSlots: observed.length,
+        unrunSlots: unrunOf(input.scheduledSlots, observed),
+        trialLaunches: trial.attempts,
+        recordedTrials,
+        trial,
+        judge,
+        stoppedAt: [...observed].at(-1)?.stamp ?? null,
+        problems,
+    };
+}
+
+/** One model's accumulator while summing. */
+interface AccountAccumulator extends ModelAccount {
+    /** Attempts that spawned. */
+    attempts: number;
+    /** Attempts that reached inference. */
+    inferred: number;
+}
+
+/** An empty model accumulator. */
+function emptyAccount(): AccountAccumulator {
+    return {
+        attempts: 0,
+        inferred: 0,
+        steps: null,
+        tokens: emptyTokens(),
+        tokenCoverage: emptyCoverage(),
+        durationMs: null,
+    };
+}
+
+/** Whether one slot has any evidence at all. */
+function isObserved(slot: SlotObservation): boolean {
+    return slot.launched || slot.recorded || slot.judgeAttempts.length > 0;
+}
+
+/** Add one slot's trial evidence. */
+function addTrial(account: AccountAccumulator, slot: SlotObservation): void {
+    if (!slot.launched) return;
+    account.attempts += 1;
+    if (slot.trialSteps !== null && slot.trialSteps > 0) account.inferred += 1;
+    account.steps = addField(account.steps, slot.trialSteps);
+    addTokens(account.tokens, slot.trialTokens);
+    account.durationMs = addField(account.durationMs, slot.trialDurationMs);
+    addCoverage(account, slot.trialTokens);
+}
+
+/** Add one judge attempt's evidence. */
+function addJudge(
+    account: AccountAccumulator & {
+        usableJudgements: number;
+        unusableJudgements: number;
+    },
+    attempt: JudgeAttempt,
+): void {
+    if (attempt.spawned) account.attempts += 1;
+    if (attempt.reachedInference) account.inferred += 1;
+    account.steps = addField(account.steps, attempt.steps);
+    addTokens(account.tokens, attempt.tokens);
+    account.durationMs = addField(account.durationMs, attempt.durationMs);
+    addCoverage(account, attempt.tokens);
+    if (attempt.status === "judged") account.usableJudgements += 1;
+    else account.unusableJudgements += 1;
+}
+
+/** Count which token fields an observation reported. */
+function addCoverage(
+    account: AccountAccumulator,
+    tokens: TokenFields | null,
+): void {
+    if (tokens === null) return;
+    for (const field of ["input", "output", "reasoning", "cacheRead"] as const) {
+        if (tokens[field] !== null) account.tokenCoverage[field] += 1;
+    }
+}
+
+/** The slot numbers with no evidence. */
+function unrunOf(
+    scheduledSlots: number,
+    observed: readonly SlotObservation[],
+): number[] {
+    const observedNumbers = new Set(observed.map((slot) => slot.slot));
+    return Array.from({ length: scheduledSlots }, (_, index) => index + 1).filter(
+        (number) => !observedNumbers.has(number),
+    );
+}
+
+/** Ceiling and reservation disagreements. */
+function budgetProblems(
+    input: ClosureInput,
+    trialLaunches: number,
+    judgeAttempts: number,
+): string[] {
+    const problems: string[] = [];
+    if (trialLaunches > input.ceilings.trial) {
         problems.push(
-            `trial launches ${String(trial.attempts)} exceed the ceiling ${String(input.ceilings.trial)}`,
+            `trial launches ${String(trialLaunches)} exceed the ceiling ${String(input.ceilings.trial)}`,
         );
     }
-    if (judge.attempts > input.ceilings.judge) {
+    if (judgeAttempts > input.ceilings.judge) {
         problems.push(
-            `judge attempts ${String(judge.attempts)} exceed the ceiling ${String(input.ceilings.judge)}`,
+            `judge attempts ${String(judgeAttempts)} exceed the ceiling ${String(input.ceilings.judge)}`,
         );
     }
     const unresolvedTrials = unresolvedReservations(input.trialClaims);
@@ -269,6 +312,12 @@ export function deriveClosure(input: ClosureInput): ClosureReport {
             `${String(unresolvedJudges.length)} durable judge reservation(s) never spawned and stay unresolved`,
         );
     }
+    return problems;
+}
+
+/** Per-slot disagreements the accounts expose. */
+function observationProblems(observed: readonly SlotObservation[]): string[] {
+    const problems: string[] = [];
     for (const slot of observed) {
         if (slot.launched && !slot.recorded) {
             problems.push(`${slot.stamp}: launched without a recorded result`);
@@ -281,25 +330,20 @@ export function deriveClosure(input: ClosureInput): ClosureReport {
             }
         }
     }
-    const recordedTrials = observed.filter((slot) => slot.recorded).length;
-    if (input.closed && recordedTrials < observed.length) {
-        problems.push(
-            `campaign is closed with ${String(observed.length - recordedTrials)} observed slot(s) lacking a recorded result`,
-        );
-    }
-    const lastObserved = [...observed].at(-1) ?? null;
-    return {
-        state: input.closed ? "closed" : "open",
-        scheduledSlots: input.scheduledSlots,
-        observedSlots: observed.length,
-        unrunSlots: unrun,
-        trialLaunches: trial.attempts,
-        recordedTrials,
-        trial,
-        judge,
-        stoppedAt: lastObserved?.stamp ?? null,
-        problems,
-    };
+    return problems;
+}
+
+/** A closed campaign with an observed but unrecorded slot. */
+function closureProblems(
+    closed: boolean,
+    observed: number,
+    recorded: number,
+): string[] {
+    return closed && recorded < observed
+        ? [
+              `campaign is closed with ${String(observed - recorded)} observed slot(s) lacking a recorded result`,
+          ]
+        : [];
 }
 
 /** The closure decision. */
