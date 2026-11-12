@@ -31,7 +31,6 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseCampaignLedger, eventsByStamp, type StampEvents } from "../../analysis/ledger.ts";
 import {
-    claimUsage,
     readClaims,
     restartDisposition,
     type BudgetClaim,
@@ -252,12 +251,15 @@ export interface SlotObservation {
 
 /** One claim kind's spend against its ceiling. */
 export interface SpendKind {
-    /** Claim files counted from creation. */
-    used: number;
+    /**
+     * Claim files counted from creation, or null when the claim evidence
+     * cannot be read: unknown spend must never display as available.
+     */
+    used: number | null;
     /** The validated freeze ceiling. */
     ceiling: number;
-    /** Ceiling minus used, floored at zero. */
-    remaining: number;
+    /** Ceiling minus used, floored at zero; null when used is unknown. */
+    remaining: number | null;
     /** The registered counting basis. */
     basis: string;
 }
@@ -306,6 +308,8 @@ export interface Position {
     completedPairs?: string[];
     /** Judge attempts observed to end judged. */
     usableAssessments?: number;
+    /** Trial launch events recorded. */
+    trialLaunches?: number;
     /** Per-slot states, in schedule order. */
     slots?: SlotObservation[];
     /** Spend accounting, when ceilings are registered. */
@@ -338,8 +342,8 @@ export interface ReportObservation {
     manifestMatches?: boolean;
     /** Whether the ledger advanced after rendering. */
     ledgerAdvancedSince?: boolean;
-    /** Current, stale, or unknown. */
-    freshness?: "current" | "stale" | "unknown";
+    /** Current, stale, indeterminate, or unknown. */
+    freshness?: "current" | "stale" | "indeterminate" | "unknown";
     /** Whether the report names another campaign. */
     wrongCampaign?: boolean;
     /** The analyser's decision.overall. */
@@ -1300,6 +1304,7 @@ export function observePosition(
     position.stopReason = stopReasonOf(lines);
     position.completedPairs = completedPairsOf(lines);
     position.usableAssessments = usableAssessmentsOf(lines);
+    position.trialLaunches = trialLaunchesOf(lines);
     const schedule = files.schedule;
     if (schedule !== null) {
         position.slots = schedule.slots.map((slot) =>
@@ -1386,6 +1391,15 @@ function usableAssessmentsOf(lines: readonly RawLedgerLine[]): number {
         }
     }
     return judged;
+}
+
+/** The trial launch events recorded. */
+function trialLaunchesOf(lines: readonly RawLedgerLine[]): number {
+    let launches = 0;
+    for (const line of lines) {
+        if (line.event === "launch") launches += 1;
+    }
+    return launches;
 }
 
 /** One slot's observed state, from the harness event vocabulary. */
@@ -1479,7 +1493,7 @@ function blockedNoteOf(
     return { note: block.record.reason };
 }
 
-/** A launched slot's state: awaiting exit, unusable, awaiting judge, judged. */
+/** A launched slot's state: awaiting exit, unusable, refused, awaiting judge. */
 function launchedStateOf(
     lines: readonly RawLedgerLine[],
     stamp: string,
@@ -1492,6 +1506,24 @@ function launchedStateOf(
     }
     if (exit.record.usable !== true) {
         return { state: "failed-unusable", note: "trial exited unusable" };
+    }
+    return judgedStateOf(lines, stamp);
+}
+
+/** A usable trial's judge state, including a pre-dispatch judge refusal. */
+function judgedStateOf(
+    lines: readonly RawLedgerLine[],
+    stamp: string,
+): { state: string; note?: string } {
+    const refused = lines.find(
+        (line) => line.event === "judge-refused" && line.record.stamp === stamp,
+    );
+    if (refused !== undefined) {
+        const reason =
+            typeof refused.record.reason === "string"
+                ? refused.record.reason
+                : "judge exited before dispatching; claim released";
+        return { state: "judge-refused", note: reason };
     }
     const judged = lines.some(
         (line) => line.event === "judge-exit" && line.record.stamp === stamp,
@@ -1517,19 +1549,24 @@ function spendObservation(
     return spend;
 }
 
-/** One kind's spend against its ceiling. */
+/** One kind's spend against its ceiling. A claim directory that cannot be
+ * read means unknown spend: it must never display as available. */
 function kindSpend(
     evidence: string,
     kind: "trial" | "judge",
     ceiling: number,
 ): SpendKind {
-    const used = safeUsage(evidence, kind);
-    return {
-        used,
-        ceiling,
-        remaining: Math.max(0, ceiling - used),
-        basis: "claim files under evidence/<kind>, counted from creation",
-    };
+    const basis = "claim files under evidence/<kind>, counted from creation";
+    const dir = join(evidence, kind);
+    if (!existsSync(dir)) {
+        return { used: 0, ceiling, remaining: ceiling, basis };
+    }
+    try {
+        const used = readClaims(evidence, kind).length;
+        return { used, ceiling, remaining: Math.max(0, ceiling - used), basis };
+    } catch {
+        return { used: null, ceiling, remaining: null, basis };
+    }
 }
 
 /** readClaims without letting a read failure abort the observation. */
@@ -1538,15 +1575,6 @@ function safeReadClaims(evidence: string, kind: "trial" | "judge"): BudgetClaim[
         return readClaims(evidence, kind);
     } catch {
         return [];
-    }
-}
-
-/** claimUsage without letting a read failure abort the observation. */
-function safeUsage(evidence: string, kind: "trial" | "judge"): number {
-    try {
-        return claimUsage(evidence, kind).claimed;
-    } catch {
-        return 0;
     }
 }
 
@@ -1745,7 +1773,10 @@ function applyCampaignId(
     if (!identityMatches(root, id)) report.wrongCampaign = true;
 }
 
-/** Freshness from the pinned manifest hash and the ledger clock. */
+/** Freshness from the pinned manifest hash AND the ledger clock: a manifest
+ * spans the whole campaign, so a hash match alone never proves how far a
+ * report covers. Without a receipt time and a ledger to compare against, the
+ * report is indeterminate, not current. */
 function applyFreshness(
     report: ReportObservation,
     analysis: Record<string, unknown>,
@@ -1756,13 +1787,17 @@ function applyFreshness(
     if (manifestSha === undefined || manifestHash === "missing") return;
     report.manifestSha256 = manifestSha;
     report.manifestMatches = manifestSha === manifestHash;
+    if (!report.manifestMatches) {
+        report.freshness = "stale";
+        return;
+    }
     if (report.renderedAt === undefined || lastLedgerAt === null) {
-        report.freshness = report.manifestMatches ? "current" : "stale";
+        report.freshness = "indeterminate";
         return;
     }
     const advanced = lastLedgerAt > report.renderedAt;
     report.ledgerAdvancedSince = advanced;
-    report.freshness = report.manifestMatches && !advanced ? "current" : "stale";
+    report.freshness = advanced ? "stale" : "current";
 }
 
 /** The paired utility delta, when published. */
@@ -1948,8 +1983,8 @@ function checkoutNextAction(
             why: "materialise the campaign root from this commit (run card step 0)",
             command:
                 "REV=$(git rev-parse HEAD) && export CAMPAIGN_ROOT=$(mktemp -d) && " +
-                `mkdir -p ${shellQuote("$CAMPAIGN_ROOT/evidence")} && ` +
-                `node ${shellQuote("tests/fixtures/placement-harness/prod014/campaign/materialise.mts")} ${shellQuote("$CAMPAIGN_ROOT")}`,
+                'mkdir -p "$CAMPAIGN_ROOT/evidence" && ' +
+                `node ${shellQuote("tests/fixtures/placement-harness/prod014/campaign/materialise.mts")} "$CAMPAIGN_ROOT"`,
             envNames: ["CAMPAIGN_ROOT"],
         },
         gaps,
@@ -2005,6 +2040,7 @@ function campaignNextAction(
         closedGate(root, position, checkpoint),
         reservationGate(root, position),
         malformedLedgerGate(root, position),
+        spendUnknownGate(root, position),
         freezeGate(freezeProblems),
         shimGate(root, readiness),
     ];
@@ -2102,6 +2138,29 @@ function malformedLedgerGate(root: string, position: Position): ActionResult | n
     };
 }
 
+/** The unknown-spend gate: unreadable claim evidence never reads as free. */
+function spendUnknownGate(root: string, position: Position): ActionResult | null {
+    const spend = position.spend;
+    if (spend === undefined) return null;
+    const unknown =
+        spend.trial.used === null
+            ? "trial"
+            : spend.judge.used === null
+              ? "judge"
+              : null;
+    if (unknown === null) return null;
+    return {
+        phase: "blocked-unreadable-spend",
+        headline: `${unknown} claim evidence is unreadable, so spend is unknown`,
+        nextAction: {
+            kind: "inspection",
+            why: `the remaining allowance cannot be established while ${unknown} claim files cannot be read; treat the allowance as unavailable and inspect evidence/${unknown} before any decision`,
+            path: join(root, "evidence", unknown),
+        },
+        gaps: [],
+    };
+}
+
 /** The frozen-premise gate: changed wording needs a fresh root. */
 function freezeGate(freezeProblems: readonly string[]): ActionResult | null {
     if (freezeProblems.length === 0) return null;
@@ -2186,7 +2245,7 @@ function freezeNextAction(root: string): ActionResult {
     };
 }
 
-/** The frozen-campaign progression: dry run, checkpoint, closure or resume. */
+/** The frozen-campaign progression: dry run, stop, checkpoint, closure, resume. */
 function frozenAction(
     root: string,
     position: Position,
@@ -2195,13 +2254,42 @@ function frozenAction(
     const completePairs = new Set(position.completedPairs ?? []);
     const allPairs = new Set((position.slots ?? []).map((slot) => slot.pairId));
     const gaps: Gap[] = [];
-    if (completePairs.size === 0) return dryRunNextAction(root, gaps);
+    if (neverDispatched(position)) return dryRunNextAction(root, gaps);
     if (allPairs.size > 0 && completePairs.size >= allPairs.size) {
         return closureNextAction(root, allPairs.size, gaps);
     }
+    // A recorded stop outranks generic checkpoint or resume advice.
+    const stopAction = stoppedSlotGate(root, position, gaps);
+    if (stopAction !== null) return stopAction;
     const checkpointAction = checkpointGate(root, completePairs, checkpoint, gaps);
     if (checkpointAction !== null) return checkpointAction;
     return resumeAction(root, position, allPairs.size - completePairs.size, gaps);
+}
+
+/** Whether the freeze is still untouched: no claim, no launch, no pair. */
+function neverDispatched(position: Position): boolean {
+    const spend = position.spend;
+    const claimed = (spend?.trial.used ?? 0) + (spend?.judge.used ?? 0);
+    return (
+        (position.completedPairs ?? []).length === 0 &&
+        claimed === 0 &&
+        (position.trialLaunches ?? 0) === 0
+    );
+}
+
+/** The recorded-stop gate: any unsettled slot stops the observation. */
+function stoppedSlotGate(
+    root: string,
+    position: Position,
+    gaps: Gap[],
+): ActionResult | null {
+    const stopped = (position.slots ?? []).find(
+        (slot) =>
+            slot.state !== "unrun" &&
+            slot.state !== "complete" &&
+            slot.state !== "adjudicated",
+    );
+    return stopped === undefined ? null : stoppedSlotAction(root, stopped, gaps);
 }
 
 /** The offline dry-run action for a verified, unstarted freeze. */
@@ -2312,7 +2400,7 @@ function staleCheckpointAction(
         phase: "checkpoint-report-missing",
         headline: staleOrWrong
             ? "P04 report is stale or wrong-campaign"
-            : "P01–P04 complete; no current checkpoint report",
+            : "P01–P04 complete; no provably current checkpoint report",
         nextAction: {
             kind: "offline-check",
             why: staleOrWrong
@@ -2325,7 +2413,9 @@ function staleCheckpointAction(
     };
 }
 
-/** The resume action for a mid-range campaign with an open ledger. */
+/** The resume action for a mid-range campaign with an open ledger. Only
+ * reached when every unfinished slot is cleanly unrun: the stop gate owns
+ * everything else. */
 function resumeAction(
     root: string,
     position: Position,
@@ -2357,16 +2447,41 @@ function resumeAction(
     });
     return {
         phase: "live-in-progress",
-        headline: `next unfinished slot ${nextSlot.slot} (${nextSlot.pairId} arm ${nextSlot.arm}, ${nextSlot.state})`,
+        headline: `next unfinished slot ${nextSlot.slot} (${nextSlot.pairId} arm ${nextSlot.arm})`,
         nextAction: {
             kind: "paid-operation",
-            why: "resuming the range is a paid operation needing human authorisation; the runner refuses unsafe states itself",
+            why: `resuming ${nextSlot.pairId} within the current block is a paid operation needing human authorisation; the runner refuses unsafe states itself`,
             command: runCommand(
                 root,
                 sourceRepoFor(),
-                `--pair-from ${pairNumberOf(nextSlot.pairId)} --pair-to 8`,
+                `--pair-from ${pairNumberOf(nextSlot.pairId)} --pair-to ${resumeEndPair(nextSlot.pairId)}`,
             ),
             envNames: ["CAMPAIGN_ROOT", "CAMPAIGN_SOURCE_REPO"],
+        },
+        gaps,
+    };
+}
+
+/** The last pair of the block containing pairId: the P04 checkpoint bounds
+ * every first-block resume, so no suggested range ever crosses it. */
+function resumeEndPair(pairId: string): number {
+    return pairNumberOf(pairId) <= 4 ? 4 : 8;
+}
+
+/** A mid-flight or refused slot: inspect first, never dispatch past it. */
+function stoppedSlotAction(
+    root: string,
+    slot: SlotObservation,
+    gaps: Gap[],
+): ActionResult {
+    const note = slot.note === undefined ? "" : ` — ${slot.note}`;
+    return {
+        phase: "stopped-slot",
+        headline: `slot ${slot.slot} (${slot.pairId} arm ${slot.arm}) stopped in ${slot.state}${note}`,
+        nextAction: {
+            kind: "inspection",
+            why: "the slot's outcome is not durably settled; the runner would refuse this range — inspect the launch record, claim and logs before any decision",
+            path: join(root, "evidence/ATTEMPTS.jsonl"),
         },
         gaps,
     };
@@ -3000,13 +3115,21 @@ export function renderText(result: StatusResult, detail: boolean): string {
     return lines.join("\n");
 }
 
-/** The spend lines shown near the top. */
+/** The spend lines shown near the top. Unknown spend renders as unknown. */
 function spendLines(position: Position | undefined): string[] {
     const spend = position?.spend;
     if (spend === undefined) return [];
     return [
-        `spend: trial ${spend.trial.used}/${spend.trial.ceiling} (${spend.trial.remaining} remaining), judge ${spend.judge.used}/${spend.judge.ceiling} (${spend.judge.remaining} remaining)`,
+        `spend: trial ${spendValue(spend.trial)} of ${spend.trial.ceiling}, judge ${spendValue(spend.judge)} of ${spend.judge.ceiling}`,
     ];
+}
+
+/** One kind's used/remaining display, with unknown kept explicit. */
+function spendValue(spend: SpendKind): string {
+    if (spend.used === null || spend.remaining === null) {
+        return "unknown (claim evidence unreadable)";
+    }
+    return `${spend.used} (${spend.remaining} remaining)`;
 }
 
 /** The identity section. */

@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import {
     chmodSync,
     copyFileSync,
+    cpSync,
     existsSync,
     mkdirSync,
     mkdtempSync,
@@ -1355,6 +1356,298 @@ describe("status projections and safety", () => {
     });
 });
 
+describe("status findings regressions", () => {
+    /** A fresh frozen campaign root with its temp parent for cleanup. */
+    function frozenLive(label: string): string {
+        const root = materialisedRoot(label);
+        completePreparation(root);
+        writeFrozen(root);
+        return root;
+    }
+
+    /** Complete P01–P04 in the ledger and claims. */
+    function completeCheckpoint(root: string): void {
+        for (const pair of ["P01", "P02", "P03", "P04"]) completePair(root, pair);
+    }
+
+    it("the printed checkout setup command runs verbatim in a disposable checkout", () => {
+        // Arrange: a clean scratch checkout carrying the real campaign tooling.
+        const scratch = mkdtempSync(join(tmpdir(), "pd-status-copyrun-"));
+        const tmp = join(scratch, "allocated-roots");
+        mkdirSync(tmp, { recursive: true });
+        const harness = join(scratch, "tests/fixtures/placement-harness");
+        mkdirSync(dirname(harness), { recursive: true });
+        cpSync(join(repo, "tests/fixtures/placement-harness"), harness, {
+            recursive: true,
+        });
+        for (const args of [
+            ["init", "-q"],
+            ["config", "user.email", "t@example.com"],
+            ["config", "user.name", "t"],
+            ["add", "-A"],
+            ["commit", "-qm", "tooling"],
+        ]) {
+            execFileSync("git", ["-C", scratch, ...args], { encoding: "utf8" });
+        }
+        const { bin } = fakePodmanBin();
+
+        // Act: observe in checkout mode, then run the emitted command as-is.
+        const run = spawnSync(
+            process.execPath,
+            [statusCli, "--base", "HEAD", "--json"],
+            {
+                encoding: "utf8",
+                cwd: scratch,
+                timeout: 120_000,
+                env: {
+                    ...process.env,
+                    PATH: `${bin}:${process.env.PATH ?? ""}`,
+                    TMPDIR: tmp,
+                },
+            },
+        );
+        const payload = JSON.parse(run.stdout ?? "") as {
+            result: {
+                phase: string;
+                nextAction: { kind: string; command: string };
+            };
+        };
+        const command = payload.result.nextAction.command;
+        assert.equal(payload.result.phase, "unmaterialised-checkout");
+        assert.match(command, /"\$CAMPAIGN_ROOT"/);
+        assert.doesNotMatch(command, /'\$CAMPAIGN_ROOT/);
+        const executed = spawnSync("sh", ["-c", command], {
+            encoding: "utf8",
+            cwd: scratch,
+            timeout: 120_000,
+            env: {
+                ...process.env,
+                PATH: `${bin}:${process.env.PATH ?? ""}`,
+                TMPDIR: tmp,
+            },
+        });
+        assert.equal(executed.status, 0, executed.stderr);
+
+        // Assert: the materialiser received the allocated root, and nothing
+        // created a directory literally named $CAMPAIGN_ROOT.
+        assert.equal(existsSync(join(scratch, "$CAMPAIGN_ROOT")), false);
+        const allocated = readdirSync(tmp);
+        assert.equal(allocated.length, 1, "exactly one allocated root");
+        const root = join(tmp, allocated[0] ?? "");
+        assert.equal(existsSync(join(root, "prepare/manifest.json")), true);
+        assert.equal(existsSync(join(root, "runner/ledger.ts")), true);
+        assert.equal(existsSync(join(root, "evidence")), true);
+    });
+
+    it("a launched slot with no recorded exit is inspected, not dispatched", () => {
+        // Arrange: P01 arm A launched, the trial claim closed, but no
+        // trial-exit was ever recorded — the slot is mid-flight.
+        const root = frozenLive("pd-stop-launch");
+        ledgerEvent(root, {
+            event: "launch",
+            slot: 1,
+            pairId: "P01",
+            stamp: "pd-A-r0-R01",
+            arm: "A",
+        });
+        writeClaim(root, "trial", 1, "closed", "pd-A-r0-R01");
+
+        // Act
+        const result = statusJson(["--root", root, "--detail"]);
+
+        // Assert
+        assert.equal(result.phase, "stopped-slot");
+        const next = result.nextAction as { kind: string; command?: string };
+        assert.equal(next.kind, "inspection");
+        assert.equal(next.command, undefined);
+        const slots = (result.position as { slots: { stamp: string; state: string }[] })
+            .slots;
+        assert.equal(slots.find((slot) => slot.stamp === "pd-A-r0-R01")?.state, "dispatched");
+    });
+
+    it("a clean pause after P01 resumes only to the P04 checkpoint", () => {
+        // Arrange: P01 fully complete, ledger open, P02–P04 unrun.
+        const root = frozenLive("pd-pause-p01");
+        completePair(root, "P01");
+
+        // Act
+        const result = statusJson(["--root", root]);
+
+        // Assert: the paid resume is bounded by the mandatory checkpoint.
+        assert.equal(result.phase, "live-in-progress");
+        const next = result.nextAction as { kind: string; command: string };
+        assert.equal(next.kind, "paid-operation");
+        assert.match(next.command, /--pair-from 2 --pair-to 4/);
+        assert.doesNotMatch(next.command, /--pair-to 8/);
+    });
+
+    it("a released judge claim after pre-dispatch refusal is inspected", () => {
+        // Arrange: P01–P04 complete; P05 arm B judged usable by the trial but
+        // the judge wrapper refused before dispatching, releasing its claim.
+        const root = frozenLive("pd-stop-p05b");
+        completeCheckpoint(root);
+        ledgerEvent(root, {
+            event: "launch",
+            slot: 10,
+            pairId: "P05",
+            stamp: "pd-B-r0-S05",
+            arm: "B",
+        });
+        ledgerEvent(root, {
+            event: "trial-exit",
+            slot: 10,
+            pairId: "P05",
+            stamp: "pd-B-r0-S05",
+            arm: "B",
+            usable: true,
+        });
+        ledgerEvent(root, {
+            event: "judge-launch",
+            slot: 10,
+            pairId: "P05",
+            stamp: "pd-B-r0-S05",
+            arm: "B",
+        });
+        ledgerEvent(root, {
+            event: "judge-refused",
+            slot: 10,
+            pairId: "P05",
+            stamp: "pd-B-r0-S05",
+            arm: "B",
+            reason: "judge wrapper exited before writing dispatch.json",
+        });
+        writeClaim(root, "trial", 9, "closed", "pd-B-r0-S05");
+
+        // Act
+        const result = statusJson(["--root", root, "--detail"]);
+
+        // Assert: the stopped slot wins over any clean-pair resume.
+        assert.equal(result.phase, "stopped-slot");
+        const next = result.nextAction as { kind: string; command?: string };
+        assert.equal(next.kind, "inspection");
+        assert.equal(next.command, undefined);
+        const slots = (result.position as { slots: { stamp: string; state: string; note?: string }[] })
+            .slots;
+        const stopped = slots.find((slot) => slot.stamp === "pd-B-r0-S05");
+        assert.equal(stopped?.state, "judge-refused");
+        assert.match(stopped?.note ?? "", /before writing dispatch/);
+    });
+
+    it("unreadable claim evidence reports unknown spend, never a free allowance", () => {
+        // Arrange: a directory sits at an expected claim-file path.
+        const root = frozenLive("pd-spend-unknown");
+        mkdirSync(join(root, "evidence/trial/trial-0001.claim"), {
+            recursive: true,
+        });
+
+        // Act
+        const result = statusJson(["--root", root, "--detail"]);
+
+        // Assert
+        assert.equal(result.phase, "blocked-unreadable-spend");
+        const spend = (result.position as {
+            spend: {
+                trial: { used: number | null; remaining: number | null };
+                judge: { used: number | null };
+            };
+        }).spend;
+        assert.equal(spend.trial.used, null);
+        assert.equal(spend.trial.remaining, null);
+        assert.equal(spend.judge.used, 0);
+        const next = result.nextAction as { kind: string; command?: string };
+        assert.equal(next.kind, "inspection");
+        assert.equal(next.command, undefined);
+    });
+
+    it("a genuinely empty claims directory is known zero spend", () => {
+        // Arrange: the claim directories exist but hold no claim files.
+        const root = frozenLive("pd-spend-zero");
+        mkdirSync(join(root, "evidence/trial"), { recursive: true });
+        mkdirSync(join(root, "evidence/judge"), { recursive: true });
+
+        // Act
+        const result = statusJson(["--root", root]);
+
+        // Assert
+        assert.equal(result.phase, "frozen-ready");
+        const spend = (result.position as {
+            spend: { trial: { used: number; remaining: number } };
+        }).spend;
+        assert.equal(spend.trial.used, 0);
+        assert.equal(spend.trial.remaining, 16);
+    });
+
+    it("a report is indeterminate without a receipt, even on a matching manifest", () => {
+        // Arrange: P01–P04 done and the ledger has advanced into P05 with a
+        // cleanly adjudicated slot; the report matches the manifest but has
+        // no receipt, so its coverage cannot be proven.
+        const root = frozenLive("pd-fresh-indeterminate");
+        completeCheckpoint(root);
+        ledgerEvent(root, {
+            event: "launch",
+            slot: 9,
+            pairId: "P05",
+            stamp: "pd-A-r0-S05",
+            arm: "A",
+        });
+        ledgerEvent(root, {
+            event: "trial-exit",
+            slot: 9,
+            pairId: "P05",
+            stamp: "pd-A-r0-S05",
+            arm: "A",
+            usable: true,
+        });
+        ledgerEvent(root, {
+            event: "judge-launch",
+            slot: 9,
+            pairId: "P05",
+            stamp: "pd-A-r0-S05",
+            arm: "A",
+        });
+        ledgerEvent(root, {
+            event: "judge-exit",
+            slot: 9,
+            pairId: "P05",
+            stamp: "pd-A-r0-S05",
+            arm: "A",
+            outcome: "judged",
+        });
+        ledgerEvent(root, {
+            event: "slot-complete",
+            slot: 9,
+            pairId: "P05",
+            stamp: "pd-A-r0-S05",
+            arm: "A",
+            judged: true,
+        });
+        const reportRoot = mkdtempSync(join(tmpdir(), "pd-status-reportroot-"));
+        const dir = join(reportRoot, "p04");
+        mkdirSync(dir, { recursive: true });
+        write(
+            join(dir, "analysis.json"),
+            `${JSON.stringify({
+                campaign: { id: "pd-status-test" },
+                manifestSha256: hashFile(join(root, "prepare/manifest.json")),
+                decision: { overall: "inconclusive" },
+            })}\n`,
+        );
+
+        // Act
+        const result = statusJson(["--root", root, "--report-root", reportRoot]);
+
+        // Assert: a manifest alone cannot prove how far the report covers.
+        const report = (result.checkpoint as {
+            reports: { freshness: string; manifestMatches: boolean }[];
+        }).reports[0];
+        assert.equal(report?.manifestMatches, true);
+        assert.equal(report?.freshness, "indeterminate");
+        assert.equal(result.phase, "checkpoint-report-missing");
+        const next = result.nextAction as { kind: string };
+        assert.equal(next.kind, "offline-check");
+    });
+});
+
 describe("status agrees with the registered analyser", () => {
     it("extracts exactly what analyse.mts published over the mini corpus", () => {
         // Arrange: run the real analyser over its own fixture corpus.
@@ -1391,7 +1684,8 @@ describe("status agrees with the registered analyser", () => {
             decision: { overall: string };
         };
 
-        // A campaign root whose manifest is the analyser's own input.
+        // A campaign root whose manifest is the analyser's own input, with a
+        // ledger that predates the render so freshness is provable.
         const root = mkdtempSync(join(tmpdir(), "pd-status-mini-"));
         mkdirSync(join(root, "prepare"), { recursive: true });
         copyFileSync(miniManifest, join(root, "prepare/manifest.json"));
@@ -1406,6 +1700,10 @@ describe("status agrees with the registered analyser", () => {
                     }
                 ).schedule.slots,
             })}\n`,
+        );
+        write(
+            join(root, "evidence/ATTEMPTS.jsonl"),
+            `${JSON.stringify({ at: "2025-01-01T00:00:00.000Z", event: "campaign-start" })}\n`,
         );
 
         // Act
