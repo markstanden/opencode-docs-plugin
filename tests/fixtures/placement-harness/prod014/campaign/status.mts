@@ -799,22 +799,26 @@ function frozenArmOf(entry: Record<string, unknown>): FreezeRecord["arms"][numbe
     const strings = frozenArmStrings(entry);
     const numbers = frozenArmNumbers(entry);
     if (id === undefined || strings === null || numbers === null) return null;
+    const [commit, tree, descriptionHash, deliveredHash, annotationHash] = strings;
+    const [descriptionChars, deliveredChars, annotationChars] = numbers;
     return {
         id,
-        commit: strings[0],
-        tree: strings[1],
+        commit,
+        tree,
         clean: entry.clean === true,
-        descriptionChars: numbers[0],
-        descriptionHash: strings[2],
-        deliveredChars: numbers[1],
-        deliveredHash: strings[3],
-        annotationChars: numbers[2],
-        annotationHash: strings[4],
+        descriptionChars,
+        descriptionHash,
+        deliveredChars,
+        deliveredHash,
+        annotationChars,
+        annotationHash,
     };
 }
 
 /** The five string fields of a frozen arm, or null when any is malformed. */
-function frozenArmStrings(entry: Record<string, unknown>): string[] | null {
+function frozenArmStrings(
+    entry: Record<string, unknown>,
+): [string, string, string, string, string] | null {
     const keys = ["commit", "tree", "descriptionHash", "deliveredHash", "annotationHash"];
     const values: string[] = [];
     for (const key of keys) {
@@ -822,11 +826,13 @@ function frozenArmStrings(entry: Record<string, unknown>): string[] | null {
         if (value === undefined) return null;
         values.push(value);
     }
-    return values;
+    return [values[0] ?? "", values[1] ?? "", values[2] ?? "", values[3] ?? "", values[4] ?? ""];
 }
 
 /** The three numeric fields of a frozen arm, or null when any is malformed. */
-function frozenArmNumbers(entry: Record<string, unknown>): number[] | null {
+function frozenArmNumbers(
+    entry: Record<string, unknown>,
+): [number, number, number] | null {
     const keys = ["descriptionChars", "deliveredChars", "annotationChars"];
     const values: number[] = [];
     for (const key of keys) {
@@ -834,7 +840,7 @@ function frozenArmNumbers(entry: Record<string, unknown>): number[] | null {
         if (value === undefined) return null;
         values.push(value);
     }
-    return values;
+    return [values[0] ?? 0, values[1] ?? 0, values[2] ?? 0];
 }
 
 /** The frozen single-file inputs, or null when the array is malformed. */
