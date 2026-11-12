@@ -16,12 +16,8 @@ const packetInput = () => ({
     taskPrompt: "Fix the staging deploy order.\n",
     standingPermission: "You may record durable findings.\n",
     scenarioTruth: "The smoke check runs after the switch.",
-    beforeDocs: [
-        { path: "ops/deploy.md", contents: "smoke after switch\n" },
-    ],
-    afterDocs: [
-        { path: "ops/deploy.md", contents: "smoke after switch\n" },
-    ],
+    beforeDocs: [{ path: "ops/deploy.md", contents: "smoke after switch\n" }],
+    afterDocs: [{ path: "ops/deploy.md", contents: "smoke after switch\n" }],
     changedPaths: ["lakes/docs/ops/deploy.md"],
     primary: { status: "pass", exit: 0, stdout: "", stderr: "" },
     docsOperations: ["completed native read ops/deploy.md"],
@@ -56,18 +52,14 @@ describe("trial-child blinding", () => {
         );
         assert.ok(
             findings.every(
-                (finding) =>
-                    finding.fragment === "arm-specific provenance",
+                (finding) => finding.fragment === "arm-specific provenance",
             ),
         );
     });
 
     it("detects a revealing stamp in a mount or result path", () => {
         // Act
-        const findings = blindingFindings(
-            "mount",
-            "/results/pd-A-r0-S02/R01",
-        );
+        const findings = blindingFindings("mount", "/results/pd-A-r0-S02/R01");
 
         // Assert
         assert.equal(findings.length, 1);
@@ -80,7 +72,7 @@ describe("trial-child blinding", () => {
             join(here, "fixtures", "placement-harness", "container-run.sh"),
             "utf8",
         );
-        const envBlock = /CONTAINER_ENV=\(([\s\S]*?)\n    \)/.exec(script)?.[1];
+        const envBlock = /CONTAINER_ENV=\(([\s\S]*?)\n {4}\)/.exec(script)?.[1];
 
         // Assert
         assert.ok(envBlock !== undefined);

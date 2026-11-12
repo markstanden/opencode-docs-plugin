@@ -18,8 +18,14 @@ export interface BlindingFinding {
 /** Patterns that reveal an arm rather than the treatment. */
 const ARM_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
     { label: "stamp", pattern: /pd-[AB]-r\d/ },
-    { label: "arm-path", pattern: /(?:^|[^A-Za-z0-9])arms?[/_-][ab](?:[^A-Za-z0-9]|$)/i },
-    { label: "arm-flag", pattern: /(?:^|[^A-Za-z0-9])arm[-_ ]?[ab](?:[^A-Za-z0-9]|$)/i },
+    {
+        label: "arm-path",
+        pattern: /(?:^|[^A-Za-z0-9])arms?[/_-][ab](?:[^A-Za-z0-9]|$)/i,
+    },
+    {
+        label: "arm-flag",
+        pattern: /(?:^|[^A-Za-z0-9])arm[-_ ]?[ab](?:[^A-Za-z0-9]|$)/i,
+    },
 ];
 
 /**
