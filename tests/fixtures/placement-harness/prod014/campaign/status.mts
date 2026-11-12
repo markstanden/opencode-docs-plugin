@@ -786,34 +786,38 @@ function freezeArmsOf(record: Record<string, unknown>): FreezeRecord["arms"] | n
     const arms: FreezeRecord["arms"] = [];
     for (const entry of record.arms) {
         if (!isRecord(entry)) return null;
-        const id = str(entry, "id");
-        if (
-            id === undefined ||
-            str(entry, "commit") === undefined ||
-            str(entry, "tree") === undefined ||
-            str(entry, "descriptionHash") === undefined ||
-            str(entry, "deliveredHash") === undefined ||
-            str(entry, "annotationHash") === undefined ||
-            num(entry, "descriptionChars") === undefined ||
-            num(entry, "deliveredChars") === undefined ||
-            num(entry, "annotationChars") === undefined
-        ) {
-            return null;
-        }
-        arms.push({
-            id,
-            commit: str(entry, "commit") ?? "",
-            tree: str(entry, "tree") ?? "",
-            clean: entry.clean === true,
-            descriptionChars: num(entry, "descriptionChars") ?? 0,
-            descriptionHash: str(entry, "descriptionHash") ?? "",
-            deliveredChars: num(entry, "deliveredChars") ?? 0,
-            deliveredHash: str(entry, "deliveredHash") ?? "",
-            annotationChars: num(entry, "annotationChars") ?? 0,
-            annotationHash: str(entry, "annotationHash") ?? "",
-        });
+        const arm = frozenArmOf(entry);
+        if (arm === null) return null;
+        arms.push(arm);
     }
     return arms;
+}
+
+/** One frozen arm, or null when a field is malformed. */
+function frozenArmOf(entry: Record<string, unknown>): FreezeRecord["arms"][number] | null {
+    const strings = ["commit", "tree", "descriptionHash", "deliveredHash", "annotationHash"].map(
+        (key) => str(entry, key),
+    );
+    const numbers = ["descriptionChars", "deliveredChars", "annotationChars"].map(
+        (key) => num(entry, key),
+    );
+    const id = str(entry, "id");
+    if (strings.some((value) => value === undefined) || numbers.some((value) => value === undefined)) {
+        return null;
+    }
+    if (id === undefined) return null;
+    return {
+        id,
+        commit: strings[0] ?? "",
+        tree: strings[1] ?? "",
+        clean: entry.clean === true,
+        descriptionChars: numbers[0] ?? 0,
+        descriptionHash: strings[2] ?? "",
+        deliveredChars: numbers[1] ?? 0,
+        deliveredHash: strings[3] ?? "",
+        annotationChars: numbers[2] ?? 0,
+        annotationHash: strings[4] ?? "",
+    };
 }
 
 /** The frozen single-file inputs, or null when the array is malformed. */
@@ -995,17 +999,19 @@ function materialisationStep(root: string): PrepStep {
 
 /** One arm's generated fixture step. */
 function fixturesStep(root: string, arm: string): PrepStep {
-    const fixtures = join(root, "gen", arm, "fixtures");
-    let populated = false;
-    try {
-        populated = existsSync(fixtures) && readdirSync(fixtures).length > 0;
-    } catch {
-        populated = false;
-    }
-    return {
+    const step: PrepStep = {
         step: `generated fixtures (${arm})`,
-        state: populated ? "present" : "missing",
+        state: "missing",
     };
+    try {
+        const fixtures = join(root, "gen", arm, "fixtures");
+        if (existsSync(fixtures) && readdirSync(fixtures).length > 0) {
+            step.state = "present";
+        }
+    } catch {
+        step.state = "missing";
+    }
+    return step;
 }
 
 /** The measurement spec step. */
@@ -1035,20 +1041,35 @@ function surfacesStep(root: string, record: FreezeRecord | null): PrepStep {
     const step: PrepStep = { step: "B-only description change", state: "missing" };
     if (surfacesA === null || surfacesB === null) return step;
     step.state = "present";
-    step.detail = `A ${num(surfacesA, "nativeChars") ?? "?"} chars, B ${num(surfacesB, "nativeChars") ?? "?"} chars`;
+    step.detail = surfaceDetail(surfacesA, surfacesB);
+    const verified = surfacesVerified(record, surfacesA, surfacesB);
+    if (verified !== null) step.state = verified;
+    return step;
+}
+
+/** The recorded native-char detail for both surfaces. */
+function surfaceDetail(
+    surfacesA: Record<string, unknown>,
+    surfacesB: Record<string, unknown>,
+): string {
+    return `A ${num(surfacesA, "nativeChars") ?? "?"} chars, B ${num(surfacesB, "nativeChars") ?? "?"} chars`;
+}
+
+/** "verified" or "mismatch" against the freeze, or null when unjudgeable. */
+function surfacesVerified(
+    record: FreezeRecord | null,
+    surfacesA: Record<string, unknown>,
+    surfacesB: Record<string, unknown>,
+): StepState | null {
     const aHash = str(surfacesA, "nativeHash");
     const bHash = str(surfacesB, "nativeHash");
-    if (record === null || aHash === undefined || bHash === undefined) {
-        return step;
-    }
+    if (record === null || aHash === undefined || bHash === undefined) return null;
     const frozenA = record.arms.find((arm) => arm.id === "A");
     const frozenB = record.arms.find((arm) => arm.id === "B");
-    if (frozenA === undefined || frozenB === undefined) return step;
-    step.state =
-        frozenA.descriptionHash === aHash && frozenB.descriptionHash === bHash
-            ? "verified"
-            : "mismatch";
-    return step;
+    if (frozenA === undefined || frozenB === undefined) return null;
+    return frozenA.descriptionHash === aHash && frozenB.descriptionHash === bHash
+        ? "verified"
+        : "mismatch";
 }
 
 /** One arm's surfaces record, or null when absent or malformed. */
@@ -1558,24 +1579,56 @@ function observeReconciliation(root: string): ReconciliationObservation {
 
 /** One parsed reconciliation record. */
 function reconciliationOf(rec: Record<string, unknown>): ReconciliationObservation {
-    const billing = isRecord(rec.billing) ? rec.billing : {};
-    const trial = isRecord(billing.trial) ? billing.trial : {};
-    const judge = isRecord(billing.judge) ? billing.judge : {};
     const reconciliation: ReconciliationObservation = {
         present: true,
-        unrunSlots: Array.isArray(rec.unrunSlots) ? rec.unrunSlots.length : 0,
-        billingTrial: num(trial, "estimated") ?? null,
-        billingJudge: num(judge, "estimated") ?? null,
+        ...reconciliationCounts(rec),
+        ...reconciliationBilling(rec),
     };
     const at = str(rec, "at");
     if (at !== undefined) reconciliation.at = at;
-    const pairs = num(rec, "completedPairs");
-    if (pairs !== undefined) reconciliation.completedPairs = pairs;
-    const launches = num(rec, "trialLaunches");
-    if (launches !== undefined) reconciliation.trialLaunches = launches;
-    const currency = str(billing, "currency");
-    if (currency !== undefined) reconciliation.currency = currency;
     return reconciliation;
+}
+
+/** The recorded counts of a reconciliation record. */
+function reconciliationCounts(rec: Record<string, unknown>): {
+    unrunSlots: number;
+    completedPairs?: number;
+    trialLaunches?: number;
+} {
+    const result: {
+        unrunSlots: number;
+        completedPairs?: number;
+        trialLaunches?: number;
+    } = {
+        unrunSlots: Array.isArray(rec.unrunSlots) ? rec.unrunSlots.length : 0,
+    };
+    const pairs = num(rec, "completedPairs");
+    if (pairs !== undefined) result.completedPairs = pairs;
+    const launches = num(rec, "trialLaunches");
+    if (launches !== undefined) result.trialLaunches = launches;
+    return result;
+}
+
+/** The billing estimates of a reconciliation record. */
+function reconciliationBilling(rec: Record<string, unknown>): {
+    billingTrial: number | null;
+    billingJudge: number | null;
+    currency?: string;
+} {
+    const billing = isRecord(rec.billing) ? rec.billing : {};
+    const trial = isRecord(billing.trial) ? billing.trial : {};
+    const judge = isRecord(billing.judge) ? billing.judge : {};
+    const result: {
+        billingTrial: number | null;
+        billingJudge: number | null;
+        currency?: string;
+    } = {
+        billingTrial: num(trial, "estimated") ?? null,
+        billingJudge: num(judge, "estimated") ?? null,
+    };
+    const currency = str(billing, "currency");
+    if (currency !== undefined) result.currency = currency;
+    return result;
 }
 
 /** Every report under an explicit report root, in directory order. */
@@ -1937,7 +1990,7 @@ function campaignNextAction(
     if (files.freezeRecord === null) {
         return preFreezeAction(root, preparation);
     }
-    return frozenAction(root, position, checkpoint, files);
+    return frozenAction(root, position, checkpoint);
 }
 
 /** The credential-mode gate, first as run.mts refuses it first. */
@@ -2057,29 +2110,40 @@ function shimGate(root: string, readiness: Readiness): ActionResult | null {
 
 /** The pre-freeze action: the earliest missing prerequisite in run-card order. */
 function preFreezeAction(root: string, preparation: readonly PrepStep[]): ActionResult {
-    const earliest = preparation.find(
-        (step) =>
-            step.state === "missing" ||
-            step.state === "mismatch" ||
-            step.state === "unverifiable",
-    );
-    if (earliest === undefined || earliest.step === "dry run") {
-        return freezeNextAction(root);
-    }
+    const earliest = earliestMissing(preparation);
+    if (earliest === undefined) return freezeNextAction(root);
     const recipe = preparationRecipe(root, earliest.step);
+    return {
+        phase: "preparing",
+        headline: `earliest missing prerequisite: ${earliest.step}`,
+        nextAction: recipeAction(earliest.step, recipe),
+        gaps: [],
+    };
+}
+
+/** The earliest missing, mismatched or unverifiable step, skipping dry run. */
+function earliestMissing(preparation: readonly PrepStep[]): PrepStep | undefined {
+    const actionable = ["missing", "mismatch", "unverifiable"];
+    return preparation.find(
+        (step) => actionable.includes(step.state) && step.step !== "dry run",
+    );
+}
+
+/** A next action from a recipe, with a fallback for unlisted steps. */
+function recipeAction(
+    step: string,
+    recipe: { why: string; command?: string; cwd?: string; envNames?: string[] } | undefined,
+): NextAction {
     const action: NextAction = {
         kind: "offline-preparation",
-        why: recipe?.why ?? `follow the run card (${RUN_CARD}) from this step`,
+        why:
+            recipe?.why ??
+            `follow the run card (${RUN_CARD}) from this step (${step})`,
     };
     if (recipe?.command !== undefined) action.command = recipe.command;
     if (recipe?.cwd !== undefined) action.cwd = recipe.cwd;
     if (recipe?.envNames !== undefined) action.envNames = recipe.envNames;
-    return {
-        phase: "preparing",
-        headline: `earliest missing prerequisite: ${earliest.step}`,
-        nextAction: action,
-        gaps: [],
-    };
+    return action;
 }
 
 /** The freeze action, when every freeze input is present but no freeze exists. */
@@ -2104,24 +2168,22 @@ function frozenAction(
     root: string,
     position: Position,
     checkpoint: Checkpoint,
-    files: IdentityFiles,
 ): ActionResult {
     const completePairs = new Set(position.completedPairs ?? []);
     const allPairs = new Set((position.slots ?? []).map((slot) => slot.pairId));
     const gaps: Gap[] = [];
-    if (completePairs.size === 0) return dryRunNextAction(root, files, gaps);
+    if (completePairs.size === 0) return dryRunNextAction(root, gaps);
     if (allPairs.size > 0 && completePairs.size >= allPairs.size) {
-        return closureNextAction(root, allPairs.size, files, gaps);
+        return closureNextAction(root, allPairs.size, gaps);
     }
-    const checkpointAction = checkpointGate(root, completePairs, checkpoint, gaps, files);
+    const checkpointAction = checkpointGate(root, completePairs, checkpoint, gaps);
     if (checkpointAction !== null) return checkpointAction;
-    return resumeAction(root, position, allPairs.size - completePairs.size, gaps, files);
+    return resumeAction(root, position, allPairs.size - completePairs.size, gaps);
 }
 
 /** The offline dry-run action for a verified, unstarted freeze. */
 function dryRunNextAction(
     root: string,
-    files: IdentityFiles,
     gaps: Gap[],
 ): ActionResult {
     gaps.push({
@@ -2149,10 +2211,8 @@ function dryRunNextAction(
 function closureNextAction(
     root: string,
     pairCount: number,
-    files: IdentityFiles,
     gaps: Gap[],
 ): ActionResult {
-    void files;
     const sourceRepo = sourceRepoFor();
     const closeEnv =
         sourceRepo === null
@@ -2177,7 +2237,6 @@ function checkpointGate(
     completePairs: ReadonlySet<string>,
     checkpoint: Checkpoint,
     gaps: Gap[],
-    files: IdentityFiles,
 ): ActionResult | null {
     const checkpointDone = ["P01", "P02", "P03", "P04"].every((pair) =>
         completePairs.has(pair),
@@ -2191,15 +2250,14 @@ function checkpointGate(
     const current = reports.find(
         (report) => report.freshness === "current" && report.wrongCampaign !== true,
     );
-    if (current !== undefined) return checkpointReview(current, root, files);
-    return staleCheckpointAction(root, checkpoint, reports, files);
+    if (current !== undefined) return checkpointReview(current, root);
+    return staleCheckpointAction(root, checkpoint, reports);
 }
 
 /** The decision handover when the P04 report is current. */
 function checkpointReview(
     current: ReportObservation,
     root: string,
-    files: IdentityFiles,
 ): ActionResult {
     const verdict =
         current.recommendation ?? current.decision ?? "decision rendered";
@@ -2220,7 +2278,6 @@ function staleCheckpointAction(
     root: string,
     checkpoint: Checkpoint,
     reports: readonly ReportObservation[],
-    files: IdentityFiles,
 ): ActionResult {
     const staleOrWrong =
         checkpoint.reportRootGiven === true &&
@@ -2251,9 +2308,7 @@ function resumeAction(
     position: Position,
     unrunPairs: number,
     gaps: Gap[],
-    files: IdentityFiles,
 ): ActionResult {
-    void files;
     const nextSlot = (position.slots ?? []).find(
         (slot) => slot.state !== "complete" && slot.state !== "adjudicated",
     );
@@ -2322,32 +2377,33 @@ function preparationRecipe(
     root: string,
     step: string,
 ): { why: string; command?: string; cwd?: string; envNames?: string[] } | undefined {
-    if (step === "arms/a checkout") return worktreeRecipe("arms/a", "base");
-    if (step === "arms/b checkout") return worktreeRecipe("arms/b", "base");
-    if (step === "measurement checkout") {
-        return worktreeRecipe("measurement", "base");
-    }
-    if (step === "materialisation") return materialiseRecipe(root);
-    if (step === "B-only description change") return surfacesRecipe(root);
-    if (step === "generated fixtures (a)" || step === "generated fixtures (b)") {
-        return generateRecipe(root);
-    }
-    if (step === "delivery receipt (a)" || step === "delivery receipt (b)") {
-        return deliveryRecipe(root, step);
-    }
-    if (step === "measurement spec") return specRecipe(root);
-    if (step === "freeze") return freezeRecipe(root);
-    return undefined;
+    const builders: Record<
+        string,
+        () => { why: string; command?: string; cwd?: string; envNames?: string[] }
+    > = {
+        "arms/a checkout": () => worktreeRecipe("arms/a"),
+        "arms/b checkout": () => worktreeRecipe("arms/b"),
+        "measurement checkout": () => worktreeRecipe("measurement"),
+        materialisation: () => materialiseRecipe(root),
+        "B-only description change": () => surfacesRecipe(root),
+        "generated fixtures (a)": () => generateRecipe(root),
+        "generated fixtures (b)": () => generateRecipe(root),
+        "delivery receipt (a)": () => deliveryRecipe(root, "a"),
+        "delivery receipt (b)": () => deliveryRecipe(root, "b"),
+        "measurement spec": () => specRecipe(root),
+        freeze: () => freezeRecipe(root),
+    };
+    const builder = builders[step];
+    return builder === undefined ? undefined : builder();
 }
 
 /** One arm/measurement worktree recipe. */
 function worktreeRecipe(
     dir: string,
-    rev: string,
 ): { why: string; command: string } {
     return {
-        why: `run card step 2: ${dir} is a worktree at the ${rev} commit with node_modules installed`,
-        command: `git worktree add <root>/${dir} <${rev}> && cd <root>/${dir} && npm ci`,
+        why: `run card step 2: ${dir} is a worktree at the base commit with node_modules installed`,
+        command: `git worktree add <root>/${dir} <base> && cd <root>/${dir} && npm ci`,
     };
 }
 
@@ -2386,12 +2442,11 @@ function generateRecipe(root: string): {
     };
 }
 
-/** One arm's delivery-probe recipe. */
+/** The delivery-probe recipe for one arm. */
 function deliveryRecipe(
     root: string,
-    step: string,
+    arm: string,
 ): { why: string; command: string } {
-    const arm = step.endsWith("(a)") ? "a" : "b";
     const port = arm === "a" ? "8801" : "8802";
     return {
         why: `run card step 3: delivery probe for arm ${arm} (loopback fake provider)`,
@@ -2934,7 +2989,18 @@ function spendLines(position: Position | undefined): string[] {
 /** The identity section. */
 function identityLines(identity: Identity | undefined): string[] {
     if (identity === undefined) return [];
-    const lines = ["identity:"];
+    const lines = ["identity:", `  ${identitySummary(identity)}`];
+    if (identity.arms !== undefined) {
+        lines.push(`  arms: ${identity.arms.map(armSummary).join(" | ")}`);
+    }
+    if (identity.slots !== undefined) {
+        lines.push(scheduleSummary(identity));
+    }
+    return lines;
+}
+
+/** The one-line identity summary, or a note when nothing is durable. */
+function identitySummary(identity: Identity): string {
     const bits = [
         identity.campaignId === undefined ? null : `campaign ${identity.campaignId}`,
         identity.sourceHead === undefined
@@ -2949,18 +3015,9 @@ function identityLines(identity: Identity | undefined): string[] {
         identity.trialModel === undefined ? null : `trial ${identity.trialModel}`,
         identity.judgeModel === undefined ? null : `judge ${identity.judgeModel}`,
     ].filter((bit): bit is string => bit !== null);
-    lines.push(
-        bits.length > 0
-            ? `  ${bits.join(" · ")}`
-            : "  (no durable identity yet; no schedule.json and no FROZEN.json)",
-    );
-    if (identity.arms !== undefined) {
-        lines.push(`  arms: ${identity.arms.map(armSummary).join(" | ")}`);
-    }
-    if (identity.slots !== undefined) {
-        lines.push(scheduleSummary(identity));
-    }
-    return lines;
+    return bits.length > 0
+        ? bits.join(" · ")
+        : "(no durable identity yet; no schedule.json and no FROZEN.json)";
 }
 
 /** One arm's identity summary. */
@@ -3052,6 +3109,17 @@ function preparationLines(preparation: PrepStep[] | undefined): string[] {
 /** The live-position section. */
 function positionLines(position: Position | undefined, detail: boolean): string[] {
     if (position === undefined) return [];
+    return [
+        ...ledgerLine(position),
+        ...pairLine(position),
+        ...(detail ? slotLines(position) : []),
+        ...claimLines(position),
+        ...(position.closingLock === true ? ["  CLOSING.lock present"] : []),
+    ];
+}
+
+/** The ledger state and last-event lines. */
+function ledgerLine(position: Position): string[] {
     const changing = position.ledgerChanging === true ? " (records advanced mid-read)" : "";
     const lines = [
         `position: ledger ${position.ledgerState}${changing}, ${position.eventCount} events`,
@@ -3062,18 +3130,30 @@ function positionLines(position: Position | undefined, detail: boolean): string[
             `  last: ${last.event} at ${last.at ?? "?"} ${last.detail ?? ""}`.trimEnd(),
         );
     }
-    if (position.completedPairs !== undefined) {
-        lines.push(
-            `  completed pairs: ${position.completedPairs.join(" ") || "none"} · usable assessments (judge-exit judged): ${position.usableAssessments ?? 0}`,
-        );
-    }
-    if (detail && position.slots !== undefined) {
-        for (const slot of position.slots) lines.push(slotLine(slot));
-    }
+    return lines;
+}
+
+/** The completed-pairs line. */
+function pairLine(position: Position): string[] {
+    if (position.completedPairs === undefined) return [];
+    return [
+        `  completed pairs: ${position.completedPairs.join(" ") || "none"} · usable assessments (judge-exit judged): ${position.usableAssessments ?? 0}`,
+    ];
+}
+
+/** The per-slot detail lines. */
+function slotLines(position: Position): string[] {
+    const lines: string[] = [];
+    for (const slot of position.slots ?? []) lines.push(slotLine(slot));
+    return lines;
+}
+
+/** The unsettled-claim lines. */
+function claimLines(position: Position): string[] {
+    const lines: string[] = [];
     for (const claim of position.spend?.unresolved ?? []) {
         lines.push(`  unsettled: ${claim.path} (${claim.state})`);
     }
-    if (position.closingLock === true) lines.push("  CLOSING.lock present");
     return lines;
 }
 
