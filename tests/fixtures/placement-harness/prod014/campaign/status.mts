@@ -29,7 +29,11 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseCampaignLedger, eventsByStamp, type StampEvents } from "../../analysis/ledger.ts";
+import {
+    parseCampaignLedger,
+    eventsByStamp,
+    type StampEvents,
+} from "../../analysis/ledger.ts";
 import {
     readClaims,
     restartDisposition,
@@ -52,11 +56,7 @@ export type StatusExit = 0 | 1 | 2;
 
 /** Why a preparation step could not be claimed as done. */
 export type StepState =
-    | "missing"
-    | "present"
-    | "verified"
-    | "mismatch"
-    | "unverifiable";
+    "missing" | "present" | "verified" | "mismatch" | "unverifiable";
 
 /** A field that exists only in prose (run card, operator instruction) or not at all. */
 export interface Gap {
@@ -463,7 +463,9 @@ function str(value: Record<string, unknown>, key: string): string | undefined {
 /** A finite number field, or undefined. */
 function num(value: Record<string, unknown>, key: string): number | undefined {
     const field = value[key];
-    return typeof field === "number" && Number.isFinite(field) ? field : undefined;
+    return typeof field === "number" && Number.isFinite(field)
+        ? field
+        : undefined;
 }
 
 interface JsonRead {
@@ -497,7 +499,10 @@ function readTextOr(path: string): string | null {
 /** Run one local command and capture its trimmed stdout; empty on failure. */
 function capture(command: string, args: string[]): string {
     try {
-        const result = spawnSync(command, args, { encoding: "utf8", timeout: 10_000 });
+        const result = spawnSync(command, args, {
+            encoding: "utf8",
+            timeout: 10_000,
+        });
         return result.status === 0 ? String(result.stdout ?? "").trim() : "";
     } catch {
         return "";
@@ -601,9 +606,10 @@ interface IdentityFiles {
  * exists but cannot be parsed is a hard problem (exit 2); a missing file is a
  * state, not an error. Exported for the status tests.
  */
-export function readIdentityFiles(
-    root: string,
-): { files: IdentityFiles; hardProblems: ObservationProblem[] } {
+export function readIdentityFiles(root: string): {
+    files: IdentityFiles;
+    hardProblems: ObservationProblem[];
+} {
     const hardProblems: ObservationProblem[] = [];
     const bad = (path: string, need: string): void => {
         hardProblems.push({
@@ -739,7 +745,14 @@ function freezeRecordOf(record: Record<string, unknown>): FreezeRecord | null {
     ) {
         return null;
     }
-    return { ...scalars, arms, files, inventories, stoppingRules: rules, ceilings: freezeCeilingsOf(record) };
+    return {
+        ...scalars,
+        arms,
+        files,
+        inventories,
+        stoppingRules: rules,
+        ceilings: freezeCeilingsOf(record),
+    };
 }
 
 /** The scalar freeze fields, or null when any is malformed. */
@@ -785,7 +798,9 @@ function freezeScalarsOf(
 }
 
 /** The frozen arms, or null when the array is malformed. */
-function freezeArmsOf(record: Record<string, unknown>): FreezeRecord["arms"] | null {
+function freezeArmsOf(
+    record: Record<string, unknown>,
+): FreezeRecord["arms"] | null {
     if (!Array.isArray(record.arms)) return null;
     const arms: FreezeRecord["arms"] = [];
     for (const entry of record.arms) {
@@ -798,12 +813,15 @@ function freezeArmsOf(record: Record<string, unknown>): FreezeRecord["arms"] | n
 }
 
 /** One frozen arm, or null when a field is malformed. */
-function frozenArmOf(entry: Record<string, unknown>): FreezeRecord["arms"][number] | null {
+function frozenArmOf(
+    entry: Record<string, unknown>,
+): FreezeRecord["arms"][number] | null {
     const id = str(entry, "id");
     const strings = frozenArmStrings(entry);
     const numbers = frozenArmNumbers(entry);
     if (id === undefined || strings === null || numbers === null) return null;
-    const [commit, tree, descriptionHash, deliveredHash, annotationHash] = strings;
+    const [commit, tree, descriptionHash, deliveredHash, annotationHash] =
+        strings;
     const [descriptionChars, deliveredChars, annotationChars] = numbers;
     return {
         id,
@@ -823,14 +841,26 @@ function frozenArmOf(entry: Record<string, unknown>): FreezeRecord["arms"][numbe
 function frozenArmStrings(
     entry: Record<string, unknown>,
 ): [string, string, string, string, string] | null {
-    const keys = ["commit", "tree", "descriptionHash", "deliveredHash", "annotationHash"];
+    const keys = [
+        "commit",
+        "tree",
+        "descriptionHash",
+        "deliveredHash",
+        "annotationHash",
+    ];
     const values: string[] = [];
     for (const key of keys) {
         const value = str(entry, key);
         if (value === undefined) return null;
         values.push(value);
     }
-    return [values[0] ?? "", values[1] ?? "", values[2] ?? "", values[3] ?? "", values[4] ?? ""];
+    return [
+        values[0] ?? "",
+        values[1] ?? "",
+        values[2] ?? "",
+        values[3] ?? "",
+        values[4] ?? "",
+    ];
 }
 
 /** The three numeric fields of a frozen arm, or null when any is malformed. */
@@ -896,9 +926,10 @@ function freezeRulesOf(record: Record<string, unknown>): string[] | null {
 }
 
 /** The declared ceilings; a record that predates them reads as zero. */
-function freezeCeilingsOf(
-    record: Record<string, unknown>,
-): { trial: number; judge: number } {
+function freezeCeilingsOf(record: Record<string, unknown>): {
+    trial: number;
+    judge: number;
+} {
     if (!isRecord(record.ceilings)) return { trial: 0, judge: 0 };
     return {
         trial: num(record.ceilings, "trial") ?? 0,
@@ -1008,7 +1039,11 @@ function observePreparation(
 function checkoutStep(label: string, dir: string): PrepStep {
     if (!existsSync(dir)) return { step: label, state: "missing" };
     if (!existsSync(join(dir, "node_modules"))) {
-        return { step: label, state: "present", detail: "node_modules missing" };
+        return {
+            step: label,
+            state: "present",
+            detail: "node_modules missing",
+        };
     }
     return { step: label, state: "verified", detail: "node_modules installed" };
 }
@@ -1056,8 +1091,7 @@ function dryRunStep(): PrepStep {
     return {
         step: "dry run",
         state: "unverifiable",
-        detail:
-            "run.mts --dry-run records no durable evidence; a passing dry run cannot be observed later",
+        detail: "run.mts --dry-run records no durable evidence; a passing dry run cannot be observed later",
     };
 }
 
@@ -1065,7 +1099,10 @@ function dryRunStep(): PrepStep {
 function surfacesStep(root: string, record: FreezeRecord | null): PrepStep {
     const surfacesA = readSurface(root, "a");
     const surfacesB = readSurface(root, "b");
-    const step: PrepStep = { step: "B-only description change", state: "missing" };
+    const step: PrepStep = {
+        step: "B-only description change",
+        state: "missing",
+    };
     if (surfacesA === null || surfacesB === null) return step;
     step.state = "present";
     step.detail = surfaceDetail(surfacesA, surfacesB);
@@ -1090,17 +1127,22 @@ function surfacesVerified(
 ): StepState | null {
     const aHash = str(surfacesA, "nativeHash");
     const bHash = str(surfacesB, "nativeHash");
-    if (record === null || aHash === undefined || bHash === undefined) return null;
+    if (record === null || aHash === undefined || bHash === undefined)
+        return null;
     const frozenA = record.arms.find((arm) => arm.id === "A");
     const frozenB = record.arms.find((arm) => arm.id === "B");
     if (frozenA === undefined || frozenB === undefined) return null;
-    return frozenA.descriptionHash === aHash && frozenB.descriptionHash === bHash
+    return frozenA.descriptionHash === aHash &&
+        frozenB.descriptionHash === bHash
         ? "verified"
         : "mismatch";
 }
 
 /** One arm's surfaces record, or null when absent or malformed. */
-function readSurface(root: string, arm: string): Record<string, unknown> | null {
+function readSurface(
+    root: string,
+    arm: string,
+): Record<string, unknown> | null {
     const read = readJsonFile(join(root, `evidence/surfaces-${arm}.json`));
     return read.value !== undefined && isRecord(read.value) ? read.value : null;
 }
@@ -1138,9 +1180,11 @@ function deliveryStep(
 }
 
 /** The served docs description inside a captured provider request. */
-function deliveredDescription(
-    body: unknown,
-): { chars?: number; hash?: string; problem?: string } {
+function deliveredDescription(body: unknown): {
+    chars?: number;
+    hash?: string;
+    problem?: string;
+} {
     if (!isRecord(body) || !Array.isArray(body.tools)) {
         return { problem: "capture carries no tools array" };
     }
@@ -1204,7 +1248,9 @@ function freezeObservation(
 } {
     const sourceRepo = sourceRepoFor();
     const head =
-        sourceRepo === null ? "" : (git(sourceRepo, ["rev-parse", "HEAD"]) ?? "");
+        sourceRepo === null
+            ? ""
+            : (git(sourceRepo, ["rev-parse", "HEAD"]) ?? "");
     return {
         files: record.files.map((file) => ({
             path: file.path,
@@ -1261,7 +1307,8 @@ function rawLines(text: string | null): RawLedgerLine[] {
 function parseLedgerLine(line: string): RawLedgerLine | undefined {
     try {
         const value = JSON.parse(line) as unknown;
-        if (!isRecord(value) || typeof value.event !== "string") return undefined;
+        if (!isRecord(value) || typeof value.event !== "string")
+            return undefined;
         return {
             at: typeof value.at === "string" ? value.at : null,
             event: value.event,
@@ -1308,7 +1355,12 @@ export function observePosition(
     const schedule = files.schedule;
     if (schedule !== null) {
         position.slots = schedule.slots.map((slot) =>
-            slotObservation(slot, evidence, eventsByStamp(ledger.reparse.events), lines),
+            slotObservation(
+                slot,
+                evidence,
+                eventsByStamp(ledger.reparse.events),
+                lines,
+            ),
         );
     }
     position.spend = spendObservation(evidence, files.freezeRecord);
@@ -1328,8 +1380,7 @@ function readLedgerBounded(
 } {
     const first = reader(ledgerPath);
     const second = reader(ledgerPath);
-    const changing =
-        first !== null && second !== null && first !== second;
+    const changing = first !== null && second !== null && first !== second;
     const bytes = changing ? (second as string) : first;
     return {
         firstParse: parseCampaignLedger(first ?? undefined),
@@ -1375,7 +1426,10 @@ function stopReasonOf(lines: readonly RawLedgerLine[]): string | null {
 function completedPairsOf(lines: readonly RawLedgerLine[]): string[] {
     const pairs = new Set<string>();
     for (const line of lines) {
-        if (line.event === "pair-complete" && typeof line.record.pairId === "string") {
+        if (
+            line.event === "pair-complete" &&
+            typeof line.record.pairId === "string"
+        ) {
             pairs.add(line.record.pairId);
         }
     }
@@ -1471,7 +1525,10 @@ function slotStateOf(
         return { state: "unrun" };
     }
     if (events.blocked && events.launches === 0) {
-        return { state: "refused-before-dispatch", ...blockedNoteOf(lines, stamp) };
+        return {
+            state: "refused-before-dispatch",
+            ...blockedNoteOf(lines, stamp),
+        };
     }
     if (events.launches > 0) {
         return launchedStateOf(lines, stamp);
@@ -1542,8 +1599,12 @@ function spendObservation(
     const spend: SpendObservation = {
         trial: kindSpend(evidence, "trial", ceilings.trial),
         judge: kindSpend(evidence, "judge", ceilings.judge),
-        reserved: countState(trialClaims, "reserved") + countState(judgeClaims, "reserved"),
-        spawned: countState(trialClaims, "spawned") + countState(judgeClaims, "spawned"),
+        reserved:
+            countState(trialClaims, "reserved") +
+            countState(judgeClaims, "reserved"),
+        spawned:
+            countState(trialClaims, "spawned") +
+            countState(judgeClaims, "spawned"),
         unresolved: unresolvedClaims(evidence, trialClaims, judgeClaims),
     };
     return spend;
@@ -1570,7 +1631,10 @@ function kindSpend(
 }
 
 /** readClaims without letting a read failure abort the observation. */
-function safeReadClaims(evidence: string, kind: "trial" | "judge"): BudgetClaim[] {
+function safeReadClaims(
+    evidence: string,
+    kind: "trial" | "judge",
+): BudgetClaim[] {
     try {
         return readClaims(evidence, kind);
     } catch {
@@ -1590,8 +1654,14 @@ function unresolvedClaims(
     judgeClaims: readonly BudgetClaim[],
 ): UnresolvedClaim[] {
     const named: { claim: BudgetClaim; kind: string }[] = [
-        ...unresolvedReservations(trialClaims).map((claim) => ({ claim, kind: "trial" })),
-        ...unresolvedReservations(judgeClaims).map((claim) => ({ claim, kind: "judge" })),
+        ...unresolvedReservations(trialClaims).map((claim) => ({
+            claim,
+            kind: "trial",
+        })),
+        ...unresolvedReservations(judgeClaims).map((claim) => ({
+            claim,
+            kind: "judge",
+        })),
     ];
     return named.map(({ claim, kind }) => {
         const entry: UnresolvedClaim = {
@@ -1612,7 +1682,9 @@ function observeCheckpoint(
     reportRoot: string | undefined,
     position: Position | undefined,
 ): Checkpoint {
-    const checkpoint: Checkpoint = { reportRootGiven: reportRoot !== undefined };
+    const checkpoint: Checkpoint = {
+        reportRootGiven: reportRoot !== undefined,
+    };
     checkpoint.reconciliation = observeReconciliation(root);
     if (reportRoot === undefined) return checkpoint;
     checkpoint.reports = observeReports(root, reportRoot, position);
@@ -1629,7 +1701,9 @@ function observeReconciliation(root: string): ReconciliationObservation {
 }
 
 /** One parsed reconciliation record. */
-function reconciliationOf(rec: Record<string, unknown>): ReconciliationObservation {
+function reconciliationOf(
+    rec: Record<string, unknown>,
+): ReconciliationObservation {
     const reconciliation: ReconciliationObservation = {
         present: true,
         ...reconciliationCounts(rec),
@@ -1728,7 +1802,13 @@ function observeReport(
     if (read.value === undefined || !isRecord(read.value)) {
         return { dir };
     }
-    const report = reportIdentity(read.value, dir, root, manifestHash, lastLedgerAt);
+    const report = reportIdentity(
+        read.value,
+        dir,
+        root,
+        manifestHash,
+        lastLedgerAt,
+    );
     report.pairedDelta = pairedDeltaOf(read.value);
     applyDecisionSummary(report, read.value);
     applyMeasures(report, read.value);
@@ -1802,7 +1882,9 @@ function applyFreshness(
 
 /** The paired utility delta, when published. */
 function pairedDeltaOf(analysis: Record<string, unknown>): number | null {
-    return isRecord(analysis.paired) ? (num(analysis.paired, "delta") ?? null) : null;
+    return isRecord(analysis.paired)
+        ? (num(analysis.paired, "delta") ?? null)
+        : null;
 }
 
 /** The decision and personal-trial recommendation a report published. */
@@ -1814,10 +1896,16 @@ function applyDecisionSummary(
         const overall = str(analysis.decision, "overall");
         if (overall !== undefined) report.decision = overall;
     }
-    if (!isRecord(analysis.measures) || !isRecord(analysis.measures.personalTrial)) {
+    if (
+        !isRecord(analysis.measures) ||
+        !isRecord(analysis.measures.personalTrial)
+    ) {
         return;
     }
-    const recommendation = str(analysis.measures.personalTrial, "recommendation");
+    const recommendation = str(
+        analysis.measures.personalTrial,
+        "recommendation",
+    );
     if (recommendation !== undefined) report.recommendation = recommendation;
 }
 
@@ -1868,9 +1956,8 @@ function applyCoverage(
 /** How many guardrails one arm breached. */
 function breachedCount(arm: Record<string, unknown>): number {
     if (!Array.isArray(arm.guardrails)) return 0;
-    return arm.guardrails.filter(
-        (g) => isRecord(g) && g.status === "breached",
-    ).length;
+    return arm.guardrails.filter((g) => isRecord(g) && g.status === "breached")
+        .length;
 }
 
 /** One arm's measures into the shared recording/retrieval maps. */
@@ -1940,7 +2027,10 @@ function checkoutNextAction(
     assetsPresent: boolean,
 ): ActionResult {
     const gaps: Gap[] = [
-        { field: "checkpoint rule (P04 report before continuation)", source: "run-card" },
+        {
+            field: "checkpoint rule (P04 report before continuation)",
+            source: "run-card",
+        },
     ];
     if (isBaseMismatch(identity)) {
         return {
@@ -2001,7 +2091,11 @@ function isBaseMismatch(identity: Identity): boolean {
 }
 
 /** One shell-quoted run.mts invocation for this campaign root. */
-function runCommand(root: string, sourceRepo: string | null, args: string): string {
+function runCommand(
+    root: string,
+    sourceRepo: string | null,
+    args: string,
+): string {
     const envs = [`CAMPAIGN_ROOT=${shellQuote(root)}`];
     envs.push(
         sourceRepo === null
@@ -2053,7 +2147,10 @@ function campaignNextAction(
 }
 
 /** The credential-mode gate, first as run.mts refuses it first. */
-function credentialGate(root: string, readiness: Readiness): ActionResult | null {
+function credentialGate(
+    root: string,
+    readiness: Readiness,
+): ActionResult | null {
     if (readiness.credentials.modeProblem === undefined) return null;
     return {
         phase: "blocked-credential-mode",
@@ -2072,7 +2169,8 @@ function closingGate(root: string, position: Position): ActionResult | null {
     if (position.closingLock !== true) return null;
     return {
         phase: "close-interrupted",
-        headline: "a campaign close started and did not finish (CLOSING.lock present)",
+        headline:
+            "a campaign close started and did not finish (CLOSING.lock present)",
         nextAction: {
             kind: "inspection",
             why: "every dispatch refuses while the lock exists; inspect the evidence root, then decide whether to resume close-campaign.mts",
@@ -2108,7 +2206,10 @@ function closedGate(
 }
 
 /** The unresolved-reservation gate: no dispatch past unknown spend. */
-function reservationGate(root: string, position: Position): ActionResult | null {
+function reservationGate(
+    root: string,
+    position: Position,
+): ActionResult | null {
     const unresolved = position.spend?.unresolved ?? [];
     if (unresolved.length === 0) return null;
     return {
@@ -2124,7 +2225,10 @@ function reservationGate(root: string, position: Position): ActionResult | null 
 }
 
 /** The malformed-ledger gate. */
-function malformedLedgerGate(root: string, position: Position): ActionResult | null {
+function malformedLedgerGate(
+    root: string,
+    position: Position,
+): ActionResult | null {
     if (position.ledgerState !== "malformed") return null;
     return {
         phase: "blocked-malformed-ledger",
@@ -2139,7 +2243,10 @@ function malformedLedgerGate(root: string, position: Position): ActionResult | n
 }
 
 /** The unknown-spend gate: unreadable claim evidence never reads as free. */
-function spendUnknownGate(root: string, position: Position): ActionResult | null {
+function spendUnknownGate(
+    root: string,
+    position: Position,
+): ActionResult | null {
     const spend = position.spend;
     if (spend === undefined) return null;
     const unknown =
@@ -2191,7 +2298,10 @@ function shimGate(root: string, readiness: Readiness): ActionResult | null {
 }
 
 /** The pre-freeze action: the earliest missing prerequisite in run-card order. */
-function preFreezeAction(root: string, preparation: readonly PrepStep[]): ActionResult {
+function preFreezeAction(
+    root: string,
+    preparation: readonly PrepStep[],
+): ActionResult {
     const earliest = earliestMissing(preparation);
     if (earliest === undefined) return freezeNextAction(root);
     const recipe = preparationRecipe(root, earliest.step);
@@ -2204,7 +2314,9 @@ function preFreezeAction(root: string, preparation: readonly PrepStep[]): Action
 }
 
 /** The earliest missing, mismatched or unverifiable step, skipping dry run. */
-function earliestMissing(preparation: readonly PrepStep[]): PrepStep | undefined {
+function earliestMissing(
+    preparation: readonly PrepStep[],
+): PrepStep | undefined {
     const actionable = ["missing", "mismatch", "unverifiable"];
     return preparation.find(
         (step) => actionable.includes(step.state) && step.step !== "dry run",
@@ -2214,7 +2326,9 @@ function earliestMissing(preparation: readonly PrepStep[]): PrepStep | undefined
 /** A next action from a recipe, with a fallback for unlisted steps. */
 function recipeAction(
     step: string,
-    recipe: { why: string; command?: string; cwd?: string; envNames?: string[] } | undefined,
+    recipe:
+        | { why: string; command?: string; cwd?: string; envNames?: string[] }
+        | undefined,
 ): NextAction {
     const action: NextAction = {
         kind: "offline-preparation",
@@ -2261,9 +2375,19 @@ function frozenAction(
     // A recorded stop outranks generic checkpoint or resume advice.
     const stopAction = stoppedSlotGate(root, position, gaps);
     if (stopAction !== null) return stopAction;
-    const checkpointAction = checkpointGate(root, completePairs, checkpoint, gaps);
+    const checkpointAction = checkpointGate(
+        root,
+        completePairs,
+        checkpoint,
+        gaps,
+    );
     if (checkpointAction !== null) return checkpointAction;
-    return resumeAction(root, position, allPairs.size - completePairs.size, gaps);
+    return resumeAction(
+        root,
+        position,
+        allPairs.size - completePairs.size,
+        gaps,
+    );
 }
 
 /** Whether the freeze is still untouched: no claim, no launch, no pair. */
@@ -2289,14 +2413,13 @@ function stoppedSlotGate(
             slot.state !== "complete" &&
             slot.state !== "adjudicated",
     );
-    return stopped === undefined ? null : stoppedSlotAction(root, stopped, gaps);
+    return stopped === undefined
+        ? null
+        : stoppedSlotAction(root, stopped, gaps);
 }
 
 /** The offline dry-run action for a verified, unstarted freeze. */
-function dryRunNextAction(
-    root: string,
-    gaps: Gap[],
-): ActionResult {
+function dryRunNextAction(root: string, gaps: Gap[]): ActionResult {
     gaps.push({
         field: "dry-run success",
         source: "none (run.mts --dry-run writes no durable record)",
@@ -2359,7 +2482,8 @@ function checkpointGate(
     });
     const reports = checkpoint.reports ?? [];
     const current = reports.find(
-        (report) => report.freshness === "current" && report.wrongCampaign !== true,
+        (report) =>
+            report.freshness === "current" && report.wrongCampaign !== true,
     );
     if (current !== undefined) return checkpointReview(current, root);
     return staleCheckpointAction(root, checkpoint, reports);
@@ -2428,7 +2552,8 @@ function resumeAction(
     if (nextSlot === undefined || position.ledgerState !== "open") {
         return {
             phase: "indeterminate",
-            headline: "observation did not resolve to a phase; inspect the evidence",
+            headline:
+                "observation did not resolve to a phase; inspect the evidence",
             nextAction: {
                 kind: "inspection",
                 why: "no rule matched; read the ledger and claims directly",
@@ -2438,7 +2563,10 @@ function resumeAction(
         };
     }
     const spend = position.spend;
-    if (spend !== undefined && (spend.trial.remaining === 0 || spend.judge.remaining === 0)) {
+    if (
+        spend !== undefined &&
+        (spend.trial.remaining === 0 || spend.judge.remaining === 0)
+    ) {
         return ceilingReached(unrunPairs, spend, gaps);
     }
     gaps.push({
@@ -2514,10 +2642,17 @@ function pairNumberOf(pairId: string): number {
 function preparationRecipe(
     root: string,
     step: string,
-): { why: string; command?: string; cwd?: string; envNames?: string[] } | undefined {
+):
+    | { why: string; command?: string; cwd?: string; envNames?: string[] }
+    | undefined {
     const builders: Record<
         string,
-        () => { why: string; command?: string; cwd?: string; envNames?: string[] }
+        () => {
+            why: string;
+            command?: string;
+            cwd?: string;
+            envNames?: string[];
+        }
     > = {
         "arms/a checkout": () => worktreeRecipe("arms/a"),
         "arms/b checkout": () => worktreeRecipe("arms/b"),
@@ -2536,9 +2671,7 @@ function preparationRecipe(
 }
 
 /** One arm/measurement worktree recipe. */
-function worktreeRecipe(
-    dir: string,
-): { why: string; command: string } {
+function worktreeRecipe(dir: string): { why: string; command: string } {
     return {
         why: `run card step 2: ${dir} is a worktree at the base commit with node_modules installed`,
         command: `git worktree add <root>/${dir} <base> && cd <root>/${dir} && npm ci`,
@@ -2546,7 +2679,11 @@ function worktreeRecipe(
 }
 
 /** The materialise recipe, run from the operator checkout. */
-function materialiseRecipe(root: string): { why: string; command: string; cwd?: string } {
+function materialiseRecipe(root: string): {
+    why: string;
+    command: string;
+    cwd?: string;
+} {
     return {
         why: "run card step 0: materialise stages prepare/ and the pinned runner modules",
         command: `node ${shellQuote("tests/fixtures/placement-harness/prod014/campaign/materialise.mts")} ${shellQuote(root)}`,
@@ -2626,7 +2763,10 @@ function freezeRecipe(root: string): {
 // ---------------------------------------------------------------------------
 // Checkout mode.
 
-function observeCheckout(base: string): { result: StatusResult; exit: StatusExit } {
+function observeCheckout(base: string): {
+    result: StatusResult;
+    exit: StatusExit;
+} {
     const cwd = process.cwd();
     const problems: ObservationProblem[] = [];
     const resolvedBase = git(cwd, ["rev-parse", base]);
@@ -2768,7 +2908,10 @@ function observeCampaign(
     const record = files.freezeRecord;
     const identity = observeIdentity(root, files);
     const readiness = observeReadiness(root, record);
-    const { steps: preparation, freezeProblems } = observePreparation(root, files);
+    const { steps: preparation, freezeProblems } = observePreparation(
+        root,
+        files,
+    );
     const position = observePosition(root, files);
     const checkpoint = observeCheckpoint(root, reportRoot, position);
     const action = campaignNextAction(
@@ -2838,7 +2981,10 @@ function unreadableEvidenceResult(
 }
 
 /** The exit-2 root observation. */
-function unreadableRoot(root: string, message: string): {
+function unreadableRoot(
+    root: string,
+    message: string,
+): {
     result: StatusResult;
     exit: StatusExit;
 } {
@@ -2862,7 +3008,10 @@ function unreadableRoot(root: string, message: string): {
 }
 
 /** The gaps every campaign observation carries. */
-function withStandardGaps(gaps: readonly Gap[], record: FreezeRecord | null): Gap[] {
+function withStandardGaps(
+    gaps: readonly Gap[],
+    record: FreezeRecord | null,
+): Gap[] {
     const all = [...gaps];
     if (record === null) {
         all.push({
@@ -3049,9 +3198,7 @@ function applyGuardrails(
 }
 
 /** The planned slot order carried by the manifest. */
-function plannedOrderOf(
-    schedule: Record<string, unknown>,
-): OrderEntry[] {
+function plannedOrderOf(schedule: Record<string, unknown>): OrderEntry[] {
     const order: OrderEntry[] = [];
     if (!Array.isArray(schedule.slots)) return order;
     for (const entry of schedule.slots) {
@@ -3148,7 +3295,9 @@ function identityLines(identity: Identity | undefined): string[] {
 /** The one-line identity summary, or a note when nothing is durable. */
 function identitySummary(identity: Identity): string {
     const bits = [
-        identity.campaignId === undefined ? null : `campaign ${identity.campaignId}`,
+        identity.campaignId === undefined
+            ? null
+            : `campaign ${identity.campaignId}`,
         identity.sourceHead === undefined
             ? null
             : `HEAD ${identity.sourceHead.slice(0, 12)}`,
@@ -3158,8 +3307,12 @@ function identitySummary(identity: Identity): string {
         identity.measurementRevision === undefined
             ? null
             : `measurement ${identity.measurementRevision.slice(0, 12)}`,
-        identity.trialModel === undefined ? null : `trial ${identity.trialModel}`,
-        identity.judgeModel === undefined ? null : `judge ${identity.judgeModel}`,
+        identity.trialModel === undefined
+            ? null
+            : `trial ${identity.trialModel}`,
+        identity.judgeModel === undefined
+            ? null
+            : `judge ${identity.judgeModel}`,
     ].filter((bit): bit is string => bit !== null);
     return bits.length > 0
         ? bits.join(" · ")
@@ -3196,7 +3349,9 @@ function readinessLines(readiness: Readiness | undefined): string[] {
     }
     lines.push(credentialLine(readiness.credentials));
     if (readiness.credentials.modeProblem !== undefined) {
-        lines.push(`  credential problem: ${readiness.credentials.modeProblem}`);
+        lines.push(
+            `  credential problem: ${readiness.credentials.modeProblem}`,
+        );
     }
     if (readiness.dependencies !== undefined) {
         const deps = readiness.dependencies;
@@ -3205,7 +3360,9 @@ function readinessLines(readiness: Readiness | undefined): string[] {
         );
     }
     if (readiness.diskFreeBytes !== undefined) {
-        lines.push(`  disk free: ${(readiness.diskFreeBytes / GB).toFixed(1)} GiB`);
+        lines.push(
+            `  disk free: ${(readiness.diskFreeBytes / GB).toFixed(1)} GiB`,
+        );
     }
     if (readiness.routing !== undefined) {
         lines.push(`  routing: ${readiness.routing}`);
@@ -3216,7 +3373,9 @@ function readinessLines(readiness: Readiness | undefined): string[] {
 /** One image-presence line. */
 function imageLine(image: ImageObservation): string {
     const expected =
-        image.expectedId === undefined ? "none registered" : image.expectedId.slice(0, 19);
+        image.expectedId === undefined
+            ? "none registered"
+            : image.expectedId.slice(0, 19);
     const state =
         image.present === true
             ? "present"
@@ -3253,7 +3412,10 @@ function preparationLines(preparation: PrepStep[] | undefined): string[] {
 }
 
 /** The live-position section. */
-function positionLines(position: Position | undefined, detail: boolean): string[] {
+function positionLines(
+    position: Position | undefined,
+    detail: boolean,
+): string[] {
     if (position === undefined) return [];
     return [
         ...ledgerLine(position),
@@ -3266,7 +3428,8 @@ function positionLines(position: Position | undefined, detail: boolean): string[
 
 /** The ledger state and last-event lines. */
 function ledgerLine(position: Position): string[] {
-    const changing = position.ledgerChanging === true ? " (records advanced mid-read)" : "";
+    const changing =
+        position.ledgerChanging === true ? " (records advanced mid-read)" : "";
     const lines = [
         `position: ledger ${position.ledgerState}${changing}, ${position.eventCount} events`,
     ];
@@ -3310,9 +3473,15 @@ function slotLine(slot: SlotObservation): string {
 }
 
 /** The checkpoint section. */
-function checkpointLines(checkpoint: Checkpoint | undefined, detail: boolean): string[] {
+function checkpointLines(
+    checkpoint: Checkpoint | undefined,
+    detail: boolean,
+): string[] {
     if (checkpoint === undefined) return [];
-    const given = checkpoint.reportRootGiven === true ? "given" : "not given (pass --report-root)";
+    const given =
+        checkpoint.reportRootGiven === true
+            ? "given"
+            : "not given (pass --report-root)";
     const lines = [`checkpoint: report root ${given}`];
     for (const report of checkpoint.reports ?? []) {
         lines.push(reportLine(report));
@@ -3333,7 +3502,8 @@ function reportLine(report: ReportObservation): string {
     const wrong = report.wrongCampaign === true ? " (WRONG CAMPAIGN)" : "";
     const verdict =
         report.recommendation !== undefined ? `, ${report.recommendation}` : "";
-    const decision = report.decision !== undefined ? `, decision ${report.decision}` : "";
+    const decision =
+        report.decision !== undefined ? `, decision ${report.decision}` : "";
     return `  ${report.dir}: ${report.freshness ?? "unknown"}${wrong}${verdict}${decision}`;
 }
 
@@ -3363,7 +3533,8 @@ function reconciliationLine(rec: ReconciliationObservation): string {
 /** The next-action block. */
 function actionLines(action: NextAction): string[] {
     const lines = [`NEXT (${action.kind}): ${action.why}`];
-    if (action.command !== undefined) lines.push(`  command: ${action.command}`);
+    if (action.command !== undefined)
+        lines.push(`  command: ${action.command}`);
     if (action.path !== undefined) lines.push(`  evidence: ${action.path}`);
     if (action.cwd !== undefined) lines.push(`  cwd: ${action.cwd}`);
     if ((action.envNames ?? []).length > 0) {
@@ -3449,12 +3620,16 @@ export function parseArguments(
         help: argv.includes("--help") || argv.includes("-h"),
     };
     const tokenised = tokenizeArguments(argv);
-    const problems = [...tokenised.problems, ...validateArguments(args, tokenised)];
+    const problems = [
+        ...tokenised.problems,
+        ...validateArguments(args, tokenised),
+    ];
     if (problems.length > 0) return { ok: false, problems };
     const merged: ParsedArguments = { ...args };
     if (tokenised.base !== undefined) merged.base = tokenised.base;
     if (tokenised.root !== undefined) merged.root = tokenised.root;
-    if (tokenised.reportRoot !== undefined) merged.reportRoot = tokenised.reportRoot;
+    if (tokenised.reportRoot !== undefined)
+        merged.reportRoot = tokenised.reportRoot;
     return { ok: true, args: merged };
 }
 
@@ -3511,7 +3686,9 @@ function validateArguments(
         problems.push("--base and --root are separate modes; pass one");
     }
     if (valued.base === undefined && valued.root === undefined && !args.help) {
-        problems.push("pass either --base <revision> or --root <campaign-root>");
+        problems.push(
+            "pass either --base <revision> or --root <campaign-root>",
+        );
     }
     if (valued.root === undefined && valued.reportRoot !== undefined) {
         problems.push("--report-root applies to campaign mode (--root)");
@@ -3561,7 +3738,9 @@ function usageError(
         );
         return 1;
     }
-    streams.err(redact(problems.map((problem) => `usage: ${problem}`).join("\n")));
+    streams.err(
+        redact(problems.map((problem) => `usage: ${problem}`).join("\n")),
+    );
     streams.err(USAGE);
     return 1;
 }

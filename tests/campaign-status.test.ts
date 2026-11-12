@@ -35,8 +35,20 @@ const campaignDir = join(
 );
 const statusCli = join(campaignDir, "status.mts");
 const materialise = join(campaignDir, "materialise.mts");
-const analyser = join(here, "fixtures", "placement-harness", "analysis", "analyse.mts");
-const miniManifest = join(here, "fixtures", "analysis", "manifests", "mini.json");
+const analyser = join(
+    here,
+    "fixtures",
+    "placement-harness",
+    "analysis",
+    "analyse.mts",
+);
+const miniManifest = join(
+    here,
+    "fixtures",
+    "analysis",
+    "manifests",
+    "mini.json",
+);
 const miniCorpus = join(here, "fixtures", "analysis", "mini-corpus");
 const repo = here.endsWith("/tests") ? dirname(here) : here;
 
@@ -90,7 +102,7 @@ function fakePodmanBin(): { bin: string; log: string } {
             `  printf '%s\\n' ${JSON.stringify(PODMAN_VERSION)}`,
             "  exit 0",
             "fi",
-            "if [ \"$1\" = \"image\" ] && [ \"$2\" = \"inspect\" ]; then",
+            'if [ "$1" = "image" ] && [ "$2" = "inspect" ]; then',
             `  printf '%s\\n' ${JSON.stringify(IMAGE_ID)}`,
             "  exit 0",
             "fi",
@@ -183,12 +195,16 @@ interface FrozenOptions {
 
 /** A FROZEN.json whose immutable inputs hash this root's real bytes. */
 function writeFrozen(root: string, options: FrozenOptions = {}): void {
-    const inventory = (dir: string): { path: string; files: { path: string; sha256: string }[] } => ({
+    const inventory = (
+        dir: string,
+    ): { path: string; files: { path: string; sha256: string }[] } => ({
         path: dir,
         files: ((): { path: string; sha256: string }[] => {
             const found: { path: string; sha256: string }[] = [];
             const walk = (current: string): void => {
-                for (const entry of readdirSync(current, { withFileTypes: true })) {
+                for (const entry of readdirSync(current, {
+                    withFileTypes: true,
+                })) {
                     const child = join(current, entry.name);
                     if (entry.isDirectory()) walk(child);
                     else if (entry.isFile()) {
@@ -211,7 +227,8 @@ function writeFrozen(root: string, options: FrozenOptions = {}): void {
             clean: true,
             descriptionChars: [...DESCRIPTION_A].length,
             descriptionHash: sha(DESCRIPTION_A),
-            deliveredChars: [...(options.armADelivered ?? DESCRIPTION_A)].length,
+            deliveredChars: [...(options.armADelivered ?? DESCRIPTION_A)]
+                .length,
             deliveredHash: sha(options.armADelivered ?? DESCRIPTION_A),
             annotationChars: 10,
             annotationHash: sha("annotation"),
@@ -272,7 +289,11 @@ function writeFrozen(root: string, options: FrozenOptions = {}): void {
 }
 
 /** A captured provider request serving the given description. */
-function writeDelivery(root: string, arm: "a" | "b", description: string): void {
+function writeDelivery(
+    root: string,
+    arm: "a" | "b",
+    description: string,
+): void {
     write(
         join(root, `evidence/delivery-${arm}`, "request-1.json"),
         `${JSON.stringify({
@@ -308,7 +329,9 @@ function completePreparation(root: string): void {
         mkdirSync(join(root, dir, "node_modules"), { recursive: true });
     }
     for (const arm of ["a", "b"]) {
-        mkdirSync(join(root, "gen", arm, "fixtures", "R01"), { recursive: true });
+        mkdirSync(join(root, "gen", arm, "fixtures", "R01"), {
+            recursive: true,
+        });
     }
     writeSchedule(root);
     writeSurfaces(root);
@@ -339,7 +362,12 @@ function writeClaim(
     stamp: string,
 ): void {
     write(
-        join(root, "evidence", kind, `${kind}-${String(index).padStart(4, "0")}.claim`),
+        join(
+            root,
+            "evidence",
+            kind,
+            `${kind}-${String(index).padStart(4, "0")}.claim`,
+        ),
         `${JSON.stringify({
             kind,
             index,
@@ -357,16 +385,69 @@ function writeClaim(
 function completePair(root: string, pairId: string): void {
     const schedule = JSON.parse(
         readFileSync(join(root, "evidence/schedule.json"), "utf8"),
-    ) as { slots: { slot: number; pairId: string; stamp: string; arm: string; scenario: string }[] };
+    ) as {
+        slots: {
+            slot: number;
+            pairId: string;
+            stamp: string;
+            arm: string;
+            scenario: string;
+        }[];
+    };
     const slots = schedule.slots.filter((slot) => slot.pairId === pairId);
     for (const slot of slots) {
-        ledgerEvent(root, { event: "launch", slot: slot.slot, pairId, stamp: slot.stamp, arm: slot.arm });
-        ledgerEvent(root, { event: "trial-exit", slot: slot.slot, pairId, stamp: slot.stamp, arm: slot.arm, usable: true });
-        ledgerEvent(root, { event: "judge-launch", slot: slot.slot, pairId, stamp: slot.stamp, arm: slot.arm });
-        ledgerEvent(root, { event: "judge-exit", slot: slot.slot, pairId, stamp: slot.stamp, arm: slot.arm, outcome: "judged" });
-        ledgerEvent(root, { event: "slot-complete", slot: slot.slot, pairId, stamp: slot.stamp, arm: slot.arm, judged: true });
-        writeClaim(root, "trial", slots.indexOf(slot) + 1, "closed", slot.stamp);
-        writeClaim(root, "judge", slots.indexOf(slot) + 1, "closed", slot.stamp);
+        ledgerEvent(root, {
+            event: "launch",
+            slot: slot.slot,
+            pairId,
+            stamp: slot.stamp,
+            arm: slot.arm,
+        });
+        ledgerEvent(root, {
+            event: "trial-exit",
+            slot: slot.slot,
+            pairId,
+            stamp: slot.stamp,
+            arm: slot.arm,
+            usable: true,
+        });
+        ledgerEvent(root, {
+            event: "judge-launch",
+            slot: slot.slot,
+            pairId,
+            stamp: slot.stamp,
+            arm: slot.arm,
+        });
+        ledgerEvent(root, {
+            event: "judge-exit",
+            slot: slot.slot,
+            pairId,
+            stamp: slot.stamp,
+            arm: slot.arm,
+            outcome: "judged",
+        });
+        ledgerEvent(root, {
+            event: "slot-complete",
+            slot: slot.slot,
+            pairId,
+            stamp: slot.stamp,
+            arm: slot.arm,
+            judged: true,
+        });
+        writeClaim(
+            root,
+            "trial",
+            slots.indexOf(slot) + 1,
+            "closed",
+            slot.stamp,
+        );
+        writeClaim(
+            root,
+            "judge",
+            slots.indexOf(slot) + 1,
+            "closed",
+            slot.stamp,
+        );
     }
     ledgerEvent(root, { event: "pair-complete", pairId });
 }
@@ -411,8 +492,14 @@ function writeReport(dir: string, options: ReportOptions = {}): string {
             measures: {
                 status: "available",
                 arms: {
-                    A: { recording: { planned: 4, success: 2 }, retrieval: { planned: 4, applied: 1 } },
-                    B: { recording: { planned: 4, success: 3 }, retrieval: { planned: 4, applied: 2 } },
+                    A: {
+                        recording: { planned: 4, success: 2 },
+                        retrieval: { planned: 4, applied: 1 },
+                    },
+                    B: {
+                        recording: { planned: 4, success: 3 },
+                        retrieval: { planned: 4, applied: 2 },
+                    },
                 },
                 personalTrial: {
                     recommendation: options.recommendation ?? "personal-trial",
@@ -480,7 +567,8 @@ describe("status CLI contract", () => {
         // Assert
         assert.equal(run.status, 1);
         assert.match(run.stderr, /separate modes/);
-    });});
+    });
+});
 
 describe("status checkout mode", () => {
     /** A small git repo carrying the campaign tooling shape. */
@@ -509,7 +597,10 @@ describe("status checkout mode", () => {
         // Arrange: a scratch commit, then an uncommitted change beside it.
         const dir = gitRepo();
         write(
-            join(dir, "tests/fixtures/placement-harness/prod014/campaign/extra.txt"),
+            join(
+                dir,
+                "tests/fixtures/placement-harness/prod014/campaign/extra.txt",
+            ),
             "uncommitted\n",
         );
 
@@ -631,7 +722,10 @@ describe("status campaign mode: roots and preparation", () => {
 
     it("exits 2 when a root path is a file", () => {
         // Arrange
-        const file = join(mkdtempSync(join(tmpdir(), "pd-status-")), "not-a-dir");
+        const file = join(
+            mkdtempSync(join(tmpdir(), "pd-status-")),
+            "not-a-dir",
+        );
         writeFileSync(file, "x", "utf8");
 
         // Act
@@ -705,7 +799,10 @@ describe("status campaign mode: roots and preparation", () => {
             state: string;
             detail?: string;
         }[];
-        assert.equal(steps.find((step) => step.step === "freeze")?.state, "verified");
+        assert.equal(
+            steps.find((step) => step.step === "freeze")?.state,
+            "verified",
+        );
         assert.match(
             steps.find((step) => step.step === "B-only description change")
                 ?.detail ?? "",
@@ -783,8 +880,9 @@ describe("status campaign mode: roots and preparation", () => {
 
         // Assert
         assert.equal(result.phase, "frozen-premise-changed");
-        const spend = (result.position as { spend?: { trial: { ceiling: number } } })
-            .spend;
+        const spend = (
+            result.position as { spend?: { trial: { ceiling: number } } }
+        ).spend;
         assert.equal(spend?.trial.ceiling, 0);
     });
 
@@ -793,7 +891,9 @@ describe("status campaign mode: roots and preparation", () => {
         const parent = mkdtempSync(join(tmpdir(), "pd-status-space-"));
         const root = join(parent, "cam paign root");
         mkdirSync(root, { recursive: true });
-        execFileSync(process.execPath, [materialise, root], { encoding: "utf8" });
+        execFileSync(process.execPath, [materialise, root], {
+            encoding: "utf8",
+        });
 
         // Act
         const result = statusJson(["--root", root]);
@@ -882,9 +982,13 @@ describe("status campaign mode: live position", () => {
         const next = result.nextAction as { kind: string; command?: string };
         assert.equal(next.kind, "inspection");
         assert.equal(next.command, undefined);
-        const slots = (result.position as { slots: { stamp: string; state: string }[] })
-            .slots;
-        assert.equal(slots.find((slot) => slot.stamp === "pd-A-r0-R01")?.state, "reserved");
+        const slots = (
+            result.position as { slots: { stamp: string; state: string }[] }
+        ).slots;
+        assert.equal(
+            slots.find((slot) => slot.stamp === "pd-A-r0-R01")?.state,
+            "reserved",
+        );
     });
 
     it("reports a pre-dispatch refusal with its reason", () => {
@@ -903,8 +1007,11 @@ describe("status campaign mode: live position", () => {
         const result = statusJson(["--root", root, "--detail"]);
 
         // Assert
-        const slots = (result.position as { slots: { stamp: string; state: string; note?: string }[] })
-            .slots;
+        const slots = (
+            result.position as {
+                slots: { stamp: string; state: string; note?: string }[];
+            }
+        ).slots;
         const slot = slots.find((entry) => entry.stamp === "pd-A-r0-R01");
         assert.equal(slot?.state, "refused-before-dispatch");
         assert.match(slot?.note ?? "", /unsettled trial claim/);
@@ -913,9 +1020,28 @@ describe("status campaign mode: live position", () => {
     it("reports a failed judgement and an interrupted slot distinctly", () => {
         // Arrange
         const root = liveRoot("pd-status-mixed");
-        ledgerEvent(root, { event: "launch", slot: 1, pairId: "P01", stamp: "pd-A-r0-R01", arm: "A" });
-        ledgerEvent(root, { event: "trial-exit", slot: 1, pairId: "P01", stamp: "pd-A-r0-R01", arm: "A", usable: false });
-        ledgerEvent(root, { event: "launch", slot: 2, pairId: "P01", stamp: "pd-B-r0-R01", arm: "B" });
+        ledgerEvent(root, {
+            event: "launch",
+            slot: 1,
+            pairId: "P01",
+            stamp: "pd-A-r0-R01",
+            arm: "A",
+        });
+        ledgerEvent(root, {
+            event: "trial-exit",
+            slot: 1,
+            pairId: "P01",
+            stamp: "pd-A-r0-R01",
+            arm: "A",
+            usable: false,
+        });
+        ledgerEvent(root, {
+            event: "launch",
+            slot: 2,
+            pairId: "P01",
+            stamp: "pd-B-r0-R01",
+            arm: "B",
+        });
         writeClaim(root, "trial", 1, "closed", "pd-A-r0-R01");
         writeClaim(root, "trial", 2, "spawned", "pd-B-r0-R01");
 
@@ -923,10 +1049,17 @@ describe("status campaign mode: live position", () => {
         const result = statusJson(["--root", root, "--detail"]);
 
         // Assert
-        const slots = (result.position as { slots: { stamp: string; state: string }[] })
-            .slots;
-        assert.equal(slots.find((slot) => slot.stamp === "pd-A-r0-R01")?.state, "failed-unusable");
-        assert.equal(slots.find((slot) => slot.stamp === "pd-B-r0-R01")?.state, "spawned");
+        const slots = (
+            result.position as { slots: { stamp: string; state: string }[] }
+        ).slots;
+        assert.equal(
+            slots.find((slot) => slot.stamp === "pd-A-r0-R01")?.state,
+            "failed-unusable",
+        );
+        assert.equal(
+            slots.find((slot) => slot.stamp === "pd-B-r0-R01")?.state,
+            "spawned",
+        );
     });
 
     it("counts completed pairs and usable assessments", () => {
@@ -981,13 +1114,19 @@ describe("status campaign mode: live position", () => {
         // Assert
         assert.equal(run.status, 0);
         assert.equal(result.result.phase, "closed");
-        assert.match(result.result.position.stopReason ?? "", /operator decision/);
+        assert.match(
+            result.result.position.stopReason ?? "",
+            /operator decision/,
+        );
     });
 
     it("labels a ledger that advances mid-read instead of chasing it", () => {
         // Arrange
         const root = liveRoot("pd-status-changing");
-        ledgerEvent(root, { event: "campaign-start", campaign: "pd-status-test" });
+        ledgerEvent(root, {
+            event: "campaign-start",
+            campaign: "pd-status-test",
+        });
         const { files } = readIdentityFiles(root);
         let reads = 0;
         const changingReader = (): string | null => {
@@ -1008,10 +1147,7 @@ describe("status campaign mode: live position", () => {
     it("treats a malformed ledger as blocked, not empty", () => {
         // Arrange
         const root = liveRoot("pd-status-malformed");
-        write(
-            join(root, "evidence/ATTEMPTS.jsonl"),
-            "{not json at all\n",
-        );
+        write(join(root, "evidence/ATTEMPTS.jsonl"), "{not json at all\n");
 
         // Act
         const run = status(["--root", root]);
@@ -1034,12 +1170,14 @@ describe("status campaign mode: live position", () => {
         const result = statusJson(["--root", root]);
 
         // Assert
-        const spend = (result.position as {
-            spend: {
-                trial: { used: number; ceiling: number; remaining: number };
-                judge: { used: number; ceiling: number; remaining: number };
-            };
-        }).spend;
+        const spend = (
+            result.position as {
+                spend: {
+                    trial: { used: number; ceiling: number; remaining: number };
+                    judge: { used: number; ceiling: number; remaining: number };
+                };
+            }
+        ).spend;
         assert.equal(spend.trial.used, 2);
         assert.equal(spend.trial.ceiling, 16);
         assert.equal(spend.trial.remaining, 14);
@@ -1079,7 +1217,8 @@ describe("status campaign mode: checkpoints and reports", () => {
     it("treats P01–P04 without a current report as a missing checkpoint", () => {
         // Arrange
         const root = checkpointRoot("pd-status-p04-noreport");
-        for (const pair of ["P01", "P02", "P03", "P04"]) completePair(root, pair);
+        for (const pair of ["P01", "P02", "P03", "P04"])
+            completePair(root, pair);
 
         // Act
         const result = statusJson(["--root", root]);
@@ -1094,26 +1233,34 @@ describe("status campaign mode: checkpoints and reports", () => {
     it("detects a stale report whose manifest hash no longer matches", () => {
         // Arrange
         const root = checkpointRoot("pd-status-p04-stale");
-        for (const pair of ["P01", "P02", "P03", "P04"]) completePair(root, pair);
+        for (const pair of ["P01", "P02", "P03", "P04"])
+            completePair(root, pair);
         const reportRoot = mkdtempSync(join(tmpdir(), "pd-status-reportroot-"));
         writeReport(join(reportRoot, "p04"), {
             manifestPath: join(root, "evidence/schedule.json"),
         });
 
         // Act
-        const result = statusJson(["--root", root, "--report-root", reportRoot]);
+        const result = statusJson([
+            "--root",
+            root,
+            "--report-root",
+            reportRoot,
+        ]);
 
         // Assert
         assert.equal(result.phase, "checkpoint-report-missing");
-        const report = (result.checkpoint as { reports: { freshness: string }[] })
-            .reports[0];
+        const report = (
+            result.checkpoint as { reports: { freshness: string }[] }
+        ).reports[0];
         assert.equal(report?.freshness, "stale");
     });
 
     it("detects a report the ledger has outgrown even with a matching manifest", () => {
         // Arrange: rendered before the last durable ledger event.
         const root = checkpointRoot("pd-status-p04-old");
-        for (const pair of ["P01", "P02", "P03", "P04"]) completePair(root, pair);
+        for (const pair of ["P01", "P02", "P03", "P04"])
+            completePair(root, pair);
         const reportRoot = mkdtempSync(join(tmpdir(), "pd-status-reportroot-"));
         writeReport(join(reportRoot, "p04"), {
             manifestPath: join(root, "prepare/manifest.json"),
@@ -1121,13 +1268,20 @@ describe("status campaign mode: checkpoints and reports", () => {
         });
 
         // Act
-        const result = statusJson(["--root", root, "--report-root", reportRoot]);
+        const result = statusJson([
+            "--root",
+            root,
+            "--report-root",
+            reportRoot,
+        ]);
 
         // Assert
         assert.equal(result.phase, "checkpoint-report-missing");
-        const report = (result.checkpoint as {
-            reports: { freshness: string; ledgerAdvancedSince: boolean }[];
-        }).reports[0];
+        const report = (
+            result.checkpoint as {
+                reports: { freshness: string; ledgerAdvancedSince: boolean }[];
+            }
+        ).reports[0];
         assert.equal(report?.freshness, "stale");
         assert.equal(report?.ledgerAdvancedSince, true);
     });
@@ -1135,7 +1289,8 @@ describe("status campaign mode: checkpoints and reports", () => {
     it("flags a wrong-campaign report", () => {
         // Arrange
         const root = checkpointRoot("pd-status-p04-wrong");
-        for (const pair of ["P01", "P02", "P03", "P04"]) completePair(root, pair);
+        for (const pair of ["P01", "P02", "P03", "P04"])
+            completePair(root, pair);
         const reportRoot = mkdtempSync(join(tmpdir(), "pd-status-reportroot-"));
         writeReport(join(reportRoot, "p04"), {
             campaignId: "some-other-campaign",
@@ -1143,11 +1298,17 @@ describe("status campaign mode: checkpoints and reports", () => {
         });
 
         // Act
-        const result = statusJson(["--root", root, "--report-root", reportRoot]);
+        const result = statusJson([
+            "--root",
+            root,
+            "--report-root",
+            reportRoot,
+        ]);
 
         // Assert
-        const report = (result.checkpoint as { reports: { wrongCampaign: boolean }[] })
-            .reports[0];
+        const report = (
+            result.checkpoint as { reports: { wrongCampaign: boolean }[] }
+        ).reports[0];
         assert.equal(report?.wrongCampaign, true);
         assert.equal(result.phase, "checkpoint-report-missing");
     });
@@ -1155,14 +1316,20 @@ describe("status campaign mode: checkpoints and reports", () => {
     it("hands a current P04 report to the operator as a decision", () => {
         // Arrange
         const root = checkpointRoot("pd-status-p04-current");
-        for (const pair of ["P01", "P02", "P03", "P04"]) completePair(root, pair);
+        for (const pair of ["P01", "P02", "P03", "P04"])
+            completePair(root, pair);
         const reportRoot = mkdtempSync(join(tmpdir(), "pd-status-reportroot-"));
         writeReport(join(reportRoot, "p04"), {
             manifestPath: join(root, "prepare/manifest.json"),
         });
 
         // Act
-        const result = statusJson(["--root", root, "--report-root", reportRoot]);
+        const result = statusJson([
+            "--root",
+            root,
+            "--report-root",
+            reportRoot,
+        ]);
 
         // Assert
         assert.equal(result.phase, "checkpoint-review");
@@ -1174,7 +1341,16 @@ describe("status campaign mode: checkpoints and reports", () => {
     it("surfaces a closed campaign's reconciliation and a tie verdict", () => {
         // Arrange
         const root = checkpointRoot("pd-status-p08-closed");
-        for (const pair of ["P01", "P02", "P03", "P04", "P05", "P06", "P07", "P08"]) {
+        for (const pair of [
+            "P01",
+            "P02",
+            "P03",
+            "P04",
+            "P05",
+            "P06",
+            "P07",
+            "P08",
+        ]) {
             completePair(root, pair);
         }
         const reportRoot = mkdtempSync(join(tmpdir(), "pd-status-reportroot-"));
@@ -1208,27 +1384,39 @@ describe("status campaign mode: checkpoints and reports", () => {
         );
 
         // Act
-        const result = statusJson(["--root", root, "--report-root", reportRoot]);
+        const result = statusJson([
+            "--root",
+            root,
+            "--report-root",
+            reportRoot,
+        ]);
 
         // Assert
         assert.equal(result.phase, "closed");
-        const rec = (result.checkpoint as {
-            reconciliation: {
-                present: boolean;
-                completedPairs: number;
-                trialLaunches: number;
-                billingTrial: number | null;
-                billingJudge: number | null;
-            };
-        }).reconciliation;
+        const rec = (
+            result.checkpoint as {
+                reconciliation: {
+                    present: boolean;
+                    completedPairs: number;
+                    trialLaunches: number;
+                    billingTrial: number | null;
+                    billingJudge: number | null;
+                };
+            }
+        ).reconciliation;
         assert.equal(rec.present, true);
         assert.equal(rec.completedPairs, 8);
         assert.equal(rec.trialLaunches, 16);
         assert.equal(rec.billingTrial, 12.5);
         assert.equal(rec.billingJudge, 3.25);
-        const report = (result.checkpoint as {
-            reports: { recommendation: string; pairedDelta: number | null }[];
-        }).reports[0];
+        const report = (
+            result.checkpoint as {
+                reports: {
+                    recommendation: string;
+                    pairedDelta: number | null;
+                }[];
+            }
+        ).reports[0];
         assert.equal(report?.recommendation, "inconclusive");
         assert.equal(report?.pairedDelta, 0);
     });
@@ -1327,15 +1515,15 @@ describe("status projections and safety", () => {
 
     it("redacts credential material from diagnostics", () => {
         // Act / Assert
-        assert.equal(redact("leak sk-abcdef123456 here"), "leak [redacted] here");
+        assert.equal(
+            redact("leak sk-abcdef123456 here"),
+            "leak [redacted] here",
+        );
         assert.equal(
             redact("ZAI_API_KEY=plain-value"),
             "ZAI_API_KEY=[redacted]",
         );
-        assert.equal(
-            shellQuote("it's a path"),
-            "'it'\\''s a path'",
-        );
+        assert.equal(shellQuote("it's a path"), "'it'\\''s a path'");
     });
 
     it("represents missing legacy fields without failing", () => {
@@ -1367,7 +1555,8 @@ describe("status findings regressions", () => {
 
     /** Complete P01–P04 in the ledger and claims. */
     function completeCheckpoint(root: string): void {
-        for (const pair of ["P01", "P02", "P03", "P04"]) completePair(root, pair);
+        for (const pair of ["P01", "P02", "P03", "P04"])
+            completePair(root, pair);
     }
 
     it("the printed checkout setup command runs verbatim in a disposable checkout", () => {
@@ -1460,9 +1649,13 @@ describe("status findings regressions", () => {
         const next = result.nextAction as { kind: string; command?: string };
         assert.equal(next.kind, "inspection");
         assert.equal(next.command, undefined);
-        const slots = (result.position as { slots: { stamp: string; state: string }[] })
-            .slots;
-        assert.equal(slots.find((slot) => slot.stamp === "pd-A-r0-R01")?.state, "dispatched");
+        const slots = (
+            result.position as { slots: { stamp: string; state: string }[] }
+        ).slots;
+        assert.equal(
+            slots.find((slot) => slot.stamp === "pd-A-r0-R01")?.state,
+            "dispatched",
+        );
     });
 
     it("a clean pause after P01 resumes only to the P04 checkpoint", () => {
@@ -1526,8 +1719,11 @@ describe("status findings regressions", () => {
         const next = result.nextAction as { kind: string; command?: string };
         assert.equal(next.kind, "inspection");
         assert.equal(next.command, undefined);
-        const slots = (result.position as { slots: { stamp: string; state: string; note?: string }[] })
-            .slots;
+        const slots = (
+            result.position as {
+                slots: { stamp: string; state: string; note?: string }[];
+            }
+        ).slots;
         const stopped = slots.find((slot) => slot.stamp === "pd-B-r0-S05");
         assert.equal(stopped?.state, "judge-refused");
         assert.match(stopped?.note ?? "", /before writing dispatch/);
@@ -1545,12 +1741,14 @@ describe("status findings regressions", () => {
 
         // Assert
         assert.equal(result.phase, "blocked-unreadable-spend");
-        const spend = (result.position as {
-            spend: {
-                trial: { used: number | null; remaining: number | null };
-                judge: { used: number | null };
-            };
-        }).spend;
+        const spend = (
+            result.position as {
+                spend: {
+                    trial: { used: number | null; remaining: number | null };
+                    judge: { used: number | null };
+                };
+            }
+        ).spend;
         assert.equal(spend.trial.used, null);
         assert.equal(spend.trial.remaining, null);
         assert.equal(spend.judge.used, 0);
@@ -1570,9 +1768,11 @@ describe("status findings regressions", () => {
 
         // Assert
         assert.equal(result.phase, "frozen-ready");
-        const spend = (result.position as {
-            spend: { trial: { used: number; remaining: number } };
-        }).spend;
+        const spend = (
+            result.position as {
+                spend: { trial: { used: number; remaining: number } };
+            }
+        ).spend;
         assert.equal(spend.trial.used, 0);
         assert.equal(spend.trial.remaining, 16);
     });
@@ -1634,12 +1834,19 @@ describe("status findings regressions", () => {
         );
 
         // Act
-        const result = statusJson(["--root", root, "--report-root", reportRoot]);
+        const result = statusJson([
+            "--root",
+            root,
+            "--report-root",
+            reportRoot,
+        ]);
 
         // Assert: a manifest alone cannot prove how far the report covers.
-        const report = (result.checkpoint as {
-            reports: { freshness: string; manifestMatches: boolean }[];
-        }).reports[0];
+        const report = (
+            result.checkpoint as {
+                reports: { freshness: string; manifestMatches: boolean }[];
+            }
+        ).reports[0];
         assert.equal(report?.manifestMatches, true);
         assert.equal(report?.freshness, "indeterminate");
         assert.equal(result.phase, "checkpoint-report-missing");
@@ -1677,7 +1884,10 @@ describe("status agrees with the registered analyser", () => {
             measures: {
                 arms: Record<
                     string,
-                    { recording: { planned: number; success: number }; retrieval: { planned: number; applied: number } }
+                    {
+                        recording: { planned: number; success: number };
+                        retrieval: { planned: number; applied: number };
+                    }
                 >;
                 personalTrial: { recommendation: string };
             };
@@ -1710,24 +1920,35 @@ describe("status agrees with the registered analyser", () => {
         const result = statusJson(["--root", root, "--report-root", out]);
 
         // Assert
-        const report = (result.checkpoint as {
-            reports: {
-                campaignId?: string;
-                manifestMatches?: boolean;
-                freshness?: string;
-                decision?: string;
-                recommendation?: string;
-                recording?: Record<string, { planned: number; success: number }>;
-                retrieval?: Record<string, { planned: number; applied: number }>;
-                coverage?: { documented: number; assessed: number };
-            }[];
-        }).reports[0];
+        const report = (
+            result.checkpoint as {
+                reports: {
+                    campaignId?: string;
+                    manifestMatches?: boolean;
+                    freshness?: string;
+                    decision?: string;
+                    recommendation?: string;
+                    recording?: Record<
+                        string,
+                        { planned: number; success: number }
+                    >;
+                    retrieval?: Record<
+                        string,
+                        { planned: number; applied: number }
+                    >;
+                    coverage?: { documented: number; assessed: number };
+                }[];
+            }
+        ).reports[0];
         assert.ok(report, "the analyser's report must be observed");
         assert.equal(report.campaignId, published.campaign.id);
         assert.equal(report.manifestMatches, true);
         assert.equal(report.freshness, "current");
         assert.equal(report.decision, published.decision.overall);
-        assert.equal(report.recommendation, published.measures.personalTrial.recommendation);
+        assert.equal(
+            report.recommendation,
+            published.measures.personalTrial.recommendation,
+        );
         for (const arm of Object.keys(published.measures.arms)) {
             assert.deepEqual(report.recording?.[arm], {
                 planned: published.measures.arms[arm]?.recording.planned,
