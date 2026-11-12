@@ -62,10 +62,21 @@ description; arm B was the patched 739-character candidate. Zero paid calls.
   pairs (8/8) and zero recording/retrieval credit, because the fake model made
   no useful change. That is the independently expected decision for a dead
   heat; the utility-threshold component said `qualified`, which is exactly why
-  it is labelled a component.
+  it is labelled a component. Accounting assessed 8/8 trials for A and 8/8 for
+  B, and the Markdown headline matched the JSON recommendation.
+- Candidate-head run: P04 18.7 s (8 trial-provider requests, 8 judge attempts,
+  0 judge-provider requests), P08 37.6 s (16 trial-provider requests, 16 judge
+  attempts, 16 captured judge packets, 0 judge-provider requests, because the
+  fake judge is local).
+- Trial-child check: the child receives no `PLACEMENT_PLUGIN_COMMIT` or
+  `PLACEMENT_PLUGIN_DIRTY`; its cwd is `/results/slot/<id>` and its result mount
+  and receipt use the neutral `slot` stamp. The arm commit remains in the outer
+  launch ledger. The judge packet has 0 arm labels across 16 captures and still
+  carries the declared lake/path and retrieval question.
 
-Rehearsed revision: `022f0cec6da8ae75707e4e5ad77cd72fa581e8a6`. Later commits
-are documentation only.
+Rehearsed revision: `2147c424d2c5e07d873fd6c040f18083b01ea944` (the candidate
+head with neutral child paths and stripped provenance). Any later commit is
+documentation only.
 
 ## D1–D10 mapping
 
@@ -88,9 +99,10 @@ are documentation only.
    materialised-CLI level; closed, malformed, conflicting and unsettled states
    refuse before spawn. Judged.
 2. **Evidence boundary.** One typed verifier is reached by the harness and by
-   the analyser CLI; answer hash binding is tested. Trial-child environment
-   stripping and judge-packet blinding were not exercised in the rehearsal
-   (the fake judge never saw a real packet); outstanding.
+   the analyser CLI; answer hash binding is tested. Trial-child provenance is
+   stripped and its result path/stamp are neutral; the real judge packet builder
+   was captured 16 times with zero arm leaks. Both deliberate-leak failures were
+   reproduced in a disposable tree. Judged.
 3. **Precise credit.** Recording is bound to the changed lake document and
    retrieval requires a declared lake; both have positive controls and
    counterexamples. Judged.
@@ -117,7 +129,7 @@ defined comply        # in a clone, not a linked worktree
 defined verify
 ```
 
-Observed: 1100 tests pass, zero fail; typecheck clean; both gate verbs
+Observed: 1107 tests pass, zero fail; typecheck clean; both gate verbs
 compliant. Materialised regression counts: closed campaign and bad shim exit 2
 with zero launcher calls; failed recovery exit 2 with zero calls; judged
 recovery exit 0 with zero duplicate calls.
@@ -164,8 +176,9 @@ broken premise.
 - The fake judge produced no model steps, so the rehearsal's judge-inference
   and token totals are not comparable with a real judge run. Real-run token
   coverage and wall time remain unmeasured.
-- Trial-child environment stripping and judge-packet blinding were not
-  exercised end to end; the label-leak and packet tests are unit-level.
+- The child still learns its own scenario id and the case prompt; only arm
+  identity is removed. The judge fake made no provider call, so a real judge's
+  serialiser is unexercised beyond the real packet text.
 - `dry-check.mjs` and `cli-measures.mjs` remain historical synthetic scripts in
   `scripts.json`; they are not part of `npm test`.
 - Legacy evidence without a retrieval lake parses as malformed and reports
@@ -179,8 +192,7 @@ gate container (coverage dominates).
 
 ## Open questions
 
-- Whether to strip arm labels from trial child environments and exercise the
-  real judge packet in a future authorised campaign.
+- Whether a real judge provider reproduces the same arm-blind packet bytes.
 - Whether the remaining historical scripts in `scripts.json` should be deleted
   or retained as replay data after this campaign closes.
 - Whether a real judge run reproduces the expected `no-promotion` decision on
