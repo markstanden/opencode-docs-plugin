@@ -28,6 +28,8 @@ node "$CAMPAIGN_ROOT/prepare/surfaces.mjs" "$CAMPAIGN_ROOT/arms/a" \
   "$CAMPAIGN_ROOT/evidence/surfaces-a.json"
 node "$CAMPAIGN_ROOT/prepare/surfaces.mjs" "$CAMPAIGN_ROOT/arms/b" \
   "$CAMPAIGN_ROOT/evidence/surfaces-b.json"
+# Each probe writes request-1.json beside its capture; freeze reads that raw
+# provider request directly, so there is no hand-extraction step.
 node "$CAMPAIGN_ROOT/prepare/delivery-probe.mjs" \
   "$CAMPAIGN_ROOT/evidence/delivery-a/capture.json" "$CAMPAIGN_ROOT/arms/a" \
   opencode-go/deepseek-v4.1-flash "Hello." 8801
@@ -48,7 +50,9 @@ CAMPAIGN_ROOT="$CAMPAIGN_ROOT" node "$CAMPAIGN_ROOT/prepare/run.mjs" \
 Changed wording requires a fresh root and fresh stamps; never reuse a stamp or
 overwrite a recorded attempt. The analyser manifest is
 `prepare/manifest.json`; run the analyser from the measurement worktree with a
-fresh output directory outside the campaign root.
+fresh output directory outside the campaign root. The manifest's
+`assessment.attemptId` is the single selector: pass `--attempt-id` only when it
+agrees, or the materialised runner refuses before any spend.
 
 ## Provenance
 
