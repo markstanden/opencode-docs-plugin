@@ -19,6 +19,13 @@ import {
 } from "../ac-scoring.mts";
 import type { LakeDocument } from "../ac/campaign.mts";
 import type { SelectionPolicy } from "./model.ts";
+import {
+    answerIdentityProblem,
+    hostDispatchesFromTrail,
+    journalIdentityFromTrail,
+    verifyOperationsJournal,
+    type JournalVerification,
+} from "./journal.ts";
 
 /** The explicit state of one loaded record. */
 export type Loaded<T> =
@@ -172,6 +179,14 @@ export interface TrialRecord {
     tokens: Loaded<TokenUsage>;
     /** The trial artefacts a static screen reads. */
     artefacts: TrialArtefacts;
+    /**
+     * The verified operation-journal evidence. Absent only on a legacy record
+     * built without one; the loader always sets it, and an unverified journal
+     * earns no credit.
+     */
+    journal?: JournalVerification;
+    /** Why the captured answer is not bound to the run, or null. */
+    answerProblem?: string | null;
 }
 
 /** Options for loading one trial under the ac-v1 layout. */
@@ -1010,6 +1025,49 @@ function loadTokens(reader: EvidenceReader, path: string): Loaded<TokenUsage> {
 }
 
 /**
+ * Load and verify the plugin's operation journal for one trial.
+ *
+ * Verification inputs come from the same trial directory: the saved journal,
+ * its per-run signing key, the session/message ids in `stdout.jsonl`, and the
+ * host dispatches in `tools.jsonl`. A missing journal is absent evidence, not
+ * an empty one; an unreadable journal credits nothing.
+ * @param reader The evidence reader.
+ * @param dir The trial directory, relative to the evidence root.
+ * @returns The verification result.
+ */
+function loadJournalVerification(
+    reader: EvidenceReader,
+    dir: string,
+): JournalVerification {
+    const journal = reader.readTextFile(joinPath(dir, "docs-operations.jsonl"));
+    if (journal.state === "missing") {
+        return {
+            state: "absent",
+            credited: [],
+            rejected: [],
+            problems: [],
+        };
+    }
+    const key = reader.readTextFile(joinPath(dir, "docs-operations.key"));
+    const stdout = reader.readTextFile(joinPath(dir, "stdout.jsonl"));
+    const tools = reader.readTextFile(joinPath(dir, "tools.jsonl"));
+    const host =
+        tools.state === "available"
+            ? hostDispatchesFromTrail(tools.value)
+            : { callIds: new Set<string>(), dispatches: [] };
+    return verifyOperationsJournal({
+        lines: journal.state === "available" ? journal.value.split("\n") : [],
+        key: key.state === "available" ? key.value : null,
+        identity:
+            stdout.state === "available"
+                ? journalIdentityFromTrail(stdout.value)
+                : { sessions: new Set(), messages: new Set() },
+        callIds: host.callIds,
+        dispatches: host.dispatches,
+    });
+}
+
+/**
  * Load one trial's evidence under the ac-v1 layout.
  * @param reader The evidence reader rooted at the evidence root.
  * @param options Which trial to load and how to select judgement layers.
@@ -1026,6 +1084,13 @@ export function loadTrialRecord(
     const attempt = attemptOf(reader, dir);
     const run = loadRun(reader, dir);
     const usability = usableOf(run);
+    const finalAnswer = reader.readTextFile(joinPath(dir, "final.md"));
+    const answerProblem =
+        finalAnswer.state === "available" && run.state === "available"
+            ? answerIdentityProblem(finalAnswer.value, run.value.answerHash)
+            : null;
+    const problems = [...attempt.problems, ...usability.problems];
+    if (answerProblem !== null) problems.push(answerProblem);
     return {
         identity: {
             resultRoot: options.resultRoot,
@@ -1034,8 +1099,9 @@ export function loadTrialRecord(
         },
         attempt: {
             state: attempt.state,
-            usable: usability.usable,
-            problems: [...attempt.problems, ...usability.problems],
+            usable:
+                answerProblem === null ? usability.usable : false,
+            problems,
         },
         run,
         gate: loadGate(reader, dir),
@@ -1050,7 +1116,7 @@ export function loadTrialRecord(
         ),
         tokens: loadTokens(reader, joinPath(dir, "stdout.jsonl")),
         artefacts: {
-            finalAnswer: reader.readTextFile(joinPath(dir, "final.md")),
+            finalAnswer,
             writesText: reader.readTextFile(joinPath(dir, "writes.txt")),
             docsOperations: loadLines(
                 reader,
@@ -1058,6 +1124,8 @@ export function loadTrialRecord(
             ),
             promptText: reader.readTextFile(joinPath(dir, "prompt.md")),
         },
+        journal: loadJournalVerification(reader, dir),
+        answerProblem,
     };
 }
 

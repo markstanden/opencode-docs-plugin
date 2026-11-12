@@ -12,6 +12,7 @@ import {
 } from "./fixtures/placement-harness/analysis/measures.ts";
 import type { AccountingCounts } from "./fixtures/placement-harness/analysis/accounting.ts";
 import type { TrialRecord } from "./fixtures/placement-harness/analysis/records.ts";
+import type { JournalVerification } from "./fixtures/placement-harness/analysis/journal.ts";
 
 const declarations: MeasureDeclarations = {
     recording: ["R01"],
@@ -45,6 +46,30 @@ const journal = {
         input: { search: "staging" },
     }),
 };
+
+/** Stand-in for a verified journal built from the fixture's own lines. */
+const verifiedJournal = (lines: string[]): JournalVerification => ({
+    state: "verified",
+    credited: lines.flatMap((line, index) => {
+        try {
+            const value: unknown = JSON.parse(line);
+            return typeof value === "object" && value !== null
+                ? [{ index, record: value as Record<string, unknown> }]
+                : [];
+        } catch {
+            return [];
+        }
+    }),
+    rejected: lines.flatMap((line, index) => {
+        try {
+            JSON.parse(line);
+            return [];
+        } catch {
+            return [{ index, reason: "not-json" as const }];
+        }
+    }),
+    problems: [],
+});
 
 type Overrides = {
     gate?: string;
@@ -108,6 +133,10 @@ const record = (overrides: Overrides = {}): TrialRecord => ({
                   },
         promptText: { state: "missing", source: "prompt" },
     },
+    journal:
+        overrides.journalState === "missing"
+            ? { state: "absent", credited: [], rejected: [], problems: [] }
+            : verifiedJournal(overrides.journal ?? []),
 });
 
 const counts = (overrides: Partial<AccountingCounts> = {}): AccountingCounts =>

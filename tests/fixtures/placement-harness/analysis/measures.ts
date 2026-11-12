@@ -468,17 +468,16 @@ function contextOf(
     record: TrialRecord,
     declarations: MeasureDeclarations,
 ): MeasureContext {
-    const journal = record.artefacts.docsOperations;
+    const journal = journalContextOf(record);
     const parsed =
-        journal.state === "available"
-            ? parseOperations(journal.value)
+        journal.verified === true
+            ? parseOperations(journal.lines)
             : undefined;
-    const journalProblem =
-        journal.state !== "available"
-            ? `docs-operation journal is ${journal.state}`
-            : parsed !== undefined && parsed.problems.length > 0
-              ? `docs-operation journal has unreadable lines: ${parsed.problems.join("; ")}`
-              : null;
+    const journalProblem = journal.problem ?? (
+        parsed !== undefined && parsed.problems.length > 0
+            ? `docs-operation journal has unreadable lines: ${parsed.problems.join("; ")}`
+            : null
+    );
     return {
         record,
         operations: parsed?.operations ?? [],
@@ -495,6 +494,53 @@ function contextOf(
             record.identity.scenario,
         ),
         retrievalDeclaration: declarations.retrieval[record.identity.scenario],
+    };
+}
+
+/** The verified journal lines, or why they are unusable. */
+function journalContextOf(record: TrialRecord): {
+    verified: boolean;
+    lines: string[];
+    problem: string | null;
+} {
+    const verification = record.journal;
+    if (verification === undefined) {
+        return {
+            verified: false,
+            lines: [],
+            problem:
+                "the operation journal was not verified; no journal line can be credited",
+        };
+    }
+    if (verification.state === "absent") {
+        return {
+            verified: false,
+            lines: [],
+            problem: "the docs-operation journal is absent (no plugin journal captured)",
+        };
+    }
+    if (verification.state === "unverifiable-key") {
+        return {
+            verified: false,
+            lines: [],
+            problem:
+                verification.problems[0] ??
+                "the docs-operation journal has no usable signing key",
+        };
+    }
+    const rejected = verification.rejected;
+    const problem =
+        rejected.length === 0
+            ? null
+            : `the docs-operation journal rejected ${String(rejected.length)} line(s): ${[
+                  ...new Set(rejected.map((entry) => entry.reason)),
+              ].join(", ")}`;
+    return {
+        verified: true,
+        lines: verification.credited.map((entry) =>
+            JSON.stringify(entry.record),
+        ),
+        problem,
     };
 }
 
