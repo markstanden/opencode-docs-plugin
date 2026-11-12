@@ -320,10 +320,7 @@ function primaryEvidence(record: unknown): {
     stdout: string;
     stderr: string;
 } {
-    const value =
-        typeof record === "object" && record !== null
-            ? (record as Record<string, unknown>)
-            : null;
+    const value = objectOf(record);
     return {
         status: String(value?.status ?? "missing"),
         exit: typeof value?.exit === "number" ? value.exit : null,
@@ -553,6 +550,40 @@ function judgementPayload(
     };
 }
 
+/** Whether the judge process produced a nonblank answer. */
+function judgeProcessOk(
+    result: ReturnType<typeof spawnSync>,
+    answer: string,
+): boolean {
+    return (
+        result.error === undefined &&
+        result.signal === null &&
+        result.status === 0 &&
+        answer.trim() !== ""
+    );
+}
+
+/** Write the finished attempt metadata. */
+function writeFinishedMeta(
+    attemptDir: string,
+    state: DocState,
+    model: string,
+    stamp: string,
+    caseId: string,
+    started: Record<string, unknown> | null,
+    status: number | null,
+): void {
+    writeJson(join(attemptDir, "meta.json"), {
+        stamp,
+        caseId,
+        judgeModel: model,
+        status: "finished",
+        startedAt: started?.startedAt ?? null,
+        exit: status,
+        state,
+    });
+}
+
 /** Record a judge attempt's evidence and return its terminal status. */
 function recordJudgement(
     attemptDir: string,
@@ -563,32 +594,23 @@ function recordJudgement(
     caseId: string,
     scoringSpec: unknown,
 ) {
-    const startedValue = readJson(join(attemptDir, "meta.json"));
-    const started =
-        typeof startedValue === "object" && startedValue !== null
-            ? (startedValue as Record<string, unknown>)
-            : null;
+    const started = objectOf(readJson(join(attemptDir, "meta.json")));
     writeFileSync(
         join(attemptDir, "output.jsonl"),
         result.stdout ?? "",
         "utf8",
     );
-    writeJson(join(attemptDir, "meta.json"), {
+    writeFinishedMeta(
+        attemptDir,
+        state,
+        model,
         stamp,
         caseId,
-        judgeModel: model,
-        status: "finished",
-        startedAt: started?.startedAt ?? null,
-        exit: result.status,
-        state,
-    });
+        started,
+        result.status,
+    );
     const answer = finalAnswer(String(result.stdout ?? ""));
-    const processOk =
-        result.error === undefined &&
-        result.signal === null &&
-        result.status === 0 &&
-        answer.trim() !== "";
-    if (!processOk) {
+    if (!judgeProcessOk(result, answer)) {
         writeJson(join(attemptDir, "judgement.json"), {
             status: "judge-error",
             problems: [`process not ok (exit ${result.status})`],

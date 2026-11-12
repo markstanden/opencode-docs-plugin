@@ -2,7 +2,7 @@
 // `attempt-002`. The failed `attempt-001` stays untouched.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { credentialFileProblem, loadJudgeKey } from "./env.mts";
 import {

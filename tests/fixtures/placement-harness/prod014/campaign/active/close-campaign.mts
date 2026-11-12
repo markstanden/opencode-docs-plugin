@@ -10,7 +10,6 @@ import {
     appendFileSync,
     existsSync,
     mkdirSync,
-    readFileSync,
     readdirSync,
     renameSync,
     rmSync,
@@ -255,27 +254,23 @@ interface JournalInput {
     check?: string;
 }
 
+/** The add declaration of one journal input, when present. */
+function addInputOf(value: unknown): JournalInput["add"] {
+    if (typeof value !== "object" || value === null) return undefined;
+    const add = value as Record<string, unknown>;
+    return {
+        ...(typeof add.mode === "string" ? { mode: add.mode } : {}),
+        ...(typeof add.path === "string" ? { path: add.path } : {}),
+    };
+}
+
 /** One journal input, validated field by field. */
 function journalInputOf(value: unknown): JournalInput {
     if (typeof value !== "object" || value === null) return {};
     const input = value as Record<string, unknown>;
-    const add =
-        typeof input.add === "object" && input.add !== null
-            ? (input.add as Record<string, unknown>)
-            : undefined;
+    const add = addInputOf(input.add);
     return {
-        ...(add === undefined
-            ? {}
-            : {
-                  add: {
-                      ...(typeof add.mode === "string"
-                          ? { mode: add.mode }
-                          : {}),
-                      ...(typeof add.path === "string"
-                          ? { path: add.path }
-                          : {}),
-                  },
-              }),
+        ...(add === undefined ? {} : { add }),
         ...(typeof input.read === "string" ? { read: input.read } : {}),
         ...(typeof input.search === "string" ? { search: input.search } : {}),
         ...(typeof input.check === "string" ? { check: input.check } : {}),
@@ -381,6 +376,27 @@ interface MeasurementSpec {
     scenarios: Record<string, { retrieval?: RetrievalDeclaration }>;
 }
 
+/** One scenario's retrieval declaration, when present. */
+function retrievalOf(
+    value: unknown,
+    label: string,
+): RetrievalDeclaration | undefined {
+    if (value === undefined) return undefined;
+    const retrieval = recordOf(value, label);
+    if (
+        typeof retrieval.lake !== "string" ||
+        typeof retrieval.note !== "string" ||
+        typeof retrieval.detail !== "string"
+    ) {
+        throw new Error(`${label} needs lake, note and detail`);
+    }
+    return {
+        lake: retrieval.lake,
+        note: retrieval.note,
+        detail: retrieval.detail,
+    };
+}
+
 /** The measurement declaration, validated for the fields closure renders. */
 function measurementOf(path: string): MeasurementSpec {
     const value = recordOf(readJsonValue(path), path);
@@ -395,33 +411,11 @@ function measurementOf(path: string): MeasurementSpec {
     const declared: Record<string, { retrieval?: RetrievalDeclaration }> = {};
     for (const [id, entry] of Object.entries(scenarios)) {
         const scenario = recordOf(entry, `${path}.scenarios.${id}`);
-        const retrieval =
-            scenario.retrieval === undefined
-                ? undefined
-                : recordOf(
-                      scenario.retrieval,
-                      `${path}.scenarios.${id}.retrieval`,
-                  );
-        if (
-            retrieval !== undefined &&
-            (typeof retrieval.lake !== "string" ||
-                typeof retrieval.note !== "string" ||
-                typeof retrieval.detail !== "string")
-        ) {
-            throw new Error(
-                `${path}.scenarios.${id}.retrieval needs lake, note and detail`,
-            );
-        }
-        declared[id] =
-            retrieval === undefined
-                ? {}
-                : {
-                      retrieval: {
-                          lake: retrieval.lake as string,
-                          note: retrieval.note as string,
-                          detail: retrieval.detail as string,
-                      },
-                  };
+        const retrieval = retrievalOf(
+            scenario.retrieval,
+            `${path}.scenarios.${id}.retrieval`,
+        );
+        declared[id] = retrieval === undefined ? {} : { retrieval };
     }
     return {
         retrievalOpportunities: opportunities as string[],

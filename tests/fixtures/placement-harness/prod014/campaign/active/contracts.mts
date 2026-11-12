@@ -173,84 +173,119 @@ function frozenInventoryOf(value: unknown, label: string): FrozenInventory {
  * A legacy record may predate the ceilings; `verifyFreeze` decides whether the
  * record is usable, so this validator proves only the fields the commands read.
  */
+function stringField(
+    record: Record<string, unknown>,
+    key: string,
+    label: string,
+): string {
+    const value = record[key];
+    if (typeof value !== "string") fail(`${label}.${key} must be a string`);
+    return value;
+}
+
+function numberField(
+    record: Record<string, unknown>,
+    key: string,
+    label: string,
+): number {
+    const value = record[key];
+    if (typeof value !== "number") fail(`${label}.${key} must be a number`);
+    return value;
+}
+
+function booleanField(
+    record: Record<string, unknown>,
+    key: string,
+    label: string,
+): boolean {
+    const value = record[key];
+    if (typeof value !== "boolean") fail(`${label}.${key} must be a boolean`);
+    return value;
+}
+
+function arrayField(
+    record: Record<string, unknown>,
+    key: string,
+    label: string,
+): unknown[] {
+    const value = record[key];
+    if (!Array.isArray(value)) fail(`${label}.${key} must be an array`);
+    return value;
+}
+
+/** One frozen arm identity. */
+function frozenArmOf(
+    value: unknown,
+    label: string,
+): FreezeRecord["arms"][number] {
+    const entry = recordOf(value, label);
+    return {
+        id: stringField(entry, "id", label),
+        commit: stringField(entry, "commit", label),
+        tree: stringField(entry, "tree", label),
+        clean: booleanField(entry, "clean", label),
+        descriptionChars: numberField(entry, "descriptionChars", label),
+        descriptionHash: stringField(entry, "descriptionHash", label),
+        deliveredChars: numberField(entry, "deliveredChars", label),
+        deliveredHash: stringField(entry, "deliveredHash", label),
+        annotationChars: numberField(entry, "annotationChars", label),
+        annotationHash: stringField(entry, "annotationHash", label),
+    };
+}
+
+/** The declared ceilings, or zero for a record that predates them. */
+function ceilingsOf(value: unknown): { trial: number; judge: number } {
+    if (value === undefined) return { trial: 0, judge: 0 };
+    const ceiling = recordOf(value, "FROZEN.json ceilings");
+    return {
+        trial: numberField(ceiling, "trial", "FROZEN.json ceilings"),
+        judge: numberField(ceiling, "judge", "FROZEN.json ceilings"),
+    };
+}
+
+/**
+ * The freeze record embedded in FROZEN.json, or null when absent.
+ *
+ * The record is validated field by field before a command reads a ceiling, an
+ * image identity or an immutable input. A legacy record without ceilings reads
+ * as zero, which blocks every claim.
+ * @param value The `freeze` member of FROZEN.json.
+ * @returns The validated record, or null when the campaign has none.
+ */
 export function freezeRecordOf(value: unknown): FrozenRecord | null {
     if (value === undefined || value === null) return null;
     const stored = recordOf(value, "FROZEN.json freeze");
-    const ceilings = stored.ceilings;
-    if (
-        typeof stored.schemaVersion !== "number" ||
-        typeof stored.campaign !== "string" ||
-        typeof stored.sourceRevision !== "string" ||
-        typeof stored.sourceTree !== "string" ||
-        typeof stored.imageId !== "string" ||
-        typeof stored.containerCli !== "string" ||
-        typeof stored.measurementSha256 !== "string" ||
-        !Array.isArray(stored.arms) ||
-        !Array.isArray(stored.files) ||
-        !Array.isArray(stored.inventories) ||
-        !Array.isArray(stored.stoppingRules) ||
-        (ceilings !== undefined &&
-            (typeof ceilings !== "object" ||
-                ceilings === null ||
-                typeof (ceilings as Record<string, unknown>).trial !==
-                    "number" ||
-                typeof (ceilings as Record<string, unknown>).judge !==
-                    "number"))
-    ) {
-        fail("FROZEN.json freeze record is malformed");
-    }
-    const ceiling = ceilings as { trial: number; judge: number } | undefined;
+    const label = "FROZEN.json freeze";
     return {
-        schemaVersion: stored.schemaVersion,
-        campaign: stored.campaign,
-        sourceRevision: stored.sourceRevision,
-        sourceTree: stored.sourceTree,
-        imageId: stored.imageId,
-        containerCli: stored.containerCli,
-        measurementSha256: stored.measurementSha256,
-        arms: stored.arms.map((arm, index) => {
-            const entry = recordOf(arm, `FROZEN.json arms[${index}]`);
-            if (
-                typeof entry.id !== "string" ||
-                typeof entry.commit !== "string" ||
-                typeof entry.tree !== "string" ||
-                typeof entry.clean !== "boolean" ||
-                typeof entry.descriptionChars !== "number" ||
-                typeof entry.descriptionHash !== "string" ||
-                typeof entry.deliveredChars !== "number" ||
-                typeof entry.deliveredHash !== "string" ||
-                typeof entry.annotationChars !== "number" ||
-                typeof entry.annotationHash !== "string"
-            ) {
-                fail(`FROZEN.json arms[${index}] is malformed`);
-            }
-            return {
-                id: entry.id,
-                commit: entry.commit,
-                tree: entry.tree,
-                clean: entry.clean,
-                descriptionChars: entry.descriptionChars,
-                descriptionHash: entry.descriptionHash,
-                deliveredChars: entry.deliveredChars,
-                deliveredHash: entry.deliveredHash,
-                annotationChars: entry.annotationChars,
-                annotationHash: entry.annotationHash,
-            };
-        }),
-        files: stored.files.map((file, index) =>
+        schemaVersion: numberField(stored, "schemaVersion", label),
+        campaign: stringField(stored, "campaign", label),
+        sourceRevision: stringField(stored, "sourceRevision", label),
+        sourceTree: stringField(stored, "sourceTree", label),
+        imageId: stringField(stored, "imageId", label),
+        containerCli: stringField(stored, "containerCli", label),
+        measurementSha256: stringField(stored, "measurementSha256", label),
+        arms: arrayField(stored, "arms", label).map((arm, index) =>
+            frozenArmOf(arm, `FROZEN.json arms[${index}]`),
+        ),
+        files: arrayField(stored, "files", label).map((file, index) =>
             frozenFileOf(file, `FROZEN.json files[${index}]`),
         ),
-        inventories: stored.inventories.map((inventory, index) =>
-            frozenInventoryOf(inventory, `FROZEN.json inventories[${index}]`),
+        inventories: arrayField(stored, "inventories", label).map(
+            (inventory, index) =>
+                frozenInventoryOf(
+                    inventory,
+                    `FROZEN.json inventories[${index}]`,
+                ),
         ),
-        stoppingRules: stored.stoppingRules.map((rule, index) => {
-            if (typeof rule !== "string")
-                fail(`FROZEN.json stoppingRules[${index}] must be a string`);
-            return rule;
-        }),
-        ceilings:
-            ceiling === undefined
-                ? { trial: 0, judge: 0 }
-                : { trial: ceiling.trial, judge: ceiling.judge },
+        stoppingRules: arrayField(stored, "stoppingRules", label).map(
+            (rule, index) => {
+                if (typeof rule !== "string")
+                    fail(
+                        `FROZEN.json stoppingRules[${index}] must be a string`,
+                    );
+                return rule;
+            },
+        ),
+        ceilings: ceilingsOf(stored.ceilings),
     };
 }
