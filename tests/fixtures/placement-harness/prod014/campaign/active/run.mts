@@ -133,9 +133,7 @@ const attemptId = selection.selection.attemptId;
 
 const frozenValue = readJson(join(EVIDENCE, "FROZEN.json"));
 const freezeRecord = freezeRecordOf(
-    frozenValue === null
-        ? null
-        : recordOf(frozenValue, "FROZEN.json").freeze,
+    frozenValue === null ? null : recordOf(frozenValue, "FROZEN.json").freeze,
 );
 // One authoritative ceiling: the validated freeze record. A missing or legacy
 // record yields zero, which every claim refuses.
@@ -263,7 +261,11 @@ const newAttempt = (
     return record;
 };
 
-const updateAttempt = (slot: ScheduleSlot, attemptId: string, patch: Record<string, unknown>) => {
+const updateAttempt = (
+    slot: ScheduleSlot,
+    attemptId: string,
+    patch: Record<string, unknown>,
+) => {
     const path = join(LAUNCHES, slot.stamp, `${attemptId}.json`);
     const current = recordOf(readJson(path), path);
     writeFileSync(
@@ -296,9 +298,7 @@ const hasJudgement = (dir: string): boolean => {
         (judgement as Record<string, unknown>).status === "judged"
     )
         return true;
-    const resolution = readJson(
-        join(dir, "ac", attemptId, "resolution.json"),
-    );
+    const resolution = readJson(join(dir, "ac", attemptId, "resolution.json"));
     return (
         typeof resolution === "object" &&
         resolution !== null &&
@@ -675,7 +675,12 @@ const judgeClaimOf = (slot: ScheduleSlot) => {
 };
 
 /** Release an undispatched claim and record the refusal. */
-const judgeRefusal = (slot: ScheduleSlot, attemptDir: string, result: ReturnType<typeof spawnSync>, claim: BudgetClaim) => {
+const judgeRefusal = (
+    slot: ScheduleSlot,
+    attemptDir: string,
+    result: ReturnType<typeof spawnSync>,
+    claim: BudgetClaim,
+) => {
     releaseClaim(claim);
     ledger({
         event: "judge-refused",
@@ -757,9 +762,7 @@ const judgeStatusOf = (
     resolution: Record<string, unknown> | null,
 ): string => {
     if (resolution?.status === "judged") return "judged-after-resolve";
-    return typeof judgement?.status === "string"
-        ? judgement.status
-        : "missing";
+    return typeof judgement?.status === "string" ? judgement.status : "missing";
 };
 
 /** The first defined value, or null. */
@@ -850,7 +853,10 @@ const runJudge = (slot: ScheduleSlot) => {
     if (claimed.claim === undefined) return false;
     return dispatchJudge(slot, base, attemptDir, claimed.claim);
 };
-const finishRecordedSlot = (slot: ScheduleSlot, meta: Record<string, unknown> | null) => {
+const finishRecordedSlot = (
+    slot: ScheduleSlot,
+    meta: Record<string, unknown> | null,
+) => {
     if (!existsSync(join(resultDir(slot), "gate.json"))) runGate(slot);
     if (!usableRun(meta)) {
         ledger({

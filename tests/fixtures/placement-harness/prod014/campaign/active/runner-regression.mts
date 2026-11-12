@@ -29,7 +29,8 @@ const write = (path: string, body: string): void => {
 };
 const json = (path: string, value: unknown): void =>
     write(path, `${JSON.stringify(value, null, 2)}\n`);
-const temp = (label: string): string => mkdtempSync(join(tmpdir(), `pd-runner-${label}-`));
+const temp = (label: string): string =>
+    mkdtempSync(join(tmpdir(), `pd-runner-${label}-`));
 
 /** A schedule and the minimum files the commands read before a launch. */
 const campaign = (label: string): string => {

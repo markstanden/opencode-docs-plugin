@@ -199,9 +199,7 @@ const scenarios = ["R01", "S02", "R02", "R03", "S05", "S06", "S07", "R04"];
 
 const arm = (letter: "a" | "b") => {
     const repo = join(ROOT, "arms", letter);
-    const surfaces = surfacesOf(
-        join(ROOT, `evidence/surfaces-${letter}.json`),
-    );
+    const surfaces = surfacesOf(join(ROOT, `evidence/surfaces-${letter}.json`));
     // The provider request the delivery probe actually received. No
     // hand-extracted copy: the served description is read from the payload.
     const probe: unknown = readJson(

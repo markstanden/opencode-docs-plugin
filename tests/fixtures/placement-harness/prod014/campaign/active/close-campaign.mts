@@ -307,9 +307,7 @@ function isUsableJudgement(
 }
 
 /** The status an attempt without a judgement reports. */
-function startedStatus(
-    meta: Record<string, unknown> | null,
-): AttemptStatus {
+function startedStatus(meta: Record<string, unknown> | null): AttemptStatus {
     return meta?.status === "started" ? "started" : "unknown";
 }
 
@@ -394,8 +392,7 @@ function measurementOf(path: string): MeasurementSpec {
         throw new Error(`${path}.retrievalOpportunities must be strings`);
     }
     const scenarios = recordOf(value.scenarios ?? {}, `${path}.scenarios`);
-    const declared: Record<string, { retrieval?: RetrievalDeclaration }> =
-        {};
+    const declared: Record<string, { retrieval?: RetrievalDeclaration }> = {};
     for (const [id, entry] of Object.entries(scenarios)) {
         const scenario = recordOf(entry, `${path}.scenarios.${id}`);
         const retrieval =
@@ -433,15 +430,11 @@ function measurementOf(path: string): MeasurementSpec {
 }
 
 const schedule = scheduleOf(join(EVIDENCE, "schedule.json"));
-const measurement = measurementOf(
-    join(EVIDENCE, "measurement-spec.json"),
-);
+const measurement = measurementOf(join(EVIDENCE, "measurement-spec.json"));
 const slots = schedule.slots;
 const frozenValue = readJson(join(EVIDENCE, "FROZEN.json"));
 const frozen = freezeRecordOf(
-    frozenValue === null
-        ? null
-        : recordOf(frozenValue, "FROZEN.json").freeze,
+    frozenValue === null ? null : recordOf(frozenValue, "FROZEN.json").freeze,
 );
 
 let lockHeld = false;

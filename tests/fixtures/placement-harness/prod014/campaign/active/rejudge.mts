@@ -47,10 +47,7 @@ if (!selection.ok) {
     process.exit(2);
 }
 const attemptId = selection.selection.attemptId;
-const frozen = recordOf(
-    readJson(join(EVIDENCE, "FROZEN.json")),
-    "FROZEN.json",
-);
+const frozen = recordOf(readJson(join(EVIDENCE, "FROZEN.json")), "FROZEN.json");
 const freezeRecord = freezeRecordOf(frozen.freeze);
 const judgeCeiling = Number(freezeRecord?.ceilings?.judge ?? 0);
 const MAIN = process.env.CAMPAIGN_SOURCE_REPO ?? process.cwd();

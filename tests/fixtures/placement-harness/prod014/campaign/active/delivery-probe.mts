@@ -14,7 +14,9 @@ if (
     model === undefined ||
     prompt === undefined
 ) {
-    console.error("usage: delivery-probe.mts <capture> <arm> <model> <prompt> [port]");
+    console.error(
+        "usage: delivery-probe.mts <capture> <arm> <model> <prompt> [port]",
+    );
     process.exit(2);
 }
 const port = Number(portArg ?? 8799);
@@ -45,8 +47,7 @@ const server = createServer((request, response) => {
         } catch {
             /* keep the raw capture */
         }
-        const servedModel =
-            typeof body.model === "string" ? body.model : model;
+        const servedModel = typeof body.model === "string" ? body.model : model;
         const text = "Hello.";
         if (body.stream === true || body.stream_options !== undefined) {
             response.writeHead(200, {

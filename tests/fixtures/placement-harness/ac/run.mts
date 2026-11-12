@@ -64,10 +64,7 @@ const OUTCOME_KEYS: readonly DocumentationOutcome[] = [
 ];
 
 /** One JSON object, or a thrown refusal naming the file. */
-function recordOf(
-    value: unknown,
-    label: string,
-): Record<string, unknown> {
+function recordOf(value: unknown, label: string): Record<string, unknown> {
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
         throw new Error(`${label} must be a JSON object`);
     }
@@ -181,7 +178,10 @@ interface TokenUsage {
 }
 
 /** Add one step's tokens to a usage total. */
-function addStepTokens(usage: TokenUsage, tokens: Record<string, unknown>): void {
+function addStepTokens(
+    usage: TokenUsage,
+    tokens: Record<string, unknown>,
+): void {
     usage.steps += 1;
     usage.input += typeof tokens.input === "number" ? tokens.input : 0;
     usage.output += typeof tokens.output === "number" ? tokens.output : 0;
@@ -436,18 +436,16 @@ function packetFor(
         answer: readText(join(caseDir, "final.md")),
         requirePreservation:
             caseId === PRESERVATION_CASE && preservation === undefined,
-        ...(preservation === undefined ? {} : { preservationSpec: preservation }),
+        ...(preservation === undefined
+            ? {}
+            : { preservationSpec: preservation }),
         ...(retrieval === undefined ? {} : { retrievalSpec: retrieval }),
     });
     return { caseDir, prompt, state };
 }
 
 /** The judge spawn arguments for one packet. */
-const judgeArgs = (
-    model: string,
-    stamp: string,
-    prompt: string,
-): string[] => [
+const judgeArgs = (model: string, stamp: string, prompt: string): string[] => [
     "run",
     "--standalone",
     "--auto",
@@ -733,10 +731,7 @@ function judgeContextProblem() {
  * @param allowLegacy Whether absent identity evidence is tolerated.
  * @returns The refusal, or null.
  */
-function answerProblemOf(
-    caseDir: string,
-    allowLegacy: boolean,
-): string | null {
+function answerProblemOf(caseDir: string, allowLegacy: boolean): string | null {
     const answerPath = join(caseDir, "final.md");
     if (!existsSync(answerPath)) return "no final answer was recorded";
     const meta = recordOf(
@@ -791,7 +786,12 @@ function judgeAttemptOf(
     stamp: string,
     caseId: string,
     attemptId: string,
-): { code?: number; error?: string; attemptDir?: string; alreadyJudged?: boolean } {
+): {
+    code?: number;
+    error?: string;
+    attemptDir?: string;
+    alreadyJudged?: boolean;
+} {
     if (!/^attempt-\d{3}$/.test(attemptId)) {
         return {
             code: 1,
@@ -993,7 +993,10 @@ function resolveAttempt(
             if (typeof meta.caseId !== "string") {
                 throw new Error("meta.json has no caseId");
             }
-            const state = recordOf(meta.state, "meta.json state") as unknown as DocState;
+            const state = recordOf(
+                meta.state,
+                "meta.json state",
+            ) as unknown as DocState;
             const problems = validateAcJudgement(
                 parsed,
                 state,
@@ -1151,9 +1154,7 @@ function durationOf(meta: unknown): number | null {
 }
 
 /** The recorded judgement, preferring a deterministic parse resolution. */
-function resolvedJudgement(
-    dir: string,
-): Record<string, unknown> | null {
+function resolvedJudgement(dir: string): Record<string, unknown> | null {
     const resolution = readJson(join(dir, "ac/attempt-001/resolution.json"));
     if (typeof resolution === "object" && resolution !== null) {
         const record = resolution as Record<string, unknown>;
@@ -1377,7 +1378,9 @@ function addTokens(total: TokenTotals, trial: TrialRecord): void {
 }
 
 /** The scoring input for one trial. */
-const scored = (trial: TrialRecord): {
+const scored = (
+    trial: TrialRecord,
+): {
     arm: string;
     scenario: string;
     planned: boolean;
@@ -1570,7 +1573,9 @@ function report(args: Map<string, string | undefined>): number {
               ) as Record<string, number>);
     const reportSlots = schedule[stage];
     if (!Array.isArray(reportSlots)) {
-        throw new Error(`${need(args, "--schedule")}.${stage} must be an array`);
+        throw new Error(
+            `${need(args, "--schedule")}.${stage} must be an array`,
+        );
     }
     const trials = reportSlots.map((value) => {
         const slot = recordOf(value, `${stage} slot`) as unknown as ReportSlot;
@@ -1609,8 +1614,7 @@ function report(args: Map<string, string | undefined>): number {
             .flatMap((arm) => {
                 const control = summaries[controlArm];
                 const candidate = summaries[arm];
-                if (control === undefined || candidate === undefined)
-                    return [];
+                if (control === undefined || candidate === undefined) return [];
                 return [
                     {
                         arm,
