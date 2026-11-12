@@ -79,7 +79,14 @@ describe("Markdown rendering", () => {
             assert.equal(rerenderedJson, json);
             assert.equal(rerenderedReport, report);
             assert.ok(
-                report.includes(`**Outcome:** ${result.decision.overall}`),
+                report.startsWith(
+                    `# Trial analysis: ${result.campaign.id}\n**Personal-trial screen:** ${result.measures.personalTrial.recommendation}`,
+                ),
+            );
+            assert.ok(
+                report.includes(
+                    `**Utility threshold (component, not the recommendation):** ${result.decision.overall}`,
+                ),
             );
             assert.ok(
                 report.includes(

@@ -51,6 +51,7 @@ import {
     type ArmMeasureSummary,
     type MeasureDeclarations,
     type MeasuresReport,
+    type PairedOutcome,
 } from "./measures.ts";
 import { evaluateDecision, type DecisionResult } from "./decision.ts";
 import { summariseGuardrails, type GuardrailArmSummary } from "./guardrails.ts";
@@ -60,7 +61,11 @@ import {
     type SelectionSpec,
     type SlotSpec,
 } from "./model.ts";
-import { pairObservations, pairedComparison } from "./pairing.ts";
+import {
+    pairObservations,
+    pairedComparison,
+    type PairingResult,
+} from "./pairing.ts";
 import {
     loadLaunchLedger,
     loadTrialRecord,
@@ -933,11 +938,13 @@ function campaignIdentityOf(manifest: CampaignManifest): {
 function screeningReportOf(
     manifest: CampaignManifest,
     screen: ReturnType<typeof screenCampaign>,
+    personalTrial: AnalysisResult["measures"]["personalTrial"],
 ): AnalysisResult["screening"] {
     return {
         rulesVersion: manifest.policy.screening?.rulesVersion ?? "not-defined",
         findings: screen.findings,
         reconciliation: screen.reconciliation,
+        personalTrial,
     };
 }
 
@@ -1070,6 +1077,41 @@ function emptyMeasuresReport(
 }
 
 /**
+ * The paired documented outcomes used by the candidate-only misleading veto.
+ * Incomplete pairs contribute nothing: they are already a coverage failure, so
+ * they cannot also stand in for a paired loss.
+ * @param pairing The pairing result.
+ * @param selection The declared selection rule.
+ * @returns One entry per complete pair.
+ */
+function pairedOutcomesOf(
+    pairing: PairingResult,
+    selection: SelectionSpec,
+): PairedOutcome[] {
+    const pairs: PairedOutcome[] = [];
+    for (const pair of pairing.pairs) {
+        if (!pair.complete) continue;
+        const control = pair.arms[selection.controlArm];
+        const candidate = pair.arms[selection.candidateArm];
+        if (control === undefined || candidate === undefined) continue;
+        pairs.push({
+            pairId: pair.pairId,
+            control:
+                control.trial.outcome === null ||
+                control.trial.outcome === undefined
+                    ? []
+                    : [control.trial.outcome],
+            candidate:
+                candidate.trial.outcome === null ||
+                candidate.trial.outcome === undefined
+                    ? []
+                    : [candidate.trial.outcome],
+        });
+    }
+    return pairs;
+}
+
+/**
  * The personal-trial screen from the assembled counts.
  * @param manifest The validated manifest.
  * @param arms The per-arm opportunity summaries.
@@ -1084,6 +1126,7 @@ function screenOf(
     counts: Record<string, AccountingCounts>,
     guardrails: Record<string, GuardrailArmSummary[]>,
     decision: DecisionResult,
+    pairs: readonly PairedOutcome[],
 ): MeasuresReport["personalTrial"] {
     const selection = manifest.policy.selection;
     if (selection === undefined) {
@@ -1125,6 +1168,7 @@ function screenOf(
             lead: decision.threshold.lead,
             interval: decision.threshold.interval,
         },
+        pairs,
     );
 }
 
@@ -1147,6 +1191,7 @@ function completeMeasuresReport(
     counts: Record<string, AccountingCounts>,
     guardrails: Record<string, GuardrailArmSummary[]>,
     decision: DecisionResult,
+    pairs: readonly PairedOutcome[],
 ): MeasuresReport {
     const declarations = loaded.declarations;
     const trials = scored.map((trial) => {
@@ -1171,6 +1216,7 @@ function completeMeasuresReport(
             counts,
             guardrails,
             decision,
+            pairs,
         ),
     };
 }
@@ -1195,6 +1241,7 @@ function measuresOf(
     counts: Record<string, AccountingCounts>,
     guardrails: Record<string, GuardrailArmSummary[]>,
     decision: DecisionResult,
+    pairs: readonly PairedOutcome[],
 ): MeasuresReport {
     const loaded = declarationsOf(manifest, reader);
     if (loaded.declarations === undefined) {
@@ -1212,6 +1259,7 @@ function measuresOf(
         counts,
         guardrails,
         decision,
+        pairs,
     );
 }
 
@@ -1256,6 +1304,16 @@ function assemble(
     const usage = usageOf(records);
     const screen = screenCampaign(manifest, reader, records);
     const judgedBy = judgeModelsOf(records);
+    const measures = measuresOf(
+        manifest,
+        reader,
+        records,
+        scored,
+        counts,
+        guardrails,
+        decision,
+        selection === null ? [] : pairedOutcomesOf(pairing, selection),
+    );
     const totals = accountTrials(scored, slots.length);
     const limitations = limitationsOf(
         records,
@@ -1281,17 +1339,13 @@ function assemble(
         paired,
         bounds: { delta },
         decision,
-        measures: measuresOf(
-            manifest,
-            reader,
-            records,
-            scored,
-            counts,
-            guardrails,
-            decision,
-        ),
+        measures,
         sensitivity: sensitivityOf(manifest, records),
-        screening: screeningReportOf(manifest, screen),
+        screening: screeningReportOf(
+            manifest,
+            screen,
+            measures.personalTrial,
+        ),
         integrity: {
             sources: screen.sources,
             judgedBy,

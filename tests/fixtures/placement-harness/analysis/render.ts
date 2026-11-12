@@ -162,6 +162,8 @@ export interface AnalysisResult {
         rulesVersion: string;
         findings: Finding[];
         reconciliation: ReconcileRow[];
+        /** The one personal-trial decision, shared with the headline. */
+        personalTrial: MeasuresReport["personalTrial"];
     };
     /** Integrity identities. */
     integrity: {
@@ -462,6 +464,8 @@ function screeningSection(result: AnalysisResult): string {
     return [
         "## Static screen (advisory; never changes outcomes)",
         "",
+        `The screening output republishes the one personal-trial decision: **${result.screening.personalTrial.recommendation}**.`,
+        "",
         `Rules ${result.screening.rulesVersion}: ${num(result.screening.findings.length)} finding(s). Judge reconciliation: referenced ${num(counted.referenced)}, not-referenced ${num(counted["not-referenced"])}, unresolved ${num(counted.unresolved)}.`,
         "",
         rows.length === 0
@@ -636,7 +640,9 @@ export function renderReport(result: AnalysisResult): string {
     return [
         `# Trial analysis: ${escapeCell(result.campaign.id)}`,
         "",
-        `**Outcome:** ${result.decision.overall} — ${escapeCell(result.decision.reasons.join("; ") || result.decision.guardrails.detail)}.`,
+        `**Personal-trial screen:** ${result.measures.personalTrial.recommendation} — ${escapeCell(result.measures.personalTrial.reasons.join("; ") || "no criterion reported")}.`,
+        "",
+        `**Utility threshold (component, not the recommendation):** ${result.decision.overall} — ${escapeCell(result.decision.reasons.join("; ") || result.decision.guardrails.detail)}.`,
         "",
         result.campaign.question === null
             ? ""

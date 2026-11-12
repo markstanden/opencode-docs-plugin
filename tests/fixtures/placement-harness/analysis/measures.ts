@@ -170,6 +170,16 @@ export interface PersonalTrialDecision {
     };
 }
 
+/** One paired scenario's control and candidate documented outcomes. */
+export interface PairedOutcome {
+    /** The declared pair id. */
+    pairId: string;
+    /** The control arm's outcomes in this pair. */
+    control: DocumentationOutcome[];
+    /** The candidate arm's outcomes in this pair. */
+    candidate: DocumentationOutcome[];
+}
+
 /** A criterion's decision. */
 interface Criterion {
     /** The criterion outcome. */
@@ -1224,6 +1234,46 @@ function qualityCriterion(
 }
 
 /**
+ * The paired scenario criterion: a misleading outcome that appears only on the
+ * candidate side of a pair defeats promotion, even when the aggregate counts
+ * are equal. A pair where the candidate is not misleading, or both sides are,
+ * is not candidate-specific.
+ * @param pairs The complete paired outcomes.
+ * @returns The criterion.
+ */
+export function pairedMisleadingCriterion(
+    pairs: readonly PairedOutcome[],
+): Criterion {
+    if (pairs.length === 0) {
+        return {
+            status: "pass",
+            reasons: ["no paired scenario comparison was supplied"],
+        };
+    }
+    const candidateOnly = pairs.filter(
+        (pair) =>
+            pair.candidate.includes("misleading") &&
+            !pair.control.includes("misleading"),
+    );
+    if (candidateOnly.length > 0) {
+        return {
+            status: "fail",
+            reasons: [
+                `candidate-only misleading outcome in ${candidateOnly
+                    .map((pair) => pair.pairId)
+                    .join(", ")}: a paired loss defeats promotion even at equal aggregate counts`,
+            ],
+        };
+    }
+    return {
+        status: "pass",
+        reasons: [
+            "no paired scenario records a misleading outcome only for the candidate",
+        ],
+    };
+}
+
+/**
  * The incomplete-input checks that make the screen inconclusive before any
  * opportunity or quality comparison.
  * @param control The control arm summary, when present.
@@ -1298,6 +1348,7 @@ function earlyInconclusive(
  * @param utilityThreshold.status The limb's status.
  * @param utilityThreshold.lead The assessed lead.
  * @param utilityThreshold.interval The full-population interval.
+ * @param pairs The complete paired scenario outcomes, when available.
  * @returns The recommendation and every criterion's reason.
  */
 export function personalTrialDecision(
@@ -1312,6 +1363,7 @@ export function personalTrialDecision(
         lead: number | null;
         interval: { low: number; high: number } | null;
     },
+    pairs: readonly PairedOutcome[] = [],
 ): PersonalTrialDecision {
     const threshold = thresholdComponent(utilityThreshold);
     const control = measures[controlArm];
@@ -1354,9 +1406,18 @@ export function personalTrialDecision(
             utilityThreshold: threshold,
         };
     }
+    const paired = pairedMisleadingCriterion(pairs);
+    if (paired.status !== "pass") {
+        return {
+            recommendation:
+                paired.status === "fail" ? "no-promotion" : "inconclusive",
+            reasons: [...opportunities.reasons, ...quality.reasons, ...paired.reasons],
+            utilityThreshold: threshold,
+        };
+    }
     return {
         recommendation: "personal-trial",
-        reasons: [...opportunities.reasons, ...quality.reasons],
+        reasons: [...opportunities.reasons, ...quality.reasons, ...paired.reasons],
         utilityThreshold: threshold,
     };
 }

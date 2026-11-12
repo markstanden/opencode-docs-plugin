@@ -229,13 +229,27 @@ describe("credit binding through the analyser CLI", () => {
                         string,
                         { recording: { success: number } }
                     >;
+                    personalTrial: { recommendation: string };
+                };
+                screening: {
+                    personalTrial: { recommendation: string };
                 };
             };
+            const report = readFileSync(join(out, "REPORT.md"), "utf8");
 
             // Assert
             assert.equal(run.status, 0);
             assert.equal(analysis.measures.arms.A?.recording.success, 1);
             assert.equal(analysis.measures.arms.B?.recording.success, 0);
+            assert.equal(
+                analysis.screening.personalTrial.recommendation,
+                analysis.measures.personalTrial.recommendation,
+            );
+            assert.ok(
+                report.includes(
+                    `**Personal-trial screen:** ${analysis.measures.personalTrial.recommendation}`,
+                ),
+            );
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
