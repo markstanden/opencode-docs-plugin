@@ -85,10 +85,7 @@ describe("delivery probe extraction", () => {
 
         // Assert
         assert.equal(result.delivered?.description, DESCRIPTIONS.B);
-        assert.equal(
-            result.delivered?.sha256,
-            sha256Text(DESCRIPTIONS.B),
-        );
+        assert.equal(result.delivered?.sha256, sha256Text(DESCRIPTIONS.B));
     });
 
     it("refuses a body that does not serve the tool", () => {
@@ -144,9 +141,7 @@ describe("experiment freeze", () => {
         const dirty = { ...arm("B"), clean: false };
 
         // Act
-        const outcome = freezeExperiment(
-            input({ arms: [arm("A"), dirty] }),
-        );
+        const outcome = freezeExperiment(input({ arms: [arm("A"), dirty] }));
 
         // Assert
         assert.equal(outcome.ok, false);
@@ -164,9 +159,7 @@ describe("experiment freeze", () => {
         };
 
         // Act
-        const outcome = freezeExperiment(
-            input({ arms: [arm("A"), wrong] }),
-        );
+        const outcome = freezeExperiment(input({ arms: [arm("A"), wrong] }));
 
         // Assert
         assert.equal(outcome.ok, false);
@@ -187,9 +180,7 @@ describe("experiment freeze", () => {
         };
 
         // Act
-        const outcome = freezeExperiment(
-            input({ arms: [arm("A"), swapped] }),
-        );
+        const outcome = freezeExperiment(input({ arms: [arm("A"), swapped] }));
 
         // Assert
         assert.equal(outcome.ok, false);
@@ -208,9 +199,8 @@ describe("experiment freeze", () => {
 
         try {
             // Act
-            const record = (
-                outcome as { ok: true; record: FreezeRecord }
-            ).record;
+            const record = (outcome as { ok: true; record: FreezeRecord })
+                .record;
             const first = writeFreeze(path, record);
             const second = writeFreeze(path, record);
 

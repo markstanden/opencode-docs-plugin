@@ -479,7 +479,9 @@ function contextOf(
     declarations: MeasureDeclarations,
 ): MeasureContext {
     const journal = journalContextOf(record);
-    const parsed = journal.verified ? parseOperations(journal.lines) : undefined;
+    const parsed = journal.verified
+        ? parseOperations(journal.lines)
+        : undefined;
     const journalProblem = journal.problem ?? parseProblemOf(parsed);
     return {
         record,
@@ -548,10 +550,10 @@ export interface ChangedLakeDocument {
  * @param writes.text The report's text.
  * @returns The changed documents and any parse problem.
  */
-export function changedLakeDocuments(writes: {
-    state: string;
-    text: string;
-}): { documents: ChangedLakeDocument[]; problem: string | null } {
+export function changedLakeDocuments(writes: { state: string; text: string }): {
+    documents: ChangedLakeDocument[];
+    problem: string | null;
+} {
     if (writes.state !== "available") {
         return {
             documents: [],
@@ -561,8 +563,9 @@ export function changedLakeDocuments(writes: {
     const documents = writes.text
         .split("\n")
         .map(changedDocument)
-        .filter((document): document is ChangedLakeDocument =>
-            document !== undefined,
+        .filter(
+            (document): document is ChangedLakeDocument =>
+                document !== undefined,
         );
     return { documents, problem: null };
 }
@@ -625,7 +628,8 @@ function journalContextOf(record: TrialRecord): {
         return {
             verified: false,
             lines: [],
-            problem: "the docs-operation journal is absent (no plugin journal captured)",
+            problem:
+                "the docs-operation journal is absent (no plugin journal captured)",
         };
     }
     if (verification.state === "unverifiable-key") {
@@ -824,7 +828,9 @@ function boundWrite(
             evidence: [
                 `the trial changed ${String(candidates.length)} lake documents (${candidates
                     .map((document) => `${document.lake}/${document.path}`)
-                    .join(", ")}); the plugin write cannot be tied to the useful one`,
+                    .join(
+                        ", ",
+                    )}); the plugin write cannot be tied to the useful one`,
             ],
         };
     }
@@ -898,9 +904,7 @@ function retrievalOf(context: MeasureContext): {
     const reads = matching.filter((operation) =>
         operationMatchesNoteLake(operation, declaration),
     );
-    const lakeUnknown = matching.some(
-        (operation) => operation.lake === null,
-    );
+    const lakeUnknown = matching.some((operation) => operation.lake === null);
     const judge = judgeRetrieval(context.record);
     const base = {
         read: reads.length > 0,
@@ -1298,7 +1302,9 @@ export function pairedMisleadingCriterion(
             reasons: [
                 `candidate-only misleading outcome in ${candidateOnly
                     .map((pair) => pair.pairId)
-                    .join(", ")}: a paired loss defeats promotion even at equal aggregate counts`,
+                    .join(
+                        ", ",
+                    )}: a paired loss defeats promotion even at equal aggregate counts`,
             ],
         };
     }
@@ -1448,13 +1454,21 @@ export function personalTrialDecision(
         return {
             recommendation:
                 paired.status === "fail" ? "no-promotion" : "inconclusive",
-            reasons: [...opportunities.reasons, ...quality.reasons, ...paired.reasons],
+            reasons: [
+                ...opportunities.reasons,
+                ...quality.reasons,
+                ...paired.reasons,
+            ],
             utilityThreshold: threshold,
         };
     }
     return {
         recommendation: "personal-trial",
-        reasons: [...opportunities.reasons, ...quality.reasons, ...paired.reasons],
+        reasons: [
+            ...opportunities.reasons,
+            ...quality.reasons,
+            ...paired.reasons,
+        ],
         utilityThreshold: threshold,
     };
 }

@@ -470,7 +470,10 @@ describe("recording measure", () => {
 
         // Assert
         assert.equal(measured.recording.disposition, "filesystem-only");
-        assert.match(measured.recording.evidence[0] ?? "", /no completed plugin add targeted it/);
+        assert.match(
+            measured.recording.evidence[0] ?? "",
+            /no completed plugin add targeted it/,
+        );
     });
 
     it("stays unknown when two lake documents changed", () => {
@@ -742,7 +745,10 @@ describe("retrieval declaration preflight", () => {
 
         // Assert
         assert.equal(parsed.declarations, undefined);
-        assert.match(parsed.problems[0] ?? "", /retrieval\.lake must be nonblank/);
+        assert.match(
+            parsed.problems[0] ?? "",
+            /retrieval\.lake must be nonblank/,
+        );
     });
 
     it("accepts a declaration whose lake is declared", () => {
@@ -756,9 +762,6 @@ describe("retrieval declaration preflight", () => {
         });
 
         // Assert
-        assert.equal(
-            parsed.declarations?.retrieval.S02?.lake,
-            "docs",
-        );
+        assert.equal(parsed.declarations?.retrieval.S02?.lake, "docs");
     });
 });

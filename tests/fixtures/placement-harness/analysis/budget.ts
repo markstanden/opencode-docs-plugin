@@ -97,8 +97,7 @@ function claimOf(
         state,
         at: typeof value.at === "string" ? value.at : null,
         stamp: typeof value.stamp === "string" ? value.stamp : null,
-        attemptId:
-            typeof value.attemptId === "string" ? value.attemptId : null,
+        attemptId: typeof value.attemptId === "string" ? value.attemptId : null,
         note: typeof value.note === "string" ? value.note : null,
     };
 }
@@ -263,7 +262,11 @@ export function advanceClaim(
         attemptId: patch.attemptId ?? claim.attemptId,
         note: patch.note ?? claim.note,
     };
-    writeFileSync(updated.path, claimBytes(updated, new Date().toISOString()), "utf8");
+    writeFileSync(
+        updated.path,
+        claimBytes(updated, new Date().toISOString()),
+        "utf8",
+    );
     return updated;
 }
 

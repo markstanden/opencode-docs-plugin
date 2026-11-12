@@ -98,9 +98,7 @@ function parseLine(line: string): Record<string, unknown> | undefined {
 }
 
 /** Whether a record names a served Code Mode twin call. */
-export function isServedTwinRecord(
-    record: Record<string, unknown>,
-): boolean {
+export function isServedTwinRecord(record: Record<string, unknown>): boolean {
     if (record.schemaVersion !== 1) return false;
     if (record.tool !== "docs" && record.tool !== "docs_search") return false;
     if (record.surface !== "codemode-twin") return false;
@@ -221,7 +219,9 @@ export function verifyOperationsJournal(input: {
             state: "unverifiable-key",
             credited: [],
             rejected: input.lines.flatMap((line, index) =>
-                line.trim() === "" ? [] : [{ index, reason: "not-json" as const }],
+                line.trim() === ""
+                    ? []
+                    : [{ index, reason: "not-json" as const }],
             ),
             problems: [
                 "a docs-operation journal exists without a usable signing key; no journal line is credited",
@@ -262,7 +262,8 @@ function verifyLine(
 ): { credited?: CreditedJournalRecord; rejected?: RejectedJournalRecord } {
     if (line.trim() === "") return {};
     const record = parseLine(line);
-    if (record === undefined) return { rejected: { index, reason: "not-json" } };
+    if (record === undefined)
+        return { rejected: { index, reason: "not-json" } };
     if (!isServedTwinRecord(record)) {
         return { rejected: { index, reason: "not-served-twin" } };
     }

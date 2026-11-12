@@ -61,7 +61,8 @@ export interface JudgeAttempt {
     /** Recorded token fields, or null when unavailable. */
     tokens: TokenFields | null;
     /** The recorded terminal status. */
-    status: "judged" | "invalid-verdict" | "judge-error" | "started" | "unknown";
+    status:
+        "judged" | "invalid-verdict" | "judge-error" | "started" | "unknown";
     /** Recorded duration, or null. */
     durationMs: number | null;
 }
@@ -137,19 +138,13 @@ function emptyTokens(): TokenFields {
 }
 
 /** Add one recorded field; a single unknown observation keeps the total unknown. */
-function addField(
-    total: number | null,
-    value: number | null,
-): number | null {
+function addField(total: number | null, value: number | null): number | null {
     if (value === null) return null;
     return (total ?? 0) + value;
 }
 
 /** Add one attempt's tokens into an accumulator. */
-function addTokens(
-    total: TokenFields,
-    tokens: TokenFields | null,
-): void {
+function addTokens(total: TokenFields, tokens: TokenFields | null): void {
     if (tokens === null) return;
     total.input = addField(total.input, tokens.input);
     total.output = addField(total.output, tokens.output);
@@ -181,7 +176,11 @@ export function unresolvedReservations(
  */
 export function deriveClosure(input: ClosureInput): ClosureReport {
     const trial = emptyAccount();
-    const judge = { ...emptyAccount(), usableJudgements: 0, unusableJudgements: 0 };
+    const judge = {
+        ...emptyAccount(),
+        usableJudgements: 0,
+        unusableJudgements: 0,
+    };
     const observed = input.observations.filter(isObserved);
     for (const slot of observed) {
         addTrial(trial, slot);
@@ -192,7 +191,9 @@ export function deriveClosure(input: ClosureInput): ClosureReport {
         ...observationProblems(observed),
     ];
     const recordedTrials = observed.filter((slot) => slot.recorded).length;
-    problems.push(...closureProblems(input.closed, observed.length, recordedTrials));
+    problems.push(
+        ...closureProblems(input.closed, observed.length, recordedTrials),
+    );
     return {
         state: input.closed ? "closed" : "open",
         scheduledSlots: input.scheduledSlots,
@@ -267,7 +268,12 @@ function addCoverage(
     tokens: TokenFields | null,
 ): void {
     if (tokens === null) return;
-    for (const field of ["input", "output", "reasoning", "cacheRead"] as const) {
+    for (const field of [
+        "input",
+        "output",
+        "reasoning",
+        "cacheRead",
+    ] as const) {
         if (tokens[field] !== null) account.tokenCoverage[field] += 1;
     }
 }
@@ -278,9 +284,10 @@ function unrunOf(
     observed: readonly SlotObservation[],
 ): number[] {
     const observedNumbers = new Set(observed.map((slot) => slot.slot));
-    return Array.from({ length: scheduledSlots }, (_, index) => index + 1).filter(
-        (number) => !observedNumbers.has(number),
-    );
+    return Array.from(
+        { length: scheduledSlots },
+        (_, index) => index + 1,
+    ).filter((number) => !observedNumbers.has(number));
 }
 
 /** Ceiling and reservation disagreements. */
@@ -348,7 +355,14 @@ function closureProblems(
 
 /** The closure decision. */
 export type ClosureOutcome =
-    | { ok: true; event: { event: "campaign-closed"; stoppedAt: string | null; scope: number } }
+    | {
+          ok: true;
+          event: {
+              event: "campaign-closed";
+              stoppedAt: string | null;
+              scope: number;
+          };
+      }
     | { ok: false; problems: string[] };
 
 /**

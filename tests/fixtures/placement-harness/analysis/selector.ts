@@ -57,7 +57,9 @@ export const DEFAULT_ATTEMPT_ID = "attempt-001";
  * @param input The manifest declaration and any override.
  * @returns The selection, or every problem found.
  */
-export function resolveAttemptSelection(input: SelectionInput): SelectionResolution {
+export function resolveAttemptSelection(
+    input: SelectionInput,
+): SelectionResolution {
     const manifest = input.manifestAttemptId ?? null;
     const override = input.overrideAttemptId ?? null;
     const problems = selectionProblems(manifest, override);

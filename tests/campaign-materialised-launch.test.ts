@@ -32,11 +32,9 @@ function write(path: string, body: string): void {
 /** Materialise a fresh campaign root with the minimum schedule and identity. */
 function campaign(): { root: string; counter: string } {
     const root = mkdtempSync(join(tmpdir(), "pd-materialised-"));
-    execFileSync(
-        process.execPath,
-        [join(fixture, "materialise.mjs"), root],
-        { encoding: "utf8" },
-    );
+    execFileSync(process.execPath, [join(fixture, "materialise.mjs"), root], {
+        encoding: "utf8",
+    });
     const counter = join(root, "counter.txt");
     write(
         join(root, "evidence/schedule.json"),
@@ -76,10 +74,7 @@ function campaign(): { root: string; counter: string } {
     const shim = join(root, "prepare/shim/podman");
     chmodSync(shim, 0o755);
     const stub = join(root, "trial-stub.sh");
-    write(
-        stub,
-        `#!/usr/bin/env sh\nprintf 'trial\\n' >>"\${STUB_COUNTER}"\n`,
-    );
+    write(stub, `#!/usr/bin/env sh\nprintf 'trial\\n' >>"\${STUB_COUNTER}"\n`);
     chmodSync(stub, 0o755);
     return { root, counter };
 }
@@ -188,7 +183,10 @@ describe("materialised launch boundary", () => {
 
             // Assert
             assert.equal(result.status, 2);
-            assert.match(String(result.stderr), /conflicting attempt selections/);
+            assert.match(
+                String(result.stderr),
+                /conflicting attempt selections/,
+            );
             assert.equal(
                 readFileSync(join(root, "evidence/ATTEMPTS.jsonl"), "utf8"),
                 "",

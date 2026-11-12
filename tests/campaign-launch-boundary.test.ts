@@ -231,28 +231,32 @@ process.stdout.write(JSON.stringify(result));`;
         try {
             // Act
             const outcomes = await Promise.all(
-                Array.from({ length: 12 }, () =>
-                    new Promise<{ ok: boolean; index?: number }>((resolve) => {
-                        const run = spawn(
-                            process.execPath,
-                            ["--input-type=module", "-e", worker],
-                            {
-                                env: { ...process.env, ROOT: root },
+                Array.from(
+                    { length: 12 },
+                    () =>
+                        new Promise<{ ok: boolean; index?: number }>(
+                            (resolve) => {
+                                const run = spawn(
+                                    process.execPath,
+                                    ["--input-type=module", "-e", worker],
+                                    {
+                                        env: { ...process.env, ROOT: root },
+                                    },
+                                );
+                                let out = "";
+                                run.stdout?.on("data", (chunk: Buffer) => {
+                                    out += chunk.toString();
+                                });
+                                run.on("close", () =>
+                                    resolve(
+                                        JSON.parse(out) as {
+                                            ok: boolean;
+                                            index?: number;
+                                        },
+                                    ),
+                                );
                             },
-                        );
-                        let out = "";
-                        run.stdout?.on("data", (chunk: Buffer) => {
-                            out += chunk.toString();
-                        });
-                        run.on("close", () =>
-                            resolve(
-                                JSON.parse(out) as {
-                                    ok: boolean;
-                                    index?: number;
-                                },
-                            ),
-                        );
-                    }),
+                        ),
                 ),
             );
             const winners = outcomes.filter((outcome) => outcome.ok);
@@ -313,10 +317,7 @@ process.stdout.write(JSON.stringify(result));`;
             // Assert
             assert.equal(refused.ok, false);
             assert.equal(readClaims(root, "trial").length, 1);
-            assert.equal(
-                (refused as { used: number }).used,
-                1,
-            );
+            assert.equal((refused as { used: number }).used, 1);
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
@@ -330,12 +331,17 @@ process.stdout.write(JSON.stringify(result));`;
             // Act
             const reserved = claimBudget(root, "judge", 3);
             assert.equal(reserved.ok, true);
-            const first = reserved as { claim: import("./fixtures/placement-harness/analysis/budget.ts").BudgetClaim };
+            const first = reserved as {
+                claim: import("./fixtures/placement-harness/analysis/budget.ts").BudgetClaim;
+            };
             advanceClaim(first.claim, "spawned");
             const second = claimBudget(root, "judge", 3);
             assert.equal(second.ok, true);
-            const spawned = (second as { claim: import("./fixtures/placement-harness/analysis/budget.ts").BudgetClaim })
-                .claim;
+            const spawned = (
+                second as {
+                    claim: import("./fixtures/placement-harness/analysis/budget.ts").BudgetClaim;
+                }
+            ).claim;
             advanceClaim(spawned, "closed");
 
             // Assert
@@ -346,9 +352,7 @@ process.stdout.write(JSON.stringify(result));`;
                 closed: 1,
             });
             assert.equal(
-                restartDisposition(
-                    readClaims(root, "judge")[0]!,
-                ),
+                restartDisposition(readClaims(root, "judge")[0]!),
                 "unknown-outcome",
             );
         } finally {

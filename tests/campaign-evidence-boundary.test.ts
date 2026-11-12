@@ -26,7 +26,10 @@ function record(overrides: Record<string, unknown> = {}): string {
         callID: "call_abc",
         input: { read: "db/pool.md" },
         status: "completed",
-        result: { content: "note", metadata: { lake: "docs", path: "db/pool.md" } },
+        result: {
+            content: "note",
+            metadata: { lake: "docs", path: "db/pool.md" },
+        },
         ...overrides,
     });
 }
@@ -272,7 +275,10 @@ const trialFiles = (
                 .digest("hex"),
             policyViolations: [],
         }),
-        [`${TRIAL}/gate.json`]: JSON.stringify({ status: "pass", reason: null }),
+        [`${TRIAL}/gate.json`]: JSON.stringify({
+            status: "pass",
+            reason: null,
+        }),
         [`${TRIAL}/primary-check.json`]: JSON.stringify({
             status: "pass",
             exit: 0,
@@ -293,27 +299,27 @@ const trialFiles = (
                 metadata: {},
             }),
             JSON.stringify({
-            id: "call_abc",
-            tool: "execute",
-            status: "completed",
-            metadata: {
+                id: "call_abc",
+                tool: "execute",
+                status: "completed",
                 metadata: {
-                    toolCalls: [
-                        {
-                            tool: "docs",
-                            status: "completed",
-                            input: { read: "db/pool.md" },
-                        },
-                        {
-                            tool: "docs",
-                            status: "completed",
-                            input: {
-                                add: { mode: "create", path: "db/pool.md" },
+                    metadata: {
+                        toolCalls: [
+                            {
+                                tool: "docs",
+                                status: "completed",
+                                input: { read: "db/pool.md" },
                             },
-                        },
-                    ],
+                            {
+                                tool: "docs",
+                                status: "completed",
+                                input: {
+                                    add: { mode: "create", path: "db/pool.md" },
+                                },
+                            },
+                        ],
+                    },
                 },
-            },
             }),
         ].join("\n"),
         [`${TRIAL}/ac/attempt-001/judgement.json`]: JSON.stringify({
@@ -332,7 +338,8 @@ const trialFiles = (
         }),
     };
     if (journalLines.length > 0) {
-        files[`${TRIAL}/docs-operations.jsonl`] = `${journalLines.join("\n")}\n`;
+        files[`${TRIAL}/docs-operations.jsonl`] =
+            `${journalLines.join("\n")}\n`;
     }
     if (overrides.key !== null) {
         files[`${TRIAL}/docs-operations.key`] = `${overrides.key ?? KEY}\n`;

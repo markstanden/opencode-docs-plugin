@@ -1100,8 +1100,7 @@ export function loadTrialRecord(
         },
         attempt: {
             state: attempt.state,
-            usable:
-                answerProblem === null ? usability.usable : false,
+            usable: answerProblem === null ? usability.usable : false,
             problems,
         },
         run,

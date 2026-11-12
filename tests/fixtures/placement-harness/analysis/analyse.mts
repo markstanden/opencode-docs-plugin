@@ -1341,11 +1341,7 @@ function assemble(
         decision,
         measures,
         sensitivity: sensitivityOf(manifest, records),
-        screening: screeningReportOf(
-            manifest,
-            screen,
-            measures.personalTrial,
-        ),
+        screening: screeningReportOf(manifest, screen, measures.personalTrial),
         integrity: {
             sources: screen.sources,
             judgedBy,

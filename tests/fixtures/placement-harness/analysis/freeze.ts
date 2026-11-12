@@ -70,8 +70,7 @@ export interface FreezeRecord {
 
 /** The freeze outcome. */
 export type FreezeOutcome =
-    | { ok: true; record: FreezeRecord }
-    | { ok: false; problems: string[] };
+    { ok: true; record: FreezeRecord } | { ok: false; problems: string[] };
 
 /** The inputs a freeze decision reads. */
 export interface FreezeInput {
@@ -422,7 +421,9 @@ export function verifyFreeze(
             `container CLI changed: ${record.containerCli} to ${observation.containerCli}`,
         );
     }
-    const frozen = new Map(record.files.map((file) => [file.path, file.sha256]));
+    const frozen = new Map(
+        record.files.map((file) => [file.path, file.sha256]),
+    );
     for (const file of observation.files) {
         if (frozen.get(file.path) !== file.sha256) {
             problems.push(`immutable input changed: ${file.path}`);

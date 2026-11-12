@@ -61,10 +61,7 @@ const slot = (
 /** A synthetic eight-slot campaign. */
 function eightSlots(): SlotObservation[] {
     return Array.from({ length: 8 }, (_, index) =>
-        slot(index + 1, [
-            failedAuth("attempt-001"),
-            judged("attempt-002"),
-        ]),
+        slot(index + 1, [failedAuth("attempt-001"), judged("attempt-002")]),
     );
 }
 
@@ -165,10 +162,7 @@ describe("campaign closure", () => {
 
         // Assert
         assert.equal(outcome.ok, true);
-        assert.equal(
-            (outcome as { event: { scope: number } }).event.scope,
-            4,
-        );
+        assert.equal((outcome as { event: { scope: number } }).event.scope, 4);
         assert.deepEqual(report.unrunSlots, [5, 6, 7, 8]);
         assert.equal(report.stoppedAt, observations[3]?.stamp);
     });

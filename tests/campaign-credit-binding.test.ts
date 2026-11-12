@@ -1,7 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createHash, createHmac } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    rmSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { runAnalysis } from "./fixtures/placement-harness/analysis/analyse.mts";
@@ -66,7 +72,10 @@ function trial(
             policyViolations: [],
         }),
     );
-    write(join(dir, "gate.json"), JSON.stringify({ status: "pass", reason: null }));
+    write(
+        join(dir, "gate.json"),
+        JSON.stringify({ status: "pass", reason: null }),
+    );
     write(
         join(dir, "primary-check.json"),
         JSON.stringify({ status: "pass", exit: 0 }),
@@ -225,10 +234,7 @@ describe("credit binding through the analyser CLI", () => {
                 readFileSync(join(out, "analysis.json"), "utf8"),
             ) as {
                 measures: {
-                    arms: Record<
-                        string,
-                        { recording: { success: number } }
-                    >;
+                    arms: Record<string, { recording: { success: number } }>;
                     personalTrial: { recommendation: string };
                 };
                 screening: {
