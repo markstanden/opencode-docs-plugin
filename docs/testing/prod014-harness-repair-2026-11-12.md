@@ -86,20 +86,34 @@ review head.
 
 ## Review-repair rehearsal (2026-11-12, second pass)
 
-Working tree at `cdb525b5fa1c` (review head `72950accf2239cf856c0c12898677d6dd702b9e7`
-plus the review repairs); later commits are mechanical snapshot and gate
-formatting, leaving the rehearsed behaviour unchanged at `1aa1b6af19c7`. Fresh root `/tmp/opencode/rehearsal-final`, real
-materialiser, real `container-run.sh` and `ac/judge-launcher.sh`, real image
-`58505eac2fe9`, arms A (415 native chars) and B (739), and a local provider fake
-on `127.0.0.1:8899` that returns a no-op trial answer and a valid `none`
-judgement. Zero paid calls; every provider request was local.
+Revision map for this section:
+
+- **No-op eight-pair run**: the working tree whose executable changes were
+  committed as `267974e`. The earlier P04 attempts that failed on a missing
+  `evidence/` directory and on the source-revision environment were run-card
+  errors and are not evidence.
+- **Positive one-pair run**: `35769bfa9a9d09193a2953820e1f87f05ab5a2c2`. Between
+  `267974e` and this SHA the only code change is gate formatting of one
+  `sameModel` line in `freeze.mjs` (plus snapshot/materialise indentation and
+  documentation); `run.mjs` is byte-identical.
+- The earlier author rehearsal at `2147c424d2c5e07d873fd6c040f18083b01ea944`
+  remains evidence for its own revision only. Fresh root `/tmp/opencode/rehearsal-final`, real
+  materialiser, real `container-run.sh` and `ac/judge-launcher.sh`, real image
+  `58505eac2fe9`, arms A (415 native chars) and B (739), and a local provider fake
+  on `127.0.0.1:8899` that returns a no-op trial answer and a valid `none`
+  judgement. Zero paid calls; every provider request was local.
 
 - P04: 4 pairs, 8 trial launches, 8 judge attempts, 16 provider requests,
   24.3 s wall. The analyser published `inconclusive` (no-op evidence).
 - P08 continuation: 8 pairs, 16 trial launches, 16 judge attempts, 16 usable
-  judgements, 34 provider requests (two extra came from the first S07 verdict,
-  which the fake judge had not yet made preservation-complete), 11.5 s for the
-  P07–P08 stage. Decision `no-promotion`, threshold `not-qualified`.
+  judgements, 11.5 s for the P07–P08 stage. Decision `no-promotion`, threshold
+  `not-qualified`.
+- Provider HTTP accounting: the retained log has 34 requests — 2
+  `GET /v1/models` readiness probes, 16 trial chat completions and 16 judge chat
+  completions. The invalid S07 verdict was served by a stale fake process
+  before it was killed and is outside that log. The attempt ceiling limits
+  durable attempt records; the HTTP count is a separate measurement and is not
+  the ceiling.
 - Closure: 8 completed pairs, 16 trial launches, 16 judge attempts, 16 usable,
   0 unusable; token totals 0 with coverage 16/16 (the fake reports zero
   tokens), catalogue estimate 0, no problems.
@@ -118,12 +132,27 @@ analyser refuses output inside the evidence root (the run card now writes
 reports outside the campaign root). The run card also had to create
 `evidence/` before `schedule.mjs`.
 
-This fake produced the required no-op tie, not a useful write. Successful
-native reads, content replacements, refused adds, new-directory documents and
-the B-only wording change are proven at the analyser boundary in
-`campaign-credit-binding`, `campaign-evidence-boundary` and
-`prod014-wording-change` using the plugin's real emitted shapes; they were not
-produced by this no-op rehearsal fake.
+### Positive one-pair run (`35769bf`)
+
+A second offline run used a scripted provider that answers arm A with text and
+arm B with one real `docs` tool call. Arm B created
+`lakes/docs/ops/rehearsal-note.md`; the signed native journal record reported
+`written: true` with lake `docs` and path `ops/rehearsal-note.md`. The blind
+judge packet carried no arm/stamp/home label, showed the note only for B, and
+returned `useful-create` for B and `none` for A. The analyser credited B with a
+`verified-write` (recording 1/1) and A with 0/1 (`gate-blocked`); the eight-pair
+screen stayed `inconclusive` because only one pair ran (`1/8` coverage per arm).
+
+A first attempt at this pair was correctly gate-blocked: the created note
+omitted the case's required `BOM` content, so a successful tool call alone
+earned no credit. Adding that fact produced the verified write.
+
+The no-op fake therefore produced the required tie; this positive pair shows
+the harness can recognise a real improvement. Successful native reads, content
+replacements, refused adds and the B-only wording change remain proven at the
+analyser boundary in `campaign-credit-binding`,
+`campaign-evidence-boundary` and `prod014-wording-change` using the plugin's
+real emitted shapes.
 
 ## D1–D10 mapping
 
