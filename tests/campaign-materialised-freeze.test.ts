@@ -14,7 +14,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 const here = import.meta.dirname;
-const campaign = join(here, "fixtures", "placement-harness", "prod014", "campaign");
+const campaign = join(
+    here,
+    "fixtures",
+    "placement-harness",
+    "prod014",
+    "campaign",
+);
 const ids = ["R01", "S02", "R02", "R03", "S05", "S06", "S07", "R04"];
 
 /** Write one file, creating parents. */
@@ -29,10 +35,7 @@ function arm(dir: string): void {
     write(join(dir, "src/index.ts"), "export default {};\n");
     write(join(dir, "package-lock.json"), "{}\n");
     write(
-        join(
-            dir,
-            "tests/fixtures/placement-harness/prod014/cases.json",
-        ),
+        join(dir, "tests/fixtures/placement-harness/prod014/cases.json"),
         JSON.stringify(
             ids.map((id) => ({ id, primaryCheck: { script: `${id}.mjs` } })),
         ),
@@ -54,15 +57,7 @@ function arm(dir: string): void {
     execFileSync("git", ["add", "-A"], { cwd: dir });
     execFileSync(
         "git",
-        [
-            "-c",
-            "user.email=t@t",
-            "-c",
-            "user.name=t",
-            "commit",
-            "-qm",
-            "arm",
-        ],
+        ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "arm"],
         { cwd: dir },
     );
 }
@@ -89,13 +84,13 @@ function fixture(): { root: string; bin: string; imageFile: string } {
             ],
         }),
     );
-    const surfaces = { a: "Arm A records findings.", b: "Arm B records findings." };
+    const surfaces = {
+        a: "Arm A records findings.",
+        b: "Arm B records findings.",
+    };
     for (const letter of ["a", "b"] as const) {
         arm(join(root, "arms", letter));
-        write(
-            join(root, `gen/${letter}/prompts/R01.md`),
-            "task prompt\n",
-        );
+        write(join(root, `gen/${letter}/prompts/R01.md`), "task prompt\n");
         for (const id of ids) {
             write(
                 join(root, `gen/${letter}/fixtures/${id}/generation.json`),
@@ -186,20 +181,16 @@ exit 0
 
 /** Run the materialised freeze command. */
 function freeze(root: string, bin: string): ReturnType<typeof spawnSync> {
-    return spawnSync(
-        process.execPath,
-        [join(root, "prepare/freeze.mjs")],
-        {
-            env: {
-                ...process.env,
-                CAMPAIGN_ROOT: root,
-                CAMPAIGN_SOURCE_REPO: here,
-                PATH: `${bin}:${process.env.PATH ?? ""}`,
-            },
-            encoding: "utf8",
-            timeout: 120000,
+    return spawnSync(process.execPath, [join(root, "prepare/freeze.mjs")], {
+        env: {
+            ...process.env,
+            CAMPAIGN_ROOT: root,
+            CAMPAIGN_SOURCE_REPO: here,
+            PATH: `${bin}:${process.env.PATH ?? ""}`,
         },
-    );
+        encoding: "utf8",
+        timeout: 120000,
+    });
 }
 
 describe("materialised freeze command", () => {
@@ -217,9 +208,14 @@ describe("materialised freeze command", () => {
 
             // Assert
             assert.notEqual(second.status, 0);
-            assert.match(String(second.stderr), /already frozen|existing freeze|refusing/);
+            assert.match(
+                String(second.stderr),
+                /already frozen|existing freeze|refusing/,
+            );
             assert.equal(readFileSync(frozen, "utf8"), before);
-            assert.ok(existsSync(join(root, "evidence/frozen-identities.json")));
+            assert.ok(
+                existsSync(join(root, "evidence/frozen-identities.json")),
+            );
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
@@ -233,10 +229,7 @@ function runCampaign(
     counter: string,
 ): ReturnType<typeof spawnSync> {
     const stub = join(root, "trial-stub.sh");
-    write(
-        stub,
-        `#!/usr/bin/env sh\nprintf 'trial\\n' >>"\${STUB_COUNTER}"\n`,
-    );
+    write(stub, `#!/usr/bin/env sh\nprintf 'trial\\n' >>"\${STUB_COUNTER}"\n`);
     chmodSync(stub, 0o755);
     return spawnSync(
         process.execPath,
@@ -270,27 +263,26 @@ function rejudgeCampaign(
     bin: string,
     counter: string,
 ): ReturnType<typeof spawnSync> {
-    const stub = join(root, "measurement/tests/fixtures/placement-harness/ac/run.mjs");
+    const stub = join(
+        root,
+        "measurement/tests/fixtures/placement-harness/ac/run.mjs",
+    );
     write(
         stub,
         `import { appendFileSync } from "node:fs";\nappendFileSync(process.env.STUB_COUNTER, "judge\\n");\n`,
     );
-    return spawnSync(
-        process.execPath,
-        [join(root, "prepare/rejudge.mjs")],
-        {
-            env: {
-                ...process.env,
-                CAMPAIGN_ROOT: root,
-                CAMPAIGN_SOURCE_REPO: here,
-                STUB_COUNTER: counter,
-                ZAI_API_KEY: "stub",
-                PATH: `${bin}:${process.env.PATH ?? ""}`,
-            },
-            encoding: "utf8",
-            timeout: 120000,
+    return spawnSync(process.execPath, [join(root, "prepare/rejudge.mjs")], {
+        env: {
+            ...process.env,
+            CAMPAIGN_ROOT: root,
+            CAMPAIGN_SOURCE_REPO: here,
+            STUB_COUNTER: counter,
+            ZAI_API_KEY: "stub",
+            PATH: `${bin}:${process.env.PATH ?? ""}`,
         },
-    );
+        encoding: "utf8",
+        timeout: 120000,
+    });
 }
 
 describe("frozen premise enforcement", () => {
@@ -322,12 +314,18 @@ describe("frozen premise enforcement", () => {
             // Assert
             assert.equal(run.status, 2);
             assert.match(String(run.stderr), /frozen premise changed/);
-            assert.equal(readFileSync(join(root, "evidence/FROZEN.json"), "utf8"), frozenBytes);
+            assert.equal(
+                readFileSync(join(root, "evidence/FROZEN.json"), "utf8"),
+                frozenBytes,
+            );
             assert.equal(
                 existsSync(ledger) ? readFileSync(ledger, "utf8") : "",
                 ledgerBytes,
             );
-            assert.equal(existsSync(counter) ? readFileSync(counter, "utf8") : "", "");
+            assert.equal(
+                existsSync(counter) ? readFileSync(counter, "utf8") : "",
+                "",
+            );
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
@@ -367,7 +365,10 @@ describe("frozen premise enforcement", () => {
             // Assert
             assert.equal(run.status, 2);
             assert.match(String(run.stderr), /container image changed/);
-            assert.equal(existsSync(counter) ? readFileSync(counter, "utf8") : "", "");
+            assert.equal(
+                existsSync(counter) ? readFileSync(counter, "utf8") : "",
+                "",
+            );
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
@@ -393,7 +394,10 @@ describe("frozen premise enforcement", () => {
             // Assert
             assert.equal(rejudge.status, 2);
             assert.match(String(rejudge.stderr), /frozen premise changed/);
-            assert.equal(existsSync(counter) ? readFileSync(counter, "utf8") : "", "");
+            assert.equal(
+                existsSync(counter) ? readFileSync(counter, "utf8") : "",
+                "",
+            );
         } finally {
             rmSync(root, { recursive: true, force: true });
         }

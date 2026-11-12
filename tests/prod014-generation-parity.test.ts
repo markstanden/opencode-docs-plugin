@@ -41,7 +41,11 @@ describe("prod014 generation parity", () => {
             });
 
             // Assert: parsed output is authoritative; formatting may differ.
-            for (const name of ["cases.json", "truth.json", "measurement.json"]) {
+            for (const name of [
+                "cases.json",
+                "truth.json",
+                "measurement.json",
+            ]) {
                 assert.deepEqual(
                     read(join(temp, "prod014", name)),
                     read(join(fixture, name)),
@@ -55,7 +59,9 @@ describe("prod014 generation parity", () => {
 
     it("keeps the checked-in fixtures the authoritative campaign inputs", () => {
         // Act
-        const measurement = read<Measurement>(join(fixture, "measurement.json"));
+        const measurement = read<Measurement>(
+            join(fixture, "measurement.json"),
+        );
 
         // Assert: the generator writes these same files, so there is no second
         // live source; materialise and freeze read the checked-in copies.
@@ -72,24 +78,30 @@ describe("prod014 generation parity", () => {
 describe("independently specified preservation facts", () => {
     it("keeps the R02 pool, timeout and startup-migration facts", () => {
         // Act
-        const measurement = read<Measurement>(join(fixture, "measurement.json"));
+        const measurement = read<Measurement>(
+            join(fixture, "measurement.json"),
+        );
 
         // Assert
         assert.deepEqual(
             (measurement.scenarios.R02?.preservation?.facts ?? []).map(
                 (fact) => fact.id,
             ),
-            ["poolSize", "acquireTimeout", "startupMigrations", "obsoleteTlsClaim"],
+            [
+                "poolSize",
+                "acquireTimeout",
+                "startupMigrations",
+                "obsoleteTlsClaim",
+            ],
         );
-        assert.equal(
-            measurement.scenarios.R02?.retrieval?.lake,
-            "docs",
-        );
+        assert.equal(measurement.scenarios.R02?.retrieval?.lake, "docs");
     });
 
     it("keeps the S07 snapshot, rollback and obsolete legacy condition", () => {
         // Act
-        const measurement = read<Measurement>(join(fixture, "measurement.json"));
+        const measurement = read<Measurement>(
+            join(fixture, "measurement.json"),
+        );
 
         // Assert
         assert.deepEqual(

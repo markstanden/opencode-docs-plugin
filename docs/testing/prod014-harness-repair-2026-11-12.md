@@ -69,18 +69,18 @@ are documentation only.
 
 ## D1–D10 mapping
 
-| Finding | Production entry point | Named regression | Observed |
-| --- | --- | --- | --- |
-| D1 attempt selection | materialised `run.mjs`/`rejudge.mjs` selector | `campaign-launch-boundary`, `campaign-materialised-launch` | pass |
-| D2 credit binding | `analysis/measures.ts` via analyser CLI | `analysis-measures`, `campaign-credit-binding` | pass |
-| D3 retrieval lake | `parseMeasureDeclarations` + analyser | `analysis-measures` preflight | pass |
-| D4 paired decision | `personalTrialDecision` | `campaign-decision-authority` | pass |
-| D5 output authority | `render.ts`, `analyse.mts` screening block | `campaign-credit-binding`, `analysis-report` | pass |
-| D6 evidence boundary | `analysis/journal.ts`, `records.ts`, harness | `campaign-evidence-boundary`, analyser-key CLI test | pass |
-| D7 freeze | materialised `freeze.mjs` + `run.mjs`/`rejudge.mjs` | `campaign-freeze`, `campaign-materialised-freeze` | pass |
-| D8 launch/spend | materialised `run.mjs`/`rejudge.mjs` | `campaign-launch-boundary`, `campaign-materialised-launch`, `runner-regression` | pass |
-| D9 reusable TypeScript | `runner.json` + materialiser | materialiser mode/hash, generation parity | partial: six decision modules moved; historical scripts remain data |
-| D10 accounting/closure | materialised `close-campaign.mjs` + `closure.ts` | `campaign-closure`, `campaign-materialised-closure` | pass |
+| Finding                | Production entry point                              | Named regression                                                                | Observed                                                            |
+| ---------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| D1 attempt selection   | materialised `run.mjs`/`rejudge.mjs` selector       | `campaign-launch-boundary`, `campaign-materialised-launch`                      | pass                                                                |
+| D2 credit binding      | `analysis/measures.ts` via analyser CLI             | `analysis-measures`, `campaign-credit-binding`                                  | pass                                                                |
+| D3 retrieval lake      | `parseMeasureDeclarations` + analyser               | `analysis-measures` preflight                                                   | pass                                                                |
+| D4 paired decision     | `personalTrialDecision`                             | `campaign-decision-authority`                                                   | pass                                                                |
+| D5 output authority    | `render.ts`, `analyse.mts` screening block          | `campaign-credit-binding`, `analysis-report`                                    | pass                                                                |
+| D6 evidence boundary   | `analysis/journal.ts`, `records.ts`, harness        | `campaign-evidence-boundary`, analyser-key CLI test                             | pass                                                                |
+| D7 freeze              | materialised `freeze.mjs` + `run.mjs`/`rejudge.mjs` | `campaign-freeze`, `campaign-materialised-freeze`                               | pass                                                                |
+| D8 launch/spend        | materialised `run.mjs`/`rejudge.mjs`                | `campaign-launch-boundary`, `campaign-materialised-launch`, `runner-regression` | pass                                                                |
+| D9 reusable TypeScript | `runner.json` + materialiser                        | materialiser mode/hash, generation parity                                       | partial: six decision modules moved; historical scripts remain data |
+| D10 accounting/closure | materialised `close-campaign.mjs` + `closure.ts`    | `campaign-closure`, `campaign-materialised-closure`                             | pass                                                                |
 
 ## Acceptance reconciliation
 

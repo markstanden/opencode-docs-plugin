@@ -32,7 +32,11 @@ describe("B-only wording change", () => {
                 join(fixture, "assets", "b-prod014.txt"),
                 "utf8",
             );
-            writeFileSync(asset, `${originalAsset}\nOne extra sentence.`, "utf8");
+            writeFileSync(
+                asset,
+                `${originalAsset}\nOne extra sentence.`,
+                "utf8",
+            );
             const code = [
                 "analysis/measures.ts",
                 "analysis/decision.ts",

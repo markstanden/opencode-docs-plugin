@@ -161,10 +161,7 @@ function fixture(completed: number): string {
         }),
     );
     write(join(root, "evidence/ATTEMPTS.jsonl"), "");
-    write(
-        join(root, "prepare/shim/podman"),
-        "#!/usr/bin/env sh\nexit 0\n",
-    );
+    write(join(root, "prepare/shim/podman"), "#!/usr/bin/env sh\nexit 0\n");
     chmodSync(join(root, "prepare/shim/podman"), 0o755);
     for (const slot of slots.slice(0, completed)) {
         trial(root, slot as never, { failedAuth: completed === 8 });
@@ -178,21 +175,17 @@ function command(
     script: string,
     env: NodeJS.ProcessEnv = {},
 ): ReturnType<typeof spawnSync> {
-    return spawnSync(
-        process.execPath,
-        [join(root, "prepare", script)],
-        {
-            env: {
-                ...process.env,
-                CAMPAIGN_ROOT: root,
-                CAMPAIGN_SOURCE_REPO: here,
-                ZAI_API_KEY: "stub",
-                ...env,
-            },
-            encoding: "utf8",
-            timeout: 120000,
+    return spawnSync(process.execPath, [join(root, "prepare", script)], {
+        env: {
+            ...process.env,
+            CAMPAIGN_ROOT: root,
+            CAMPAIGN_SOURCE_REPO: here,
+            ZAI_API_KEY: "stub",
+            ...env,
         },
-    );
+        encoding: "utf8",
+        timeout: 120000,
+    });
 }
 
 describe("materialised campaign closure", () => {
@@ -204,7 +197,10 @@ describe("materialised campaign closure", () => {
             // Act
             const run = command(root, "close-campaign.mjs");
             const report = JSON.parse(
-                readFileSync(join(root, "evidence/RECONCILIATION.json"), "utf8"),
+                readFileSync(
+                    join(root, "evidence/RECONCILIATION.json"),
+                    "utf8",
+                ),
             );
 
             // Assert
@@ -227,7 +223,10 @@ describe("materialised campaign closure", () => {
             // Act
             const run = command(root, "close-campaign.mjs");
             const report = JSON.parse(
-                readFileSync(join(root, "evidence/RECONCILIATION.json"), "utf8"),
+                readFileSync(
+                    join(root, "evidence/RECONCILIATION.json"),
+                    "utf8",
+                ),
             );
 
             // Assert
