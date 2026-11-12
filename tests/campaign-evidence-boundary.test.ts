@@ -146,6 +146,44 @@ const nativeAddVerify = (
     signedInput: unknown = { add: ADD_STRUCT },
 ) => verify([nativeAddRecord(signedInput)], nativeAddOptions(hostInput));
 
+/** Verify one native add record with an explicit signed result. */
+const nativeAddResultVerify = (
+    hostInput: unknown,
+    signedInput: unknown,
+    metadata: Record<string, unknown>,
+    content = "result",
+) =>
+    verify(
+        [
+            signed({
+                surface: "native",
+                callID: "native_add",
+                input: signedInput,
+                result: { content, metadata },
+            }),
+        ],
+        nativeAddOptions(hostInput),
+    );
+
+/** The result metadata of the one credited record. */
+function creditedMetadata(
+    result: ReturnType<typeof verifyOperationsJournal>,
+): Record<string, unknown> {
+    const envelope = result.credited[0]?.record.result;
+    assert.ok(
+        typeof envelope === "object" &&
+            envelope !== null &&
+            !Array.isArray(envelope),
+    );
+    const metadata = (envelope as Record<string, unknown>).metadata;
+    assert.ok(
+        typeof metadata === "object" &&
+            metadata !== null &&
+            !Array.isArray(metadata),
+    );
+    return metadata as Record<string, unknown>;
+}
+
 describe("operations-journal verification", () => {
     it("credits a signed, attributed record with a matching host dispatch", () => {
         // Act
@@ -459,6 +497,363 @@ describe("operations-journal verification", () => {
         assert.deepEqual(result.rejected, [
             { index: 0, reason: "no-host-dispatch" },
         ]);
+    });
+
+    it("credits the observed nested-only lake refusal as attribution without a write", () => {
+        // Arrange: the runtime discarded the nested lake before execute, so
+        // the plugin saw two writable lakes and refused; the call is still
+        // attributable, but no write can be credited.
+        const hostInput = { add: { ...ADD_STRUCT, lake: "shared" } };
+        const signedInput = { add: ADD_STRUCT };
+
+        // Act
+        const result = nativeAddResultVerify(hostInput, signedInput, {
+            written: false,
+        });
+
+        // Assert
+        assert.equal(result.credited.length, 1);
+        assert.deepEqual(result.rejected, []);
+        assert.equal(creditedMetadata(result).written, false);
+    });
+
+    it("refuses a successful add whose only lake is nested", () => {
+        // Arrange: a write needs the top-level selector to corroborate the
+        // signed result; the undelivered nested value cannot do that.
+        const hostInput = { add: { ...ADD_STRUCT, lake: "docs" } };
+        const signedInput = { add: ADD_STRUCT };
+        const metadata = {
+            written: true,
+            lake: "docs",
+            path: "lakes/docs/db/pool.md",
+        };
+
+        // Act
+        const result = nativeAddResultVerify(hostInput, signedInput, metadata);
+
+        // Assert
+        assert.deepEqual(result.rejected, [
+            { index: 0, reason: "no-host-dispatch" },
+        ]);
+    });
+
+    for (const [label, nestedLake] of [
+        ["matching", "docs"],
+        ["conflicting", "shared"],
+    ] as const) {
+        it(`credits a ${label} nested lake against the effective top-level lake`, () => {
+            // Arrange: the nested value is undelivered and must never become
+            // the credited destination; the top-level selector is what the
+            // plugin saw.
+            const hostInput = {
+                lake: "docs",
+                add: { ...ADD_STRUCT, lake: nestedLake },
+            };
+            const signedInput = { lake: "docs", add: ADD_STRUCT };
+            const metadata = {
+                written: true,
+                lake: "docs",
+                path: "lakes/docs/db/pool.md",
+            };
+
+            // Act
+            const result = nativeAddResultVerify(
+                hostInput,
+                signedInput,
+                metadata,
+            );
+
+            // Assert
+            assert.equal(result.credited.length, 1);
+            assert.deepEqual(result.rejected, []);
+            assert.equal(creditedMetadata(result).lake, "docs");
+        });
+    }
+
+    it("refuses a successful add whose signed result contradicts the effective lake", () => {
+        // Arrange: the host top-level selector says docs, but the signed
+        // result claims the ignored nested lake wrote shared.
+        const hostInput = {
+            lake: "docs",
+            add: { ...ADD_STRUCT, lake: "shared" },
+        };
+        const signedInput = { lake: "docs", add: ADD_STRUCT };
+        const metadata = {
+            written: true,
+            lake: "shared",
+            path: "lakes/shared/db/pool.md",
+        };
+
+        // Act
+        const result = nativeAddResultVerify(hostInput, signedInput, metadata);
+
+        // Assert
+        assert.deepEqual(result.rejected, [
+            { index: 0, reason: "no-host-dispatch" },
+        ]);
+    });
+
+    it("credits a string-form add containing a nested lake", () => {
+        // Arrange: the existing string decode and the new nested-field rule
+        // apply in the same one-way native path.
+        const hostInput = {
+            lake: "docs",
+            add: JSON.stringify({ ...ADD_STRUCT, lake: "shared" }),
+        };
+        const signedInput = { lake: "docs", add: ADD_STRUCT };
+        const metadata = {
+            written: true,
+            lake: "docs",
+            path: "lakes/docs/db/pool.md",
+        };
+
+        // Act
+        const result = nativeAddResultVerify(hostInput, signedInput, metadata);
+
+        // Assert
+        assert.equal(result.credited.length, 1);
+        assert.deepEqual(result.rejected, []);
+        assert.equal(creditedMetadata(result).lake, "docs");
+    });
+
+    it("refuses a string-form add whose nested lake is the only selector", () => {
+        // Arrange
+        const hostInput = {
+            add: JSON.stringify({ ...ADD_STRUCT, lake: "shared" }),
+        };
+        const signedInput = { add: ADD_STRUCT };
+        const metadata = {
+            written: true,
+            lake: "shared",
+            path: "lakes/shared/db/pool.md",
+        };
+
+        // Act
+        const result = nativeAddResultVerify(hostInput, signedInput, metadata);
+
+        // Assert
+        assert.deepEqual(result.rejected, [
+            { index: 0, reason: "no-host-dispatch" },
+        ]);
+    });
+
+    it("rejects an extra nested field beside the ignored lake", () => {
+        // Arrange: the comparator must not become a general unknown-field
+        // dropper; only the one undelivered field is ignored.
+        const hostInput = {
+            lake: "docs",
+            add: { ...ADD_STRUCT, lake: "shared", extra: "kept" },
+        };
+        const signedInput = { lake: "docs", add: ADD_STRUCT };
+        const metadata = {
+            written: true,
+            lake: "docs",
+            path: "lakes/docs/db/pool.md",
+        };
+
+        // Act
+        const result = nativeAddResultVerify(hostInput, signedInput, metadata);
+
+        // Assert
+        assert.deepEqual(result.rejected, [
+            { index: 0, reason: "no-host-dispatch" },
+        ]);
+    });
+
+    it("does not normalise a nested lake already present in the signed record", () => {
+        // Arrange: the signed bytes are authoritative; a record carrying the
+        // undelivered field is not rewritten to fit the host trail.
+        const hostInput = {
+            lake: "docs",
+            add: { ...ADD_STRUCT, lake: "shared" },
+        };
+        const signedInput = {
+            lake: "docs",
+            add: { ...ADD_STRUCT, lake: "docs" },
+        };
+        const metadata = {
+            written: true,
+            lake: "docs",
+            path: "lakes/docs/db/pool.md",
+        };
+
+        // Act
+        const result = nativeAddResultVerify(hostInput, signedInput, metadata);
+
+        // Assert
+        assert.deepEqual(result.rejected, [
+            { index: 0, reason: "no-host-dispatch" },
+        ]);
+    });
+
+    it("refuses a non-object host add", () => {
+        // Arrange
+        const hostInput = { lake: "docs", add: null };
+        const signedInput = { lake: "docs", add: ADD_STRUCT };
+        const metadata = {
+            written: true,
+            lake: "docs",
+            path: "lakes/docs/db/pool.md",
+        };
+
+        // Act
+        const result = nativeAddResultVerify(hostInput, signedInput, metadata);
+
+        // Assert
+        assert.deepEqual(result.rejected, [
+            { index: 0, reason: "no-host-dispatch" },
+        ]);
+    });
+
+    it("refuses a non-object host input", () => {
+        // Arrange: a malformed host trail is not a comparable dispatch.
+        const signedInput = { lake: "docs", add: ADD_STRUCT };
+        const metadata = {
+            written: true,
+            lake: "docs",
+            path: "lakes/docs/db/pool.md",
+        };
+
+        // Act
+        const result = nativeAddResultVerify(null, signedInput, metadata);
+
+        // Assert
+        assert.deepEqual(result.rejected, [
+            { index: 0, reason: "no-host-dispatch" },
+        ]);
+    });
+
+    for (const [label, resultValue] of [
+        ["no signed result", undefined],
+        ["no result metadata", { content: "result" }],
+        ["no write fact", { content: "result", metadata: { lake: "docs" } }],
+        ["no result lake", { content: "result", metadata: { written: true } }],
+    ] as const) {
+        it(`refuses a nested-lake add with ${label}`, () => {
+            // Arrange
+            const hostInput = {
+                lake: "docs",
+                add: { ...ADD_STRUCT, lake: "shared" },
+            };
+            const signedInput = { lake: "docs", add: ADD_STRUCT };
+            const line = signed({
+                surface: "native",
+                callID: "native_add",
+                input: signedInput,
+                // `undefined` is dropped by JSON.stringify, leaving no result.
+                result: resultValue,
+            });
+
+            // Act
+            const result = verify([line], nativeAddOptions(hostInput));
+
+            // Assert
+            assert.deepEqual(result.rejected, [
+                { index: 0, reason: "no-host-dispatch" },
+            ]);
+        });
+    }
+
+    it("never credits two nested-lake records for one host dispatch", () => {
+        // Arrange
+        const line = signed({
+            surface: "native",
+            callID: "native_add",
+            input: { lake: "docs", add: ADD_STRUCT },
+            result: {
+                content: "replaced",
+                metadata: {
+                    written: true,
+                    lake: "docs",
+                    path: "lakes/docs/db/pool.md",
+                },
+            },
+        });
+
+        // Act
+        const result = verify(
+            [line, line],
+            nativeAddOptions({
+                lake: "docs",
+                add: { ...ADD_STRUCT, lake: "shared" },
+            }),
+        );
+
+        // Assert
+        assert.equal(result.credited.length, 1);
+        assert.deepEqual(result.rejected, [
+            { index: 1, reason: "no-host-dispatch" },
+        ]);
+    });
+
+    it("does not admit a nested lake on the Code Mode twin surface", () => {
+        // Arrange: the exception remains native-only.
+        const twin = signed({
+            callID: "call_add",
+            input: { add: ADD_STRUCT },
+            result: {
+                content: "replaced",
+                metadata: {
+                    written: true,
+                    lake: "docs",
+                    path: "lakes/docs/db/pool.md",
+                },
+            },
+        });
+
+        // Act
+        const result = verify([twin], {
+            dispatches: [
+                {
+                    tool: "docs",
+                    status: "completed",
+                    input: { add: { ...ADD_STRUCT, lake: "shared" } },
+                    callId: "call_add",
+                },
+            ],
+        });
+
+        // Assert
+        assert.deepEqual(result.rejected, [
+            { index: 0, reason: "no-host-dispatch" },
+        ]);
+    });
+
+    it("keeps the credited signed record byte-identical", () => {
+        // Arrange
+        const line = signed({
+            surface: "native",
+            callID: "native_add",
+            input: { lake: "docs", add: ADD_STRUCT },
+            result: {
+                content: "replaced",
+                metadata: {
+                    written: true,
+                    lake: "docs",
+                    path: "lakes/docs/db/pool.md",
+                },
+            },
+        });
+        const originalMac = (JSON.parse(line) as Record<string, unknown>).mac;
+
+        // Act
+        const result = verify(
+            [line],
+            nativeAddOptions({
+                lake: "docs",
+                add: { ...ADD_STRUCT, lake: "shared" },
+            }),
+        );
+
+        // Assert
+        assert.equal(result.credited.length, 1);
+        assert.ok(result.credited[0] !== undefined);
+        assert.equal(journalMacValid(result.credited[0].record, KEY), true);
+        assert.equal(result.credited[0].record.mac, originalMac);
+        assert.deepEqual(result.credited[0].record.input, {
+            lake: "docs",
+            add: ADD_STRUCT,
+        });
     });
 });
 

@@ -162,6 +162,123 @@ export function journalRecordAttributed(
     return typeof record.callID === "string" && callIds.has(record.callID);
 }
 
+/** The signed result's metadata, when it is present as an object. */
+function resultMetadataOf(
+    record: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+    const result = record.result;
+    if (!isRecord(result)) return undefined;
+    return isRecord(result.metadata) ? result.metadata : undefined;
+}
+
+/**
+ * The signed add result's write fact, or null when it does not establish one.
+ * @param record The signed journal record.
+ * @returns Whether a write happened and the lake it names, or null.
+ */
+function addWriteOf(
+    record: Record<string, unknown>,
+): { written: boolean; lake: string | null } | null {
+    const metadata = resultMetadataOf(record);
+    if (metadata === undefined) return null;
+    if (metadata.written !== true && metadata.written !== false) return null;
+    return {
+        written: metadata.written,
+        lake: typeof metadata.lake === "string" ? metadata.lake : null,
+    };
+}
+
+/**
+ * Whether the signed result permits removing the nested lake. A refused add
+ * wrote nothing; a successful write must name the host's top-level lake.
+ * @param record The signed journal record.
+ * @param hostInput The host input, with a string-form add already decoded.
+ * @returns True when the write facts make the removal safe.
+ */
+function writeAllowsUndeliveredAddLake(
+    record: Record<string, unknown>,
+    hostInput: Record<string, unknown>,
+): boolean {
+    const write = addWriteOf(record);
+    if (write === null) return false;
+    if (!write.written) return true;
+    return (
+        typeof hostInput.lake === "string" &&
+        write.lake !== null &&
+        hostInput.lake === write.lake
+    );
+}
+
+/**
+ * Remove only the nested `add.lake` the runtime discards before execute.
+ *
+ * The tool schema declares `lake` at the top level; Effect Schema's default
+ * excess-property handling drops the undeclared nested field. A successful
+ * write therefore binds only when the host's top-level selector is present and
+ * equals the lake the signed result says was written. A refused add wrote
+ * nothing, so it binds without a destination. Every other shape refuses: the
+ * comparator never drops another field, and the nested value never becomes the
+ * credited destination.
+ * @param record The signed journal record.
+ * @param candidate The decoded host input and its two add objects.
+ * @returns The comparable host input, or null when this shape is not safe.
+ */
+function withoutUndeliveredAddLake(
+    record: Record<string, unknown>,
+    candidate: DecodedAddInput,
+): Record<string, unknown> | null {
+    if (!Object.hasOwn(candidate.hostAdd, "lake")) return null;
+    if (Object.hasOwn(candidate.recordAdd, "lake")) return null;
+    if (!writeAllowsUndeliveredAddLake(record, candidate.hostInput)) {
+        return null;
+    }
+    const add = { ...candidate.hostAdd };
+    delete add.lake;
+    return { ...candidate.hostInput, add };
+}
+
+/** The decoded host input and the two add objects it compares. */
+interface DecodedAddInput {
+    /** The comparable host input, with a string-form add decoded. */
+    hostInput: Record<string, unknown>;
+    /** The signed add object. */
+    recordAdd: Record<string, unknown>;
+    /** The host add object. */
+    hostAdd: Record<string, unknown>;
+}
+
+/**
+ * The host input with a string-form add decoded once, when this is a native
+ * add shape. A non-add call, a malformed string, a double-encoded string or a
+ * non-object add returns null.
+ */
+function decodedHostInput(
+    record: Record<string, unknown>,
+    hostInput: Record<string, unknown>,
+): DecodedAddInput | null {
+    if (!isRecord(record.input) || !isRecord(record.input.add)) return null;
+    if (typeof hostInput.add === "string") {
+        let decoded: unknown;
+        try {
+            decoded = JSON.parse(hostInput.add);
+        } catch {
+            return null;
+        }
+        if (!isRecord(decoded)) return null;
+        return {
+            hostInput: { ...hostInput, add: decoded },
+            recordAdd: record.input.add,
+            hostAdd: decoded,
+        };
+    }
+    if (!isRecord(hostInput.add)) return null;
+    return {
+        hostInput,
+        recordAdd: record.input.add,
+        hostAdd: hostInput.add,
+    };
+}
+
 /**
  * Whether one host dispatch carries the signed input.
  *
@@ -169,13 +286,15 @@ export function journalRecordAttributed(
  * `add` as a JSON string: the runtime decodes it into the signed struct before
  * the plugin executes it, so only the raw string reaches the host trail.
  * Decode that one field once and require the whole resulting input to be
- * deeply equal to the signed input. A malformed, double-encoded, one-way or
- * otherwise differing value still refuses. The signed record is never
+ * deeply equal to the signed input. The runtime also discards an undeclared
+ * `add.lake` before execute; that one field is removed under the signed
+ * result's write facts, never generally. A malformed, double-encoded, one-way
+ * or otherwise differing value still refuses. The signed record is never
  * rewritten: its bytes are the MAC-covered evidence.
  * @param record The signed journal record.
  * @param dispatch The host-recorded dispatch.
  * @returns True when the host input matches the signed input, exactly or
- *   through one decoded native `add` string.
+ *   through the one decoded-string/undelivered-nested-field exception.
  */
 function hostInputMatches(
     record: Record<string, unknown>,
@@ -184,17 +303,11 @@ function hostInputMatches(
     if (isDeepStrictEqual(dispatch.input, record.input)) return true;
     if (record.surface !== "native" || record.tool !== "docs") return false;
     if (!isRecord(dispatch.input) || !isRecord(record.input)) return false;
-    const encoded = dispatch.input.add;
-    if (typeof encoded !== "string") return false;
-    if (!isRecord(record.input.add)) return false;
-    let decoded: unknown;
-    try {
-        decoded = JSON.parse(encoded);
-    } catch {
-        return false;
-    }
-    if (!isRecord(decoded)) return false;
-    return isDeepStrictEqual({ ...dispatch.input, add: decoded }, record.input);
+    const candidate = decodedHostInput(record, dispatch.input);
+    if (candidate === null) return false;
+    if (isDeepStrictEqual(candidate.hostInput, record.input)) return true;
+    const normalized = withoutUndeliveredAddLake(record, candidate);
+    return normalized !== null && isDeepStrictEqual(normalized, record.input);
 }
 
 /**
