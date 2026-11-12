@@ -275,8 +275,7 @@ if (
     identities.arms.B.surfaces.nativeHash
 )
     problems.push("A and B descriptions are identical");
-const sameModel = (served) =>
-    served === MODEL || MODEL.endsWith(`/${served}`);
+const sameModel = (served) => served === MODEL || MODEL.endsWith(`/${served}`);
 if (
     !sameModel(identities.arms.A.delivery.model) ||
     !sameModel(identities.arms.B.delivery.model)
