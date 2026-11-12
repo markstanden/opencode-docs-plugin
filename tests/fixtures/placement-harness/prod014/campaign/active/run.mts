@@ -25,6 +25,7 @@ import {
 import { join } from "node:path";
 import { credentialFileProblem, loadJudgeKey } from "./env.mts";
 import {
+    errorText,
     filesUnder,
     freezeRecordOf,
     manifestOf,
@@ -33,7 +34,7 @@ import {
     scheduleOf,
     type ScheduleSlot,
 } from "./contracts.mts";
-import { parseCampaignLedger } from "../runner/ledger.ts";
+import { parseCampaignLedger, type LedgerParse } from "../runner/ledger.ts";
 import {
     advanceClaim,
     claimBudget,
@@ -82,8 +83,20 @@ const readJson = (path: string): unknown =>
     existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
 
 /** The parsed ledger: absence is a state, never an empty trusted ledger. */
-const ledgerParse = () =>
-    parseCampaignLedger(existsSync(LEDGER) ? readText(LEDGER) : undefined);
+const ledgerParse = (): LedgerParse => {
+    try {
+        return parseCampaignLedger(
+            existsSync(LEDGER) ? readText(LEDGER) : undefined,
+        );
+    } catch (error) {
+        return {
+            state: "malformed",
+            events: [],
+            problems: [`ledger is unreadable: ${errorText(error)}`],
+            closedAt: null,
+        };
+    }
+};
 
 /** Why spend is refused now, or null when a clean open ledger permits it. */
 const spendRefusal = (): string | null => {

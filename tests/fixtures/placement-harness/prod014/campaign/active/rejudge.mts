@@ -6,6 +6,7 @@ import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { credentialFileProblem, loadJudgeKey } from "./env.mts";
 import {
+    errorText,
     filesUnder,
     freezeRecordOf,
     manifestOf,
@@ -14,7 +15,7 @@ import {
     recordOf,
     scheduleOf,
 } from "./contracts.mts";
-import { parseCampaignLedger } from "../runner/ledger.ts";
+import { parseCampaignLedger, type LedgerParse } from "../runner/ledger.ts";
 import { advanceClaim, claimBudget, releaseClaim } from "../runner/budget.ts";
 import { resolveRecoverySelection } from "../runner/selector.ts";
 import { spendFreezeProblem, verifyFreeze } from "../runner/freeze.ts";
@@ -98,8 +99,20 @@ const premiseProblems = (): string[] => {
 };
 
 /** The parsed ledger: a malformed or closed ledger permits no spend. */
-const ledgerParse = () =>
-    parseCampaignLedger(existsSync(LEDGER) ? readText(LEDGER) : undefined);
+const ledgerParse = (): LedgerParse => {
+    try {
+        return parseCampaignLedger(
+            existsSync(LEDGER) ? readText(LEDGER) : undefined,
+        );
+    } catch (error) {
+        return {
+            state: "malformed",
+            events: [],
+            problems: [`ledger is unreadable: ${errorText(error)}`],
+            closedAt: null,
+        };
+    }
+};
 
 /** Why recovery spend is refused now, or null. */
 const spendRefusal = () => {

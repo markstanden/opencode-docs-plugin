@@ -409,6 +409,72 @@ describe("closure edge states", () => {
         }
     });
 
+    it("keeps an unreadable trail unknown and exposes the read problem", () => {
+        // Arrange: a directory at the trail path fails with EISDIR for every
+        // user, including root, where a chmod-based unreadable file would not.
+        const root = fixture(2);
+        const dir = join(root, "gen/a/results/pd-A-r0-R01/R01");
+        const trail = join(dir, "stdout.jsonl");
+        rmSync(trail, { force: true });
+        mkdirSync(trail, { recursive: true });
+
+        try {
+            // Act
+            const run = command(root, "close-campaign.mts");
+            const report = JSON.parse(
+                readFileSync(
+                    join(root, "evidence/RECONCILIATION.json"),
+                    "utf8",
+                ),
+            );
+
+            // Assert: unknown, never zero, and the read failure is published.
+            assert.equal(run.status, 0, String(run.stderr));
+            assert.equal(report.trial.steps, null);
+            assert.equal(report.trial.tokens.input, null);
+            assert.equal(report.billing.trial.estimated, null);
+            assert.ok(
+                report.problems.some((problem: string) =>
+                    /unreadable trail/.test(problem),
+                ),
+                JSON.stringify(report.problems),
+            );
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("keeps a readable empty trail as a known zero", () => {
+        // Arrange
+        const root = fixture(1);
+        const dir = join(root, "gen/a/results/pd-A-r0-R01/R01");
+        write(join(dir, "stdout.jsonl"), "");
+
+        try {
+            // Act
+            const run = command(root, "close-campaign.mts");
+            const report = JSON.parse(
+                readFileSync(
+                    join(root, "evidence/RECONCILIATION.json"),
+                    "utf8",
+                ),
+            );
+
+            // Assert
+            assert.equal(run.status, 0, String(run.stderr));
+            assert.equal(report.trial.steps, 0);
+            assert.equal(report.trial.tokens.input, 0);
+            assert.deepEqual(
+                report.problems.filter((problem: string) =>
+                    /unreadable trail/.test(problem),
+                ),
+                [],
+            );
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     it("counts a resolved judgement as usable", () => {
         // Arrange
         const root = fixture(2);

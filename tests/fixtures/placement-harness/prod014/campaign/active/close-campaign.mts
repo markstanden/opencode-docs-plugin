@@ -16,7 +16,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { parseCampaignLedger } from "../runner/ledger.ts";
+import { parseCampaignLedger, type LedgerParse } from "../runner/ledger.ts";
 import { readClaims, restartDisposition } from "../runner/budget.ts";
 import {
     closeCampaign,
@@ -26,6 +26,7 @@ import {
     type TokenFields,
 } from "../runner/closure.ts";
 import {
+    errorText,
     freezeRecordOf,
     readJson as readJsonValue,
     readText,
@@ -78,6 +79,8 @@ interface Usage {
     steps: number | null;
     tokens: TokenFields | null;
     malformed: boolean;
+    /** Why the trail could not be read, when it exists but is unreadable. */
+    problem?: string;
 }
 
 interface TokenSamples {
@@ -97,7 +100,17 @@ interface TokenRates {
 function usageOf(path: string): Usage {
     if (!existsSync(path))
         return { steps: null, tokens: null, malformed: false };
-    const text = readText(path);
+    let text: string;
+    try {
+        text = readText(path);
+    } catch (error) {
+        return {
+            steps: null,
+            tokens: null,
+            malformed: true,
+            problem: `unreadable trail ${path}: ${errorText(error)}`,
+        };
+    }
     if (text.trim() === "") return emptyUsage();
     const parsed = tokensFromTrail(text);
     if (parsed.malformed) {
@@ -223,7 +236,7 @@ function attemptStatus(
 }
 
 /** One judge attempt's evidence, including whether its judgement is usable. */
-function judgeAttemptOf(dir: string): JudgeAttempt {
+function judgeAttemptOf(dir: string): JudgeAttempt & { readProblem?: string } {
     const meta = objectOrNull(join(dir, "meta.json"));
     const judgement = objectOrNull(join(dir, "judgement.json"));
     const resolution = objectOrNull(join(dir, "resolution.json"));
@@ -243,6 +256,7 @@ function judgeAttemptOf(dir: string): JudgeAttempt {
             meta !== null && typeof meta.durationMs === "number"
                 ? meta.durationMs
                 : null,
+        ...(usage.problem === undefined ? {} : { readProblem: usage.problem }),
     };
 }
 
@@ -345,10 +359,20 @@ function estimate(tokens: TokenFields, rates: TokenRates): number | null {
     );
 }
 
-const ledgerText = readText(LEDGER);
-const ledgerParse = parseCampaignLedger(
-    existsSync(LEDGER) ? ledgerText : undefined,
-);
+const ledgerParse = ((): LedgerParse => {
+    try {
+        return parseCampaignLedger(
+            existsSync(LEDGER) ? readText(LEDGER) : undefined,
+        );
+    } catch (error) {
+        return {
+            state: "malformed",
+            events: [],
+            problems: [`ledger is unreadable: ${errorText(error)}`],
+            closedAt: null,
+        };
+    }
+})();
 if (ledgerParse.state === "malformed") {
     console.error(
         `ledger is malformed; nothing is published: ${ledgerParse.problems.join("; ")}`,
@@ -458,6 +482,7 @@ try {
         process.exit(1);
     }
 
+    const readProblems: string[] = [];
     const observations: SlotObservation[] = slots.map((slot) => {
         const dir = caseDir(slot);
         const acDir = join(dir, "ac");
@@ -465,7 +490,12 @@ try {
             ? readdirSync(acDir)
                   .filter((name) => /^attempt-\d{3}$/.test(name))
                   .sort()
-                  .map((name) => judgeAttemptOf(join(acDir, name)))
+                  .map((name) => {
+                      const attempt = judgeAttemptOf(join(acDir, name));
+                      if (attempt.readProblem !== undefined)
+                          readProblems.push(attempt.readProblem);
+                      return attempt;
+                  })
             : [];
         const meta = objectOrNull(join(dir, "meta.json"));
         const timings =
@@ -475,6 +505,7 @@ try {
                 ? (meta.timings as Record<string, unknown>)
                 : {};
         const usage = usageOf(join(dir, "stdout.jsonl"));
+        if (usage.problem !== undefined) readProblems.push(usage.problem);
         const launched =
             existsSync(dir) ||
             trialClaims.some(
@@ -571,7 +602,7 @@ try {
                 scenario: slot.scenario,
                 arm: slot.arm,
             })),
-        problems: report.problems,
+        problems: [...report.problems, ...readProblems],
         billing: {
             currency: "USD",
             trial: {

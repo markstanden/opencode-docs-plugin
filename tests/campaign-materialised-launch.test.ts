@@ -294,6 +294,57 @@ describe("materialised launch boundary", () => {
         }
     });
 
+    it("refuses an unreadable ledger before any launch", () => {
+        // Arrange: a directory at the ledger path fails with EISDIR for every
+        // user, including root.
+        const { root, counter, bin } = campaign();
+        const ledger = join(root, "evidence/ATTEMPTS.jsonl");
+        rmSync(ledger, { force: true });
+        mkdirSync(ledger);
+
+        try {
+            // Act
+            const result = run(root, counter, bin, "run.mts", [
+                "--pair-from",
+                "1",
+                "--pair-to",
+                "1",
+                "--trial-command",
+                join(root, "trial-stub.sh"),
+            ]);
+
+            // Assert
+            assert.equal(result.status, 2);
+            assert.match(String(result.stderr), /ledger is unreadable/);
+            assert.equal(counted(counter), "");
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("refuses an unreadable ledger before any recovery judgement", () => {
+        // Arrange
+        const { root, counter, bin } = campaign();
+        const ledger = join(root, "evidence/ATTEMPTS.jsonl");
+        rmSync(ledger, { force: true });
+        mkdirSync(ledger);
+
+        try {
+            // Act
+            const result = run(root, counter, bin, "rejudge.mts", []);
+
+            // Assert
+            assert.equal(result.status, 2);
+            assert.match(String(result.stderr), /ledger is unreadable/);
+            assert.equal(
+                claimUsage(join(root, "evidence"), "judge").claimed,
+                0,
+            );
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     it("does not burn an allowance when the judge wrapper refuses", () => {
         // Arrange
         const { root, counter, bin } = campaign();

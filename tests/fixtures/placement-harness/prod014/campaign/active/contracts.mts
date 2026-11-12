@@ -22,13 +22,24 @@ export function readJson(path: string): unknown {
     return JSON.parse(readFileSync(path, "utf8"));
 }
 
-/** Read text, or an empty string when the file is absent. */
+/**
+ * Read text. A missing file is an empty string; every other read failure
+ * (directory, permission, I/O) throws so it cannot masquerade as empty.
+ * @param path The file to read.
+ * @returns Its contents, or an empty string when it does not exist.
+ */
 export function readText(path: string): string {
     try {
         return readFileSync(path, "utf8");
-    } catch {
-        return "";
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+        throw error;
     }
+}
+
+/** A read failure as one line, for a refusal or an accounting problem. */
+export function errorText(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
 }
 
 /** One JSON object, or a refusal naming the file. */

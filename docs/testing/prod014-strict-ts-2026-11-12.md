@@ -27,6 +27,12 @@ Summary: The live prod014 campaign chain now runs typechecked .mts programs, wit
   and their `.mjs` primary checks are unchanged. The live corpus uses the
   `.mts` checks; `container-run.sh` ships whichever shared helper each check
   imports.
+- The shared reader distinguishes a missing file from a failed read: only
+  `ENOENT` returns an empty string, so a directory, permission error or I/O
+  failure throws. Usage accounting catches it, keeps steps and tokens unknown
+  and publishes the read problem; the ledger parsers convert it to a malformed
+  ledger, which refuses a launch, a recovery judgement and a close before
+  dispatch or publication.
 - The fresh snapshot was regenerated (`--snapshot`): 13 active sources and the
   same six pinned runner hashes. `runner.json` is byte-identical. The corpus
   (`prod014/cases.json`) changed only its `primaryCheck.script` values, so its
@@ -60,4 +66,7 @@ Summary: The live prod014 campaign chain now runs typechecked .mts programs, wit
 - `npm run typecheck` clean; `npm test` 1155 pass, 0 fail in a signing-free git
   environment (the materialised suites commit fixture repos).
 - The rehearsal above, including provider-body inspection for host paths.
+- Directory-at-path regressions: an unreadable trail keeps totals unknown with
+  the problem exposed, a readable empty trail stays a known zero, and an
+  unreadable ledger refuses `run` and `rejudge` before any dispatch.
 - `defined comply` after the fence refactors.
