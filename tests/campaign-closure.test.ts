@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { BudgetClaim } from "./fixtures/placement-harness/analysis/budget.ts";
+import { claimBudget } from "./fixtures/placement-harness/analysis/budget.ts";
 import {
     closeCampaign,
     deriveClosure,
@@ -225,5 +226,56 @@ describe("campaign closure", () => {
             (outcome as { problems: string[] }).problems.join("; "),
             /no campaign evidence/,
         );
+    });
+});
+
+describe("token subtotals with unknowns", () => {
+    /** One slot with the given input-token sequence. */
+    const withInputs = (sequence: Array<number | null>): ClosureInput =>
+        input({
+            observations: sequence.map((value, index) =>
+                slot(index + 1, [judged("attempt-001")], {
+                    trialTokens: {
+                        input: value,
+                        output: 0,
+                        reasoning: 0,
+                        cacheRead: 0,
+                    },
+                }),
+            ),
+            scheduledSlots: sequence.length,
+        });
+
+    it("keeps an unknown total once any observation is unknown", () => {
+        // Act
+        const report = deriveClosure(withInputs([5, null, 7]));
+
+        // Assert
+        assert.equal(report.trial.tokens.input, null);
+        assert.equal(report.trial.tokenCoverage.input, 2);
+    });
+
+    it("reports the same unknown total for every permutation", () => {
+        // Act
+        const permutations = [
+            [null, 5, 7],
+            [7, null, 5],
+            [5, 7, null],
+        ].map((sequence) => deriveClosure(withInputs(sequence)));
+
+        // Assert
+        for (const report of permutations) {
+            assert.equal(report.trial.tokens.input, null);
+            assert.equal(report.trial.tokenCoverage.input, 2);
+        }
+    });
+
+    it("sums only fully known observations", () => {
+        // Act
+        const report = deriveClosure(withInputs([5, 7]));
+
+        // Assert
+        assert.equal(report.trial.tokens.input, 12);
+        assert.equal(report.trial.tokenCoverage.input, 2);
     });
 });

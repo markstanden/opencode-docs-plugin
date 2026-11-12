@@ -637,10 +637,14 @@ function limitationSection(result: AnalysisResult): string {
  * @returns The complete report.
  */
 export function renderReport(result: AnalysisResult): string {
+    const screenHeadline =
+        result.measures.status === "available"
+            ? `**Personal-trial screen:** ${result.measures.personalTrial.recommendation} — ${escapeCell(result.measures.personalTrial.reasons.join("; ") || "no criterion reported")}.`
+            : `**Personal-trial screen:** not applicable — the measurement declaration is ${escapeCell(result.measures.status)}; only the utility threshold is available.`;
     return [
         `# Trial analysis: ${escapeCell(result.campaign.id)}`,
         "",
-        `**Personal-trial screen:** ${result.measures.personalTrial.recommendation} — ${escapeCell(result.measures.personalTrial.reasons.join("; ") || "no criterion reported")}.`,
+        screenHeadline,
         "",
         `**Utility threshold (component, not the recommendation):** ${result.decision.overall} — ${escapeCell(result.decision.reasons.join("; ") || result.decision.guardrails.detail)}.`,
         "",

@@ -137,19 +137,46 @@ function emptyTokens(): TokenFields {
     return { input: null, output: null, reasoning: null, cacheRead: null };
 }
 
-/** Add one recorded field; a single unknown observation keeps the total unknown. */
-function addField(total: number | null, value: number | null): number | null {
-    if (value === null) return null;
-    return (total ?? 0) + value;
+/**
+ * Add one recorded field. Once an observation is unknown the total stays
+ * unknown: a later known value never restarts the subtotal at zero.
+ */
+function addField(
+    account: AccountAccumulator,
+    field: "steps" | "durationMs",
+    value: number | null,
+): void {
+    if (value === null) {
+        account.unknown.set(field, true);
+    } else {
+        const total = account[field];
+        account[field] =
+            total === null || account.unknown.get(field) === true
+                ? value
+                : total + value;
+    }
+    if (account.unknown.get(field) === true) account[field] = null;
 }
 
 /** Add one attempt's tokens into an accumulator. */
-function addTokens(total: TokenFields, tokens: TokenFields | null): void {
-    if (tokens === null) return;
-    total.input = addField(total.input, tokens.input);
-    total.output = addField(total.output, tokens.output);
-    total.reasoning = addField(total.reasoning, tokens.reasoning);
-    total.cacheRead = addField(total.cacheRead, tokens.cacheRead);
+function addTokens(
+    account: AccountAccumulator,
+    tokens: TokenFields | null,
+): void {
+    const fields = ["input", "output", "reasoning", "cacheRead"] as const;
+    if (tokens === null) {
+        for (const field of fields) account.unknownTokens.add(field);
+    } else {
+        for (const field of fields) {
+            const value = tokens[field];
+            if (value === null) {
+                account.unknownTokens.add(field);
+            } else {
+                account.tokens[field] = (account.tokens[field] ?? 0) + value;
+            }
+        }
+    }
+    for (const field of account.unknownTokens) account.tokens[field] = null;
 }
 
 /** Token coverage counters. */
@@ -214,6 +241,10 @@ interface AccountAccumulator extends ModelAccount {
     attempts: number;
     /** Attempts that reached inference. */
     inferred: number;
+    /** Which scalar totals have seen an unknown observation. */
+    unknown: Map<string, boolean>;
+    /** Which token fields have seen an unknown observation. */
+    unknownTokens: Set<"input" | "output" | "reasoning" | "cacheRead">;
 }
 
 /** An empty model accumulator. */
@@ -225,6 +256,8 @@ function emptyAccount(): AccountAccumulator {
         tokens: emptyTokens(),
         tokenCoverage: emptyCoverage(),
         durationMs: null,
+        unknown: new Map(),
+        unknownTokens: new Set(),
     };
 }
 
@@ -238,9 +271,9 @@ function addTrial(account: AccountAccumulator, slot: SlotObservation): void {
     if (!slot.launched) return;
     account.attempts += 1;
     if (slot.trialSteps !== null && slot.trialSteps > 0) account.inferred += 1;
-    account.steps = addField(account.steps, slot.trialSteps);
-    addTokens(account.tokens, slot.trialTokens);
-    account.durationMs = addField(account.durationMs, slot.trialDurationMs);
+    addField(account, "steps", slot.trialSteps);
+    addTokens(account, slot.trialTokens);
+    addField(account, "durationMs", slot.trialDurationMs);
     addCoverage(account, slot.trialTokens);
 }
 
@@ -254,9 +287,9 @@ function addJudge(
 ): void {
     if (attempt.spawned) account.attempts += 1;
     if (attempt.reachedInference) account.inferred += 1;
-    account.steps = addField(account.steps, attempt.steps);
-    addTokens(account.tokens, attempt.tokens);
-    account.durationMs = addField(account.durationMs, attempt.durationMs);
+    addField(account, "steps", attempt.steps);
+    addTokens(account, attempt.tokens);
+    addField(account, "durationMs", attempt.durationMs);
     addCoverage(account, attempt.tokens);
     if (attempt.status === "judged") account.usableJudgements += 1;
     else account.unusableJudgements += 1;

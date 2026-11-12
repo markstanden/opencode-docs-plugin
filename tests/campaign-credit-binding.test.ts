@@ -11,7 +11,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { spawnSync } from "node:child_process";
 import { runAnalysis } from "./fixtures/placement-harness/analysis/analyse.mts";
+
+const ANALYSER = join(
+    import.meta.dirname,
+    "fixtures/placement-harness/analysis/analyse.mts",
+);
 
 const KEY = "credit-binding-key";
 
@@ -353,6 +359,8 @@ describe("shared evidence verifier through the analyser CLI", () => {
 /** Run the analyser and return the parsed analysis and report. */
 function analyse(root: string): {
     status: number | null;
+    stdout: string;
+    out: string;
     analysis: {
         measures: {
             arms: Record<
@@ -382,6 +390,8 @@ function analyse(root: string): {
     if (run.status !== 0) throw new Error(String(run.stderr));
     return {
         status: run.status,
+        stdout: String(run.stdout ?? ""),
+        out,
         analysis: JSON.parse(readFileSync(join(out, "analysis.json"), "utf8")),
     };
 }
@@ -561,6 +571,54 @@ describe("real producer shapes and operation outcomes", () => {
             // Assert
             assert.equal(status, 0);
             assert.equal(analysis.measures.arms.A?.recording.success, 0);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("never tells the operator qualified on a dead heat", () => {
+        // Arrange
+        const { root } = campaign();
+        try {
+            write(
+                join(root, "evidence/measures.json"),
+                JSON.stringify({
+                    recordingOpportunities: [],
+                    retrievalOpportunities: [],
+                    scenarios: {},
+                }),
+            );
+            trial(root, "A", "ops/note.md", "none\n", {
+                operation: "read",
+                surface: "native",
+            });
+            trial(root, "B", "ops/note.md", "none\n", {
+                operation: "read",
+                surface: "native",
+            });
+
+            // Act
+            const out = mkdtempSync(join(tmpdir(), "pd-credit-cli-"));
+            const run = spawnSync(
+                process.execPath,
+                [
+                    ANALYSER,
+                    "--campaign",
+                    join(root, "manifest.json"),
+                    "--evidence-root",
+                    root,
+                    "--out",
+                    out,
+                ],
+                { encoding: "utf8" },
+            );
+            const report = readFileSync(join(out, "REPORT.md"), "utf8");
+
+            // Assert
+            assert.equal(run.status, 0);
+            assert.ok(!String(run.stdout).includes("qualified"));
+            assert.match(String(run.stdout), /no-promotion|inconclusive/);
+            assert.match(report, /\*\*Personal-trial screen:\*\* no-promotion/);
         } finally {
             rmSync(root, { recursive: true, force: true });
         }

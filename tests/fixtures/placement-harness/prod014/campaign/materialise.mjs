@@ -78,7 +78,17 @@ if (updateSnapshot) {
         `${JSON.stringify(snapshotOf(active), null, 2)}\n`,
         "utf8",
     );
-    console.log(`wrote active/snapshot.json (${Object.keys(active).length} files)`);
+    const runnerPath = join(here, "runner.json");
+    const runner = JSON.parse(readFileSync(runnerPath, "utf8"));
+    for (const name of Object.keys(runner.files)) {
+        runner.files[name] = sha256(
+            readFileSync(join(here, "..", "..", "analysis", name)),
+        );
+    }
+    writeFileSync(runnerPath, `${JSON.stringify(runner, null, 4)}\n`, "utf8");
+    console.log(
+        `wrote active/snapshot.json (${Object.keys(active).length} files) and runner.json (${Object.keys(runner.files).length} modules)`,
+    );
     process.exit(0);
 }
 

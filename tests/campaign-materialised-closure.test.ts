@@ -11,6 +11,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
+import { claimBudget } from "./fixtures/placement-harness/analysis/budget.ts";
 import { dirname, join } from "node:path";
 
 const here = import.meta.dirname;
@@ -157,7 +158,7 @@ function fixture(completed: number): string {
     write(
         join(root, "evidence/FROZEN.json"),
         JSON.stringify({
-            budget: { plannedTrials: 16, plannedJudgeAttempts: 16 },
+            freeze: { ceilings: { trial: 16, judge: 16 } },
         }),
     );
     write(join(root, "evidence/ATTEMPTS.jsonl"), "");
@@ -267,6 +268,154 @@ describe("materialised campaign closure", () => {
                 existsSync(counter) ? readFileSync(counter, "utf8") : "",
                 "",
             );
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("closure edge states", () => {
+    it("does not complete a pair with only one recorded arm", () => {
+        // Arrange
+        const root = fixture(1);
+
+        try {
+            // Act
+            const run = command(root, "close-campaign.mjs");
+            const report = JSON.parse(
+                readFileSync(join(root, "evidence/RECONCILIATION.json"), "utf8"),
+            );
+
+            // Assert
+            assert.equal(run.status, 0, String(run.stderr));
+            assert.equal(report.completedPairs, 0);
+            assert.equal(report.trialLaunches, 1);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("refuses to close while a reservation never spawned", () => {
+        // Arrange
+        const root = fixture(1);
+        const claim = claimBudget(join(root, "evidence"), "trial", 16, {
+            stamp: "pd-B-r0-X2",
+        });
+        assert.equal(claim.ok, true);
+
+        try {
+            // Act
+            const run = command(root, "close-campaign.mjs");
+
+            // Assert
+            assert.equal(run.status, 1);
+            assert.match(String(run.stderr), /never closed/);
+            assert.equal(
+                existsSync(join(root, "evidence/RECONCILIATION.json")),
+                false,
+            );
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("preserves the prior reconciliation on a second close", () => {
+        // Arrange
+        const root = fixture(4);
+        try {
+            assert.equal(
+                command(root, "close-campaign.mjs").status,
+                0,
+            );
+            const before = readFileSync(
+                join(root, "evidence/RECONCILIATION.json"),
+                "utf8",
+            );
+
+            // Act
+            const second = command(root, "close-campaign.mjs");
+
+            // Assert
+            assert.equal(second.status, 0);
+            assert.equal(
+                readFileSync(
+                    join(root, "evidence/RECONCILIATION.json"),
+                    "utf8",
+                ),
+                before,
+            );
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("publishes nothing from a malformed ledger", () => {
+        // Arrange
+        const root = fixture(2);
+        write(join(root, "evidence/ATTEMPTS.jsonl"), "{not json\n");
+
+        try {
+            // Act
+            const run = command(root, "close-campaign.mjs");
+
+            // Assert
+            assert.equal(run.status, 1);
+            assert.match(String(run.stderr), /malformed/);
+            assert.equal(
+                existsSync(join(root, "evidence/RECONCILIATION.json")),
+                false,
+            );
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("keeps totals unknown for a malformed trail", () => {
+        // Arrange
+        const root = fixture(2);
+        const dir = join(root, "gen/a/results/pd-A-r0-R01/R01");
+        write(join(dir, "stdout.jsonl"), "{not json\n");
+
+        try {
+            // Act
+            const run = command(root, "close-campaign.mjs");
+            const report = JSON.parse(
+                readFileSync(join(root, "evidence/RECONCILIATION.json"), "utf8"),
+            );
+
+            // Assert
+            assert.equal(run.status, 0, String(run.stderr));
+            assert.equal(report.trial.steps, null);
+            assert.equal(report.trial.tokens.input, null);
+            assert.equal(report.billing.trial.estimated, null);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("counts a resolved judgement as usable", () => {
+        // Arrange
+        const root = fixture(2);
+        const dir = join(root, "gen/a/results/pd-A-r0-R01/R01");
+        write(
+            join(dir, "ac/attempt-001/judgement.json"),
+            JSON.stringify({ status: "invalid-verdict" }),
+        );
+        write(
+            join(dir, "ac/attempt-001/resolution.json"),
+            JSON.stringify({ status: "judged", parsed: {} }),
+        );
+
+        try {
+            // Act
+            const run = command(root, "close-campaign.mjs");
+            const report = JSON.parse(
+                readFileSync(join(root, "evidence/RECONCILIATION.json"), "utf8"),
+            );
+
+            // Assert
+            assert.equal(run.status, 0, String(run.stderr));
+            assert.equal(report.judge.usableJudgements, 2);
         } finally {
             rmSync(root, { recursive: true, force: true });
         }

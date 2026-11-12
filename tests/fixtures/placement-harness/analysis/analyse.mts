@@ -1650,7 +1650,9 @@ export function runAnalysis(argv: readonly string[]): CliRun {
     return {
         status: 0,
         messages: [
-            `${manifest.campaign.id}: ${result.decision.overall}; written to ${options.out}`,
+            result.measures.status === "available"
+                ? `${manifest.campaign.id}: ${result.measures.personalTrial.recommendation}; written to ${options.out}`
+                : `${manifest.campaign.id}: utility threshold ${result.decision.overall} (no measurement declaration); written to ${options.out}`,
         ],
     };
 }
