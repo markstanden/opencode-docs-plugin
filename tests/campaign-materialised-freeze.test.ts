@@ -116,10 +116,7 @@ function fixture(): {
     for (const letter of ["a", "b"] as const) {
         arm(join(root, "arms", letter));
         write(join(root, `gen/${letter}/prompts/R01.md`), "task prompt\n");
-        write(
-            join(root, `gen/${letter}/rubrics/R01/rubric.md`),
-            "rubric\n",
-        );
+        write(join(root, `gen/${letter}/rubrics/R01/rubric.md`), "rubric\n");
         for (const id of ids) {
             write(
                 join(root, `gen/${letter}/fixtures/${id}/generation.json`),
@@ -345,10 +342,7 @@ function expectBlocked(
     const run = runCampaign(root, bin, source, counter);
     assert.equal(run.status, 2, String(run.stderr));
     assert.match(String(run.stderr), pattern);
-    assert.equal(
-        existsSync(counter) ? readFileSync(counter, "utf8") : "",
-        "",
-    );
+    assert.equal(existsSync(counter) ? readFileSync(counter, "utf8") : "", "");
 }
 
 describe("freeze use at the spend boundary", () => {
@@ -390,7 +384,13 @@ describe("freeze use at the spend boundary", () => {
             write(join(root, "gen/a/fixtures/R01/added.txt"), "added\n");
 
             // Act / Assert
-            expectBlocked(root, bin, source, counter, /immutable input changed/);
+            expectBlocked(
+                root,
+                bin,
+                source,
+                counter,
+                /immutable input changed/,
+            );
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
@@ -453,7 +453,13 @@ exit 0
             chmodSync(join(bin, "podman"), 0o755);
 
             // Act / Assert
-            expectBlocked(root, bin, source, counter, /container image changed/);
+            expectBlocked(
+                root,
+                bin,
+                source,
+                counter,
+                /container image changed/,
+            );
         } finally {
             rmSync(root, { recursive: true, force: true });
         }

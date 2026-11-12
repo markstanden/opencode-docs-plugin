@@ -463,22 +463,41 @@ export function spendFreezeProblem(
     if (record.schemaVersion !== FREEZE_SCHEMA_VERSION) {
         return `freeze format ${String(record.schemaVersion)} is legacy and read-only; re-freeze before spending`;
     }
-    if (!Array.isArray(record.inventories) || record.inventories.length === 0) {
-        return "the freeze carries no input inventory; it cannot detect added inputs";
-    }
-    if (
-        record.ceilings === null ||
-        !Number.isInteger(record.ceilings.trial) ||
-        !Number.isInteger(record.ceilings.judge) ||
-        record.ceilings.trial < 1 ||
-        record.ceilings.judge < 1
-    ) {
+    return (
+        inventoryRefusal(record) ??
+        ceilingRefusal(record.ceilings) ??
+        imageRefusal(record.imageId)
+    );
+}
+
+/** The inventory requirement, or null. */
+function inventoryRefusal(record: FreezeRecord): string | null {
+    return Array.isArray(record.inventories) && record.inventories.length > 0
+        ? null
+        : "the freeze carries no input inventory; it cannot detect added inputs";
+}
+
+/** The ceiling requirement, or null. */
+function ceilingRefusal(
+    ceilings: { trial: number; judge: number } | null,
+): string | null {
+    if (ceilings === null)
         return "the freeze carries no valid trial and judge ceilings";
-    }
-    if (record.imageId.trim() === "") {
-        return "the freeze carries no container image identity";
-    }
-    return null;
+    const valid =
+        Number.isInteger(ceilings.trial) &&
+        Number.isInteger(ceilings.judge) &&
+        ceilings.trial > 0 &&
+        ceilings.judge > 0;
+    return valid
+        ? null
+        : "the freeze carries no valid trial and judge ceilings";
+}
+
+/** The image requirement, or null. */
+function imageRefusal(imageId: string): string | null {
+    return imageId.trim() === ""
+        ? "the freeze carries no container image identity"
+        : null;
 }
 
 /**

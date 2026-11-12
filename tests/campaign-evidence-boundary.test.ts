@@ -51,7 +51,6 @@ const identity = {
     sessions: new Set(["ses_abc"]),
     messages: new Set(["msg_abc"]),
 };
-const callIds = new Set(["call_abc"]);
 const dispatches = [
     {
         tool: "docs",
@@ -335,8 +334,7 @@ const trialFiles = (
             exit: 0,
         }),
         [`${TRIAL}/final.md`]: answer,
-        [`${TRIAL}/writes.txt`]:
-            "added: lakes/docs/db/pool.md (content)\n",
+        [`${TRIAL}/writes.txt`]: "added: lakes/docs/db/pool.md (content)\n",
         [`${TRIAL}/stdout.jsonl`]: JSON.stringify({
             type: "step_finish",
             sessionID: "ses_abc",

@@ -80,7 +80,9 @@ describe("Markdown rendering", () => {
             assert.equal(rerenderedReport, report);
             assert.ok(
                 report.startsWith(
-                    `# Trial analysis: ${result.campaign.id}\n**Personal-trial screen:** ${result.measures.personalTrial.recommendation}`,
+                    result.measures.status === "available"
+                        ? `# Trial analysis: ${result.campaign.id}\n**Personal-trial screen:** ${result.measures.personalTrial.recommendation}`
+                        : `# Trial analysis: ${result.campaign.id}\n**Personal-trial screen:** not applicable`,
                 ),
             );
             assert.ok(

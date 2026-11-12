@@ -283,7 +283,10 @@ describe("closure edge states", () => {
             // Act
             const run = command(root, "close-campaign.mjs");
             const report = JSON.parse(
-                readFileSync(join(root, "evidence/RECONCILIATION.json"), "utf8"),
+                readFileSync(
+                    join(root, "evidence/RECONCILIATION.json"),
+                    "utf8",
+                ),
             );
 
             // Assert
@@ -323,10 +326,7 @@ describe("closure edge states", () => {
         // Arrange
         const root = fixture(4);
         try {
-            assert.equal(
-                command(root, "close-campaign.mjs").status,
-                0,
-            );
+            assert.equal(command(root, "close-campaign.mjs").status, 0);
             const before = readFileSync(
                 join(root, "evidence/RECONCILIATION.json"),
                 "utf8",
@@ -380,7 +380,10 @@ describe("closure edge states", () => {
             // Act
             const run = command(root, "close-campaign.mjs");
             const report = JSON.parse(
-                readFileSync(join(root, "evidence/RECONCILIATION.json"), "utf8"),
+                readFileSync(
+                    join(root, "evidence/RECONCILIATION.json"),
+                    "utf8",
+                ),
             );
 
             // Assert
@@ -410,7 +413,10 @@ describe("closure edge states", () => {
             // Act
             const run = command(root, "close-campaign.mjs");
             const report = JSON.parse(
-                readFileSync(join(root, "evidence/RECONCILIATION.json"), "utf8"),
+                readFileSync(
+                    join(root, "evidence/RECONCILIATION.json"),
+                    "utf8",
+                ),
             );
 
             // Assert

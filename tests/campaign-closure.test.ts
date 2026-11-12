@@ -1,7 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { BudgetClaim } from "./fixtures/placement-harness/analysis/budget.ts";
-import { claimBudget } from "./fixtures/placement-harness/analysis/budget.ts";
 import {
     closeCampaign,
     deriveClosure,
@@ -127,6 +126,7 @@ describe("campaign accounting", () => {
             stamp: null,
             attemptId: null,
             note: null,
+            key: null,
         };
 
         // Act

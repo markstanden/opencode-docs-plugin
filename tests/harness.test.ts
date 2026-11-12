@@ -2839,8 +2839,9 @@ test("F12: the redacted cache follows generation identity, not corpus bytes", ()
         );
     const firstRun = runOne();
     assert.equal(firstRun.status, 0, firstRun.stderr);
-    const firstFiles = readdirSync(join(root, "run-fixtures")).filter((name) =>
-        name.startsWith("cases-"),
+    const firstFiles = readdirSync(join(root, "run-fixtures")).filter(
+        (name) =>
+            name.startsWith("cases-") && !name.startsWith("cases-selected-"),
     );
     const firstFile = firstFiles[0];
     assert.ok(firstFile, "the first run stages one redacted list");
@@ -2859,7 +2860,11 @@ test("F12: the redacted cache follows generation identity, not corpus bytes", ()
     assert.equal(runTwo.status, 0);
     assert.deepEqual(
         readdirSync(join(root, "run-fixtures"))
-            .filter((name) => name.startsWith("cases-"))
+            .filter(
+                (name) =>
+                    name.startsWith("cases-") &&
+                    !name.startsWith("cases-selected-"),
+            )
             .sort(),
         firstFiles.sort(),
         "unchanged inputs reuse the same redacted list",
@@ -2880,7 +2885,11 @@ test("F12: the redacted cache follows generation identity, not corpus bytes", ()
     // Assert: the new generation names a new cache entry with its own hash.
     assert.equal(runThree.status, 0, runThree.stderr);
     const files = readdirSync(join(root, "run-fixtures"))
-        .filter((name) => name.startsWith("cases-"))
+        .filter(
+            (name) =>
+                name.startsWith("cases-") &&
+                !name.startsWith("cases-selected-"),
+        )
         .sort();
     assert.equal(files.length, 2);
     const changed = files.find((name) => !firstFiles.includes(name));

@@ -184,16 +184,6 @@ function operationLine(entry) {
     return `${entry.status ?? "unknown"} ${surface} ${parts.join("; ") || "help"}`;
 }
 
-/** Verified docs operations from a journal file. */
-function documentedOperations(path) {
-    return readText(path)
-        .split("\n")
-        .filter((line) => line.trim() !== "")
-        .map(trailEvent)
-        .filter((entry) => entry !== undefined)
-        .map(operationLine);
-}
-
 /**
  * The operations the judge may see: the journal's credited records only.
  *
@@ -217,7 +207,9 @@ function attributableOperations(caseDir, allowLegacy) {
         };
     }
     const verification = verifyOperationsJournal({
-        lines: readText(journalPath).split("\n").filter((line) => line !== ""),
+        lines: readText(journalPath)
+            .split("\n")
+            .filter((line) => line !== ""),
         key: readText(keyPath).trim(),
         identity: journalIdentityFromTrail(readText(stdoutPath)),
         ...(() => {
@@ -486,64 +478,115 @@ function gate(args) {
  *   `--launcher`, `--workdir`, optional `--timeout` and `--attempt`.
  * @returns 0 when a usable judgement landed, 1 when it did not.
  */
-function judge(args) {
-    const base = need(args, "--base");
-    const stamp = need(args, "--stamp");
-    const caseId = need(args, "--case");
-    const truth = JSON.parse(readFileSync(need(args, "--truth"), "utf8"));
-    const model = need(args, "--model");
-    const attemptId = args.get("--attempt") ?? "attempt-001";
+/** The neutral judge-side run directory for one attempt. */
+function neutralRunDir(args, stamp, caseId) {
+    return join(
+        need(args, "--workdir"),
+        sha256(`${stamp}/${caseId}`).slice(0, 16),
+    );
+}
+
+/**
+ * Why the recorded answer cannot be judged, or null.
+ * @param caseDir The trial's result directory.
+ * @param allowLegacy Whether absent identity evidence is tolerated.
+ * @returns The refusal, or null.
+ */
+function answerProblemOf(caseDir, allowLegacy) {
+    const answerPath = join(caseDir, "final.md");
+    if (!existsSync(answerPath)) return "no final answer was recorded";
+    const meta = JSON.parse(readFileSync(join(caseDir, "meta.json"), "utf8"));
+    const recorded = meta.answerHash;
+    if (typeof recorded !== "string" || recorded === "") {
+        return allowLegacy
+            ? null
+            : "meta.json records no answer hash; pass --allow-legacy-unbound for read-only legacy evidence";
+    }
+    return sha256(readText(answerPath)) === recorded
+        ? null
+        : "the final answer no longer matches meta.answerHash";
+}
+
+/**
+ * Why the judge request must not dispatch, or null.
+ * @param args The parsed flags.
+ * @param prompt The assembled packet.
+ * @param runDir The neutral run directory.
+ * @returns The refusal, or null.
+ */
+function leakProblemOf(args, prompt, runDir) {
+    const leaks = labelLeaks(
+        prompt,
+        need(args, "--workdir"),
+        need(args, "--model"),
+        runDir,
+    );
+    return leaks.length === 0
+        ? null
+        : `the judge request carries experiment labels: ${leaks.join(", ")}`;
+}
+
+/**
+ * The attempt-directory preconditions before any judge spend.
+ * @param base The stage's result roots.
+ * @param stamp The trial stamp.
+ * @param caseId The scenario id.
+ * @param attemptId The selected attempt id.
+ * @returns The attempt directory, or a refusal code and message.
+ */
+function judgeAttemptOf(base, stamp, caseId, attemptId) {
     if (!/^attempt-\d{3}$/.test(attemptId)) {
-        console.error(`invalid --attempt ${JSON.stringify(attemptId)}`);
-        return 1;
+        return {
+            code: 1,
+            error: `invalid --attempt ${JSON.stringify(attemptId)}`,
+        };
     }
     const attemptDir = join(base, "results", stamp, caseId, "ac", attemptId);
-    if (existsSync(join(attemptDir, "judgement.json"))) return 0;
+    if (existsSync(join(attemptDir, "judgement.json"))) {
+        return { attemptDir, alreadyJudged: true };
+    }
     if (existsSync(attemptDir)) {
-        console.error(
-            `refusing to overwrite existing attempt at ${attemptDir}; ` +
+        return {
+            code: 1,
+            error:
+                `refusing to overwrite existing attempt at ${attemptDir}; ` +
                 "preserve it and use a new attempt directory",
-        );
-        return 1;
+        };
     }
     if (!existsSync(join(base, "results", stamp, caseId, "meta.json"))) {
-        console.error(
-            `refusing to judge ${stamp}/${caseId}: no recorded trial result`,
-        );
-        return 1;
+        return {
+            code: 1,
+            error: `refusing to judge ${stamp}/${caseId}: no recorded trial result`,
+        };
     }
+    return { attemptDir };
+}
+
+/**
+ * Build and blind-check the judge package without spending.
+ * @param args The parsed flags.
+ * @param base The stage's result roots.
+ * @param stamp The trial stamp.
+ * @param caseId The scenario id.
+ * @param truth The scenario-truth map.
+ * @param allowLegacy Whether absent identity evidence is tolerated.
+ * @returns The prompt, state, run directory and attempt directory, or a refusal.
+ */
+function judgePackage(args, base, stamp, caseId, truth, allowLegacy) {
     const scoringSpec = args.get("--spec")
         ? JSON.parse(readFileSync(need(args, "--spec"), "utf8"))
         : undefined;
     const caseDir = join(base, "results", stamp, caseId);
-    const meta = JSON.parse(readFileSync(join(caseDir, "meta.json"), "utf8"));
-    const answerPath = join(caseDir, "final.md");
-    if (!existsSync(answerPath)) {
-        console.error(`refusing to judge ${stamp}/${caseId}: no final answer`);
-        return 4;
-    }
-    const answer = readText(answerPath);
-    const allowLegacy = args.get("--allow-legacy-unbound") === "true";
-    const recordedHash = meta.answerHash;
-    if (typeof recordedHash !== "string" || recordedHash === "") {
-        if (!allowLegacy) {
-            console.error(
-                `refusing to judge ${stamp}/${caseId}: meta.json records no answer hash; pass --allow-legacy-unbound for read-only legacy evidence`,
-            );
-            return 4;
-        }
-    } else if (sha256(answer) !== recordedHash) {
-        console.error(
-            `refusing to judge ${stamp}/${caseId}: the final answer no longer matches meta.answerHash`,
-        );
-        return 4;
+    const answerProblem = answerProblemOf(caseDir, allowLegacy);
+    if (answerProblem !== null) {
+        return { code: 4, error: answerProblem };
     }
     const operations = attributableOperations(caseDir, allowLegacy);
-    if (operations.reason !== undefined && operations.reason !== "legacy-unbound") {
-        console.error(
-            `refusing to judge ${stamp}/${caseId}: ${operations.reason}`,
-        );
-        return 4;
+    if (
+        operations.reason !== undefined &&
+        operations.reason !== "legacy-unbound"
+    ) {
+        return { code: 4, error: operations.reason };
     }
     const { prompt, state } = packetFor(
         base,
@@ -553,26 +596,44 @@ function judge(args) {
         scoringSpec,
         operations.lines ?? [],
     );
-    const leakProblems = labelLeaks(
-        prompt,
-        need(args, "--workdir"),
-        need(args, "--model"),
-    );
-    // The judge-side run directory is named by a digest, never by the campaign
-    // stamp: cwd, PWD and the mounted path are all judge-visible context.
-    const runDir = join(
-        need(args, "--workdir"),
-        sha256(`${stamp}/${caseId}`).slice(0, 16),
-    );
-    leakProblems.push(...labelLeaks(runDir));
-    if (leakProblems.length > 0) {
-        console.error(
-            `refusing a judge request with label leaks: ${leakProblems.join(", ")}`,
-        );
-        return 3;
+    const runDir = neutralRunDir(args, stamp, caseId);
+    const leak = leakProblemOf(args, prompt, runDir);
+    if (leak !== null) {
+        return { code: 3, error: leak };
     }
-    mkdirSync(join(runDir, "work"), { recursive: true });
-    writeFileSync(join(runDir, "prompt.md"), prompt, "utf8");
+    return { prompt, state, runDir, scoringSpec };
+}
+
+/**
+ * Judge one completed trial once, validating the answer against the recorded
+ * mutation facts. A judge failure is recorded; it is never retried.
+ * @param args `--base`, `--stamp`, `--case`, `--truth`, `--model`,
+ *   `--launcher`, `--workdir`, optional `--timeout`, `--attempt` and
+ *   `--allow-legacy-unbound`.
+ * @returns 0 when a usable judgement landed, 1 when it did not.
+ */
+function judge(args) {
+    const base = need(args, "--base");
+    const stamp = need(args, "--stamp");
+    const caseId = need(args, "--case");
+    const truth = JSON.parse(readFileSync(need(args, "--truth"), "utf8"));
+    const model = need(args, "--model");
+    const attemptId = args.get("--attempt") ?? "attempt-001";
+    const precondition = judgeAttemptOf(base, stamp, caseId, attemptId);
+    if (precondition.code !== undefined) {
+        console.error(precondition.error);
+        return precondition.code;
+    }
+    if (precondition.alreadyJudged === true) return 0;
+    const allowLegacy = args.get("--allow-legacy-unbound") === "true";
+    const pkg = judgePackage(args, base, stamp, caseId, truth, allowLegacy);
+    if (pkg.code !== undefined) {
+        console.error(`refusing to judge ${stamp}/${caseId}: ${pkg.error}`);
+        return pkg.code;
+    }
+    const attemptDir = precondition.attemptDir;
+    mkdirSync(join(pkg.runDir, "work"), { recursive: true });
+    writeFileSync(join(pkg.runDir, "prompt.md"), pkg.prompt, "utf8");
     mkdirSync(dirname(attemptDir), { recursive: true });
     const claim = claimAttemptDir(attemptDir);
     if (!claim.ok) {
@@ -587,7 +648,7 @@ function judge(args) {
         judgeModel: model,
         status: "started",
         startedAt: new Date().toISOString(),
-        state,
+        state: pkg.state,
     });
     // The wrapper records its own dispatch immediately before spawning, so a
     // caller can distinguish a started wrapper from an actual judge call.
@@ -601,18 +662,18 @@ function judge(args) {
         launcher: need(args, "--launcher"),
         model,
         stamp,
-        prompt,
-        runDir,
+        prompt: pkg.prompt,
+        runDir: pkg.runDir,
         timeout: Number(args.get("--timeout") ?? 240000),
     });
     return recordJudgement(
         attemptDir,
         result,
-        state,
+        pkg.state,
         model,
         stamp,
         caseId,
-        scoringSpec,
+        pkg.scoringSpec,
     );
 }
 

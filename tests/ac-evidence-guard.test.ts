@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
     existsSync,
     mkdirSync,
@@ -136,7 +137,16 @@ test("judge reserves the attempt before launching and records a failed launcher 
     const resultDir = join(base, "results", "stamp", "R01");
     const attempt = join(resultDir, "ac", "attempt-001");
     mkdirSync(resultDir, { recursive: true });
-    writeFileSync(join(resultDir, "meta.json"), "{}\n");
+    const answer = "answer\n";
+    writeFileSync(
+        join(resultDir, "meta.json"),
+        JSON.stringify({
+            answerHash: createHash("sha256")
+                .update(answer, "utf8")
+                .digest("hex"),
+        }),
+    );
+    writeFileSync(join(resultDir, "final.md"), answer);
     const truth = join(base, "truth.json");
     writeFileSync(truth, "{}\n");
     const launcher = join(base, "launcher.sh");

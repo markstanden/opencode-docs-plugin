@@ -35,7 +35,7 @@ function campaign() {
 }
 
 /** A fake podman that records what the boundary actually received. */
-function fakePodman(root) {
+function fakePodman(root: string) {
     const capture = join(root, "podman-capture.json");
     const binary = join(root, "fake-podman.mjs");
     writeFileSync(
@@ -71,7 +71,9 @@ describe("credential containment", () => {
             AC_RUN_DIR: runDir,
             AC_MODEL: "zai-coding-plan/test",
             ZAI_API_KEY: KEY,
-            OPENCODE_CONFIG_CONTENT: JSON.stringify({ mcp: { canary: OVERLAY } }),
+            OPENCODE_CONFIG_CONTENT: JSON.stringify({
+                mcp: { canary: OVERLAY },
+            }),
         };
 
         // Act

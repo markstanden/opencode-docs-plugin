@@ -19,9 +19,13 @@ mapping was changed.
 - Decision-bearing harness code is strict TypeScript under
   `tests/fixtures/placement-harness/analysis/`: `ledger.ts`, `budget.ts`,
   `selector.ts`, `journal.ts`, `freeze.ts`, `closure.ts`.
-- `prod014/campaign/materialise.mjs` verifies `scripts.json`, copies the six
-  modules at the hashes pinned in `campaign/runner.json`, and refuses a hash
-  mismatch. Materialised `run.mjs`, `rejudge.mjs`, `freeze.mjs` and
+- Fresh campaigns materialise from checked sources under
+  `prod014/campaign/active/`, verified against `active/snapshot.json`; the
+  frozen `scripts.json` is retained for historical replay (`--historical`).
+  `materialise.mjs` copies the six modules at the hashes pinned in
+  `campaign/runner.json`, refuses a hash mismatch, and publishes atomically.
+  The fresh manifest selects `attempt-001`; the historical snapshot keeps
+  `attempt-002`. Materialised `run.mjs`, `rejudge.mjs`, `freeze.mjs` and
   `close-campaign.mjs` import those modules.
 - The materialised freeze refuses a second freeze, refuses a started or dirty
   experiment, and records every immutable input plus the image and CLI actually
@@ -75,8 +79,10 @@ description; arm B was the patched 739-character candidate. Zero paid calls.
   carries the declared lake/path and retrieval question.
 
 Rehearsed revision: `2147c424d2c5e07d873fd6c040f18083b01ea944` (the candidate
-head with neutral child paths and stripped provenance). Any later commit is
-documentation only.
+head with neutral child paths and stripped provenance). The later review-repair
+commits changed launch, freeze, credit, closure and materialisation behaviour,
+so that rehearsal is historical evidence for its own revision, not for the
+review head.
 
 ## D1–D10 mapping
 
@@ -136,30 +142,12 @@ recovery exit 0 with zero duplicate calls.
 
 ## Run card
 
-Fresh root, no manual manifest edit, no hand-extracted delivery file:
-
-```sh
-export CAMPAIGN_ROOT=/home/mark/tmp/docs-prod014-<fresh-stamp>
-mkdir -p "$CAMPAIGN_ROOT/evidence"
-node tests/fixtures/placement-harness/prod014/campaign/materialise.mjs "$CAMPAIGN_ROOT"
-# campaign-local key, chmod 600; never committed
-printf 'ZAI_API_KEY=%s\n' "$(cat ~/.config/secrets/<your-key>)" > "$CAMPAIGN_ROOT/.env"
-
-CAMPAIGN_ROOT="$CAMPAIGN_ROOT" node "$CAMPAIGN_ROOT/prepare/schedule.mjs"
-CAMPAIGN_ROOT="$CAMPAIGN_ROOT" bash "$CAMPAIGN_ROOT/prepare/generate.sh"
-node "$CAMPAIGN_ROOT/prepare/surfaces.mjs" <arm-a> "$CAMPAIGN_ROOT/evidence/surfaces-a.json"
-node "$CAMPAIGN_ROOT/prepare/surfaces.mjs" <arm-b> "$CAMPAIGN_ROOT/evidence/surfaces-b.json"
-node "$CAMPAIGN_ROOT/prepare/delivery-probe.mjs" \
-  "$CAMPAIGN_ROOT/evidence/delivery-a/capture.json" <arm-a> \
-  opencode-go/deepseek-v4.1-flash "Hello." 8801
-node "$CAMPAIGN_ROOT/prepare/delivery-probe.mjs" \
-  "$CAMPAIGN_ROOT/evidence/delivery-b/capture.json" <arm-b> \
-  opencode-go/deepseek-v4.1-flash "Hello." 8802
-CAMPAIGN_ROOT="$CAMPAIGN_ROOT" CAMPAIGN_SOURCE_REPO=<measurement> \
-  node "$CAMPAIGN_ROOT/prepare/freeze.mjs"
-CAMPAIGN_ROOT="$CAMPAIGN_ROOT" node "$CAMPAIGN_ROOT/prepare/run.mjs" --pair-from 1 --pair-to 8
-CAMPAIGN_ROOT="$CAMPAIGN_ROOT" node "$CAMPAIGN_ROOT/prepare/close-campaign.mjs"
-```
+The canonical, tested recipe lives in
+[`tests/fixtures/placement-harness/prod014/campaign/README.md`](../../tests/fixtures/placement-harness/prod014/campaign/README.md).
+It covers arm and measurement preparation, protected credential creation, the
+measurement-spec copy, real delivery and freeze, the P04 report and
+continuation rule, P08 analysis and closure, and historical replay. Do not
+maintain a second copy here.
 
 Pass `--attempt-id` only when it agrees with the manifest's
 `assessment.attemptId`; a contradiction refuses before spend. The delivery
@@ -180,7 +168,8 @@ broken premise.
   identity is removed. The judge fake made no provider call, so a real judge's
   serialiser is unexercised beyond the real packet text.
 - `dry-check.mjs` and `cli-measures.mjs` remain historical synthetic scripts in
-  `scripts.json`; they are not part of `npm test`.
+  the `scripts.json` replay snapshot; fresh materialisation does not emit them
+  and they are not part of `npm test`.
 - Legacy evidence without a retrieval lake parses as malformed and reports
   `inconclusive`; it is never given an inferred lake.
 

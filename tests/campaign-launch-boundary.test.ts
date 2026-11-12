@@ -463,15 +463,23 @@ describe("logical attempt ownership", () => {
             assert.equal(spawned.ok, true);
             assert.equal(spawned.ok, true);
             const spawnedClaim = advanceClaim(
-                (spawned as { ok: true; claim: Parameters<typeof advanceClaim>[0] })
-                    .claim,
+                (
+                    spawned as {
+                        ok: true;
+                        claim: Parameters<typeof advanceClaim>[0];
+                    }
+                ).claim,
                 "spawned",
             );
 
             // Act
             const releasedReserved = releaseClaim(
-                (reserved as { ok: true; claim: Parameters<typeof releaseClaim>[0] })
-                    .claim,
+                (
+                    reserved as {
+                        ok: true;
+                        claim: Parameters<typeof releaseClaim>[0];
+                    }
+                ).claim,
             );
             const releasedSpawned = releaseClaim(spawnedClaim);
 
@@ -501,15 +509,19 @@ const result = claimBudget(process.env.ROOT, "judge", 4, {
 writeFileSync(process.env.RESULT, JSON.stringify(result));`;
         const spawnWorker = (name: string) =>
             new Promise<{ ok: boolean }>((resolve, reject) => {
-                const child = spawn(process.execPath, ["--input-type=module", "-e", worker], {
-                    env: {
-                        ...process.env,
-                        ROOT: root,
-                        BARRIER: barrier,
-                        RESULT: join(root, `${name}.json`),
+                const child = spawn(
+                    process.execPath,
+                    ["--input-type=module", "-e", worker],
+                    {
+                        env: {
+                            ...process.env,
+                            ROOT: root,
+                            BARRIER: barrier,
+                            RESULT: join(root, `${name}.json`),
+                        },
+                        stdio: "ignore",
                     },
-                    stdio: "ignore",
-                });
+                );
                 child.on("error", reject);
                 child.on("exit", () => {
                     resolve(

@@ -610,24 +610,34 @@ export function changedLakeDocuments(writes: { state: string; text: string }): {
 function changedDocument(raw: string): ChangedLakeDocument | undefined {
     const line = raw.trim();
     if (line === "" || line === "none") return undefined;
-    const kindWord = /^([a-z]+):?\s/.exec(line)?.[1] ?? "unknown";
-    const kind =
-        kindWord === "added" ||
-        kindWord === "modified" ||
-        kindWord === "removed"
-            ? kindWord
-            : "unknown";
-    const entryKind = /^(file|dir|symlink|mode|content)$/.exec(
-        / \(([a-z]+)\)$/.exec(line)?.[1] ?? "",
-    )?.[1];
     // A directory is not a document and cannot compete for the credit.
-    if (entryKind === "dir") return undefined;
-    const path = line
-        .replace(/^[a-z]+:?\s*/, "")
-        .replace(/ \([a-z]+\)$/, "");
-    const match = /^lakes\/([^/]+)\/(.+)$/.exec(path);
+    if (entryKindOf(line) === "dir") return undefined;
+    const match = /^lakes\/([^/]+)\/(.+)$/.exec(documentPathOf(line));
     if (match === null) return undefined;
-    return { lake: match[1] as string, path: match[2] as string, kind };
+    return {
+        lake: match[1] as string,
+        path: match[2] as string,
+        kind: documentKindOf(line),
+    };
+}
+
+/** The producer's parenthesised entry kind, when one is present. */
+function entryKindOf(line: string): string | undefined {
+    return / \(([a-z]+)\)$/.exec(line)?.[1];
+}
+
+/** The path one wins-report line names, without its change or entry labels. */
+function documentPathOf(line: string): string {
+    return line.replace(/^[a-z]+:?\s*/, "").replace(/ \([a-z]+\)$/, "");
+}
+
+/** The change kind one report line declares. */
+function documentKindOf(line: string): ChangedLakeDocument["kind"] {
+    const word = /^([a-z]+):?\s/.exec(line)?.[1];
+    if (word === "added" || word === "modified" || word === "removed") {
+        return word;
+    }
+    return "unknown";
 }
 
 /**

@@ -11,12 +11,7 @@ if (!ROOT) throw new Error("CAMPAIGN_ROOT is required");
 
 // Each fresh materialisation gets its own identity; a replay of the historical
 // 2026-11-11 campaign keeps `pd-20261111` from its frozen snapshot.
-const CAMPAIGN =
-    process.env.CAMPAIGN_ID ??
-    `pd-fresh-${new Date()
-        .toISOString()
-        .replace(/[-:]/g, "")
-        .replace(/\..*$/, "Z")}`;
+const CAMPAIGN = process.env.CAMPAIGN_ID ?? `pd-fresh-${freshStamp()}`;
 const PAIRS = [
     { scenario: "R01", order: ["A", "B"] },
     { scenario: "S02", order: ["B", "A"] },
@@ -27,6 +22,12 @@ const PAIRS = [
     { scenario: "S07", order: ["A", "B"] },
     { scenario: "R04", order: ["B", "A"] },
 ];
+
+/** The current UTC identity, without a fractional second. */
+function freshStamp() {
+    const iso = new Date().toISOString();
+    return `${iso.slice(0, iso.indexOf(".")).replace(/[-:]/g, "")}Z`;
+}
 
 const slots = [];
 let slot = 1;
@@ -46,7 +47,8 @@ for (const [index, pair] of PAIRS.entries()) {
 }
 
 const problems = [];
-if (slots.length !== 16) problems.push(`expected 16 slots, found ${slots.length}`);
+if (slots.length !== 16)
+    problems.push(`expected 16 slots, found ${slots.length}`);
 for (let index = 0; index < slots.length; index += 2) {
     const [first, second] = [slots[index], slots[index + 1]];
     if (!first || !second) {

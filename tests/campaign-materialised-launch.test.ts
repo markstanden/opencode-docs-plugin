@@ -133,21 +133,18 @@ exit 0
                 files: [
                     {
                         path: "evidence/schedule.json",
-                        sha256: hashFile(
-                            join(root, "evidence/schedule.json"),
-                        ),
+                        sha256: hashFile(join(root, "evidence/schedule.json")),
                     },
                 ],
                 inventories: [
                     {
                         path: "prepare",
-                        files: filesUnder(
-                            join(root, "prepare"),
-                            root,
-                        ).map((path) => ({
-                            path,
-                            sha256: hashFile(join(root, path)),
-                        })),
+                        files: filesUnder(join(root, "prepare"), root).map(
+                            (path) => ({
+                                path,
+                                sha256: hashFile(join(root, path)),
+                            }),
+                        ),
                     },
                 ],
                 stoppingRules: ["stop on first unusable assessment"],
@@ -364,8 +361,10 @@ writeFileSync(join(attemptDir, "judgement.json"), JSON.stringify({ status: "judg
                 4,
             );
             assert.ok(
-                readFileSync(join(root, "evidence/ATTEMPTS.jsonl"), "utf8")
-                    .includes('"event":"judge-launch"'),
+                readFileSync(
+                    join(root, "evidence/ATTEMPTS.jsonl"),
+                    "utf8",
+                ).includes('"event":"judge-launch"'),
             );
         } finally {
             rmSync(root, { recursive: true, force: true });
@@ -414,10 +413,7 @@ writeFileSync(join(attemptDir, "judgement.json"), JSON.stringify({ status: "judg
 
             // Assert
             assert.equal(result.status, 2);
-            assert.match(
-                String(result.stderr),
-                /a later range cannot skip it/,
-            );
+            assert.match(String(result.stderr), /a later range cannot skip it/);
             assert.equal(counted(counter), "");
         } finally {
             rmSync(root, { recursive: true, force: true });

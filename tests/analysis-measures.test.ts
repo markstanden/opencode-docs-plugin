@@ -269,6 +269,7 @@ describe("docs-operation parsing", () => {
             target = path,
         ) => ({
             status: "completed",
+            success: true,
             surface: "native",
             verb: "read" as const,
             target,

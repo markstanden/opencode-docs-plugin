@@ -27,10 +27,7 @@
             "id": "R02",
             "kind": "update",
             "mutationPolicy": {
-                "allowed": [
-                    "work/src/**",
-                    "lakes/docs/**"
-                ],
+                "allowed": ["work/src/**", "lakes/docs/**"],
                 "visibleConstraints": [
                     "Keep code changes to src/ and documentation to the knowledge lake; do not change the pool size, acquire timeout or startup migrations, or modify any other tracked file."
                 ]
@@ -56,9 +53,7 @@
                     {
                         "id": "startupMigrations",
                         "label": "startup migrations",
-                        "mentionPatterns": [
-                            "\\bmigrat"
-                        ]
+                        "mentionPatterns": ["\\bmigrat"]
                     },
                     {
                         "id": "obsoleteTlsClaim",
@@ -89,10 +84,7 @@
             "id": "S07",
             "kind": "update",
             "mutationPolicy": {
-                "allowed": [
-                    "work/scripts/**",
-                    "lakes/docs/**"
-                ],
+                "allowed": ["work/scripts/**", "lakes/docs/**"],
                 "visibleConstraints": [
                     "Change only scripts/check-upgrade.mjs; do not edit the tests, the release records or any other tracked file. Do not weaken the snapshot or rollback requirements."
                 ]
@@ -102,23 +94,17 @@
                     {
                         "id": "snapshot",
                         "label": "pre-upgrade snapshot",
-                        "mentionPatterns": [
-                            "\\bsnapshot\\b"
-                        ]
+                        "mentionPatterns": ["\\bsnapshot\\b"]
                     },
                     {
                         "id": "rollback",
                         "label": "rollback procedure",
-                        "mentionPatterns": [
-                            "\\brollback\\b"
-                        ]
+                        "mentionPatterns": ["\\brollback\\b"]
                     },
                     {
                         "id": "legacyCondition",
                         "label": "obsolete below-4.2 legacy migration condition",
-                        "obsoleteCurrentPatterns": [
-                            "below\\s*4\\.2"
-                        ]
+                        "obsoleteCurrentPatterns": ["below\\s*4\\.2"]
                     }
                 ],
                 "negationCues": [
@@ -306,16 +292,8 @@
             "requireCompleteCoverage": true
         },
         "sensitivity": {
-            "usefulWeights": [
-                3,
-                5,
-                8
-            ],
-            "transientPenalties": [
-                0.5,
-                1,
-                2
-            ]
+            "usefulWeights": [3, 5, 8],
+            "transientPenalties": [0.5, 1, 2]
         },
         "screening": {
             "rulesVersion": "v1"

@@ -17,12 +17,9 @@ if (!armDir || !outPath) {
 
 const requireFromArm = createRequire(join(armDir, "package.json"));
 const effectPath = requireFromArm.resolve("effect");
-const { Schema } = await import(pathToFileURL(effectPath).href);
-const plugin = (
-    await import(
-        pathToFileURL(join(armDir, "src/index.ts")).href
-    )
-).default;
+const { Schema: effectSchema } = await import(pathToFileURL(effectPath).href);
+const plugin = (await import(pathToFileURL(join(armDir, "src/index.ts")).href))
+    .default;
 
 const bucket = { tools: [], commands: [], skills: [] };
 const domain = (target) => ({
@@ -48,7 +45,7 @@ const native = bucket.tools.find((tool) => tool.name === "docs");
 const twin = bucket.tools.find((tool) => tool.name === "docs_search");
 if (native === undefined) throw new Error("native docs tool not registered");
 
-const document = Schema.toJsonSchemaDocument(native.input);
+const document = effectSchema.toJsonSchemaDocument(native.input);
 const found = [];
 const seen = new Set();
 const walk = (node) => {
@@ -62,8 +59,7 @@ const walk = (node) => {
 };
 walk(document.schema);
 
-const hash = (text) =>
-    createHash("sha256").update(text, "utf8").digest("hex");
+const hash = (text) => createHash("sha256").update(text, "utf8").digest("hex");
 const nativeDescription = native.description;
 const annotationText = found.join(" ");
 

@@ -1,12 +1,7 @@
 // Freeze every identity the screen depends on before any scored session.
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import {
-    existsSync,
-    readFileSync,
-    readdirSync,
-    writeFileSync,
-} from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
     deliveredToolDescription,
@@ -86,16 +81,7 @@ const capture = (command, args) => {
 };
 
 const schedule = json(join(ROOT, "evidence/schedule.json"));
-const scenarios = [
-    "R01",
-    "S02",
-    "R02",
-    "R03",
-    "S05",
-    "S06",
-    "S07",
-    "R04",
-];
+const scenarios = ["R01", "S02", "R02", "R03", "S05", "S06", "S07", "R04"];
 
 const arm = (letter) => {
     const repo = join(ROOT, "arms", letter);
@@ -284,7 +270,10 @@ for (const [id, pair] of Object.entries(prompts)) {
 }
 if (identities.corpus.sha256 !== identities.corpus.bSha256)
     problems.push("corpus differs between arms");
-if (identities.arms.A.surfaces.nativeHash === identities.arms.B.surfaces.nativeHash)
+if (
+    identities.arms.A.surfaces.nativeHash ===
+    identities.arms.B.surfaces.nativeHash
+)
     problems.push("A and B descriptions are identical");
 if (
     identities.arms.A.delivery.model !== MODEL ||
@@ -314,10 +303,8 @@ const armFreeze = (letter) => ({
     clean: identities.arms[letter.toUpperCase()].clean,
     descriptionChars:
         identities.arms[letter.toUpperCase()].surfaces.nativeChars,
-    descriptionHash:
-        identities.arms[letter.toUpperCase()].surfaces.nativeHash,
-    deliveredChars:
-        identities.arms[letter.toUpperCase()].delivery.nativeChars,
+    descriptionHash: identities.arms[letter.toUpperCase()].surfaces.nativeHash,
+    deliveredChars: identities.arms[letter.toUpperCase()].delivery.nativeChars,
     deliveredHash: identities.arms[letter.toUpperCase()].delivery.nativeHash,
     annotationChars:
         identities.arms[letter.toUpperCase()].surfaces.annotationChars,
@@ -335,10 +322,7 @@ const inventoryDirs = [
     join(ROOT, "arms/a/src"),
     join(ROOT, "arms/b/src"),
     join(ROOT, "arms/a/tests/fixtures/placement-harness/primary-checks"),
-    join(
-        ROOT,
-        "measurement/tests/fixtures/placement-harness/analysis",
-    ),
+    join(ROOT, "measurement/tests/fixtures/placement-harness/analysis"),
     join(ROOT, "measurement/tests/fixtures/placement-harness/ac"),
 ];
 
@@ -367,10 +351,7 @@ const immutable = [
     join(EVIDENCE, "measurement-spec.json"),
     join(ROOT, "arms/a/tests/fixtures/placement-harness/prod014/cases.json"),
     join(ROOT, "arms/a/tests/fixtures/placement-harness/prod014/truth.json"),
-    join(
-        ROOT,
-        "measurement/tests/fixtures/placement-harness/ac-scoring.mts",
-    ),
+    join(ROOT, "measurement/tests/fixtures/placement-harness/ac-scoring.mts"),
     join(ROOT, "measurement/tests/fixtures/placement-harness/harness.mts"),
     join(
         ROOT,

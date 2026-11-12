@@ -165,7 +165,7 @@ export function journalRecordAttributed(
 /**
  * Consume one matching host dispatch, so two journal lines can never both
  * claim one dispatch.
- * @param dispatches The remaining dispatches.
+ * @param host The remaining host calls and dispatches.
  * @param record The journal record.
  * @returns True when one dispatch was consumed.
  */
@@ -260,7 +260,7 @@ export function verifyOperationsJournal(input: {
  * @param input The run's observed identity and call ids.
  * @param input.identity The run's observed session/message ids.
  * @param input.callIds The execute call ids in the trail.
- * @param dispatches The mutable remaining dispatches.
+ * @param host The mutable host calls and dispatches.
  * @returns The credited record or the rejection.
  */
 function verifyLine(
@@ -399,9 +399,7 @@ function addHostDispatches(
             result.nativeCalls.push({
                 tool,
                 status:
-                    typeof entry.status === "string"
-                        ? entry.status
-                        : "unknown",
+                    typeof entry.status === "string" ? entry.status : "unknown",
                 input: entry.input,
                 callId: entry.id,
             });
@@ -451,17 +449,18 @@ function appendDispatches(
  * rendering. A missing hash leaves the answer unbound rather than trusted.
  * @param answer The recorded answer bytes.
  * @param answerHash The producer's recorded hash, when present.
- * @param options.allowUnbound Explicit read-only coverage for legacy evidence
+ * @param settings The optional binding settings.
+ * @param settings.allowUnbound Explicit read-only coverage for legacy evidence
  *   written before the producer recorded a hash.
  * @returns A problem, or null when the answer is bound.
  */
 export function answerIdentityProblem(
     answer: string,
     answerHash: unknown,
-    options: { allowUnbound?: boolean } = {},
+    settings: { allowUnbound?: boolean } = {},
 ): string | null {
     if (typeof answerHash !== "string" || answerHash === "") {
-        return options.allowUnbound
+        return settings.allowUnbound
             ? null
             : "no recorded answer hash; the answer cannot be bound to its trial";
     }

@@ -16,7 +16,6 @@ import {
     rmSync,
     writeFileSync,
 } from "node:fs";
-import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { parseCampaignLedger } from "../runner/ledger.ts";
 import { readClaims, restartDisposition } from "../runner/budget.ts";
@@ -38,12 +37,21 @@ const write = (path, body) => {
     writeFileSync(tmp, body, "utf8");
     renameSync(tmp, path);
 };
-const sha = (text) => createHash("sha256").update(text, "utf8").digest("hex");
 const ledger = (entry) =>
-    appendFileSync(LEDGER, `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`);
+    appendFileSync(
+        LEDGER,
+        `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`,
+    );
 
 const caseDir = (slot) =>
-    join(ROOT, "gen", slot.arm.toLowerCase(), "results", slot.stamp, slot.scenario);
+    join(
+        ROOT,
+        "gen",
+        slot.arm.toLowerCase(),
+        "results",
+        slot.stamp,
+        slot.scenario,
+    );
 
 /**
  * Sum one JSONL trail's step and per-field token evidence.
@@ -52,63 +60,84 @@ const caseDir = (slot) =>
  * unknown rather than a plausible zero.
  */
 function usageOf(path) {
-    if (!existsSync(path)) return { steps: null, tokens: null, malformed: false };
+    if (!existsSync(path))
+        return { steps: null, tokens: null, malformed: false };
     const text = readText(path);
-    if (text.trim() === "") {
-        return {
-            steps: 0,
-            tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0 },
-            malformed: false,
-        };
+    if (text.trim() === "") return emptyUsage();
+    const parsed = tokensFromTrail(text);
+    if (parsed.malformed) {
+        return { steps: null, tokens: null, malformed: true };
     }
+    return { steps: parsed.steps, tokens: parsed.tokens, malformed: false };
+}
+
+/** An empty, successful trail: zero steps and zero tokens. */
+function emptyUsage() {
+    return {
+        steps: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0 },
+        malformed: false,
+    };
+}
+
+/** Read one trail's step count and per-field token samples. */
+function tokensFromTrail(text) {
     let steps = 0;
     let malformed = false;
     const fields = { input: [], output: [], reasoning: [], cacheRead: [] };
     for (const line of text.split("\n")) {
         if (line.trim() === "") continue;
-        let event;
-        try {
-            event = JSON.parse(line);
-        } catch {
+        const event = parseTrailLine(line);
+        if (event === undefined) {
             malformed = true;
             continue;
         }
         if (event.type !== "step_finish") continue;
         steps += 1;
-        const tokens = event.part?.tokens ?? {};
-        fields.input.push(typeof tokens.input === "number" ? tokens.input : null);
-        fields.output.push(
-            typeof tokens.output === "number" ? tokens.output : null,
-        );
-        fields.reasoning.push(
-            typeof tokens.reasoning === "number" ? tokens.reasoning : null,
-        );
-        fields.cacheRead.push(
-            typeof tokens.cache?.read === "number" ? tokens.cache.read : null,
-        );
+        pushTokenSample(fields, event.part?.tokens ?? {});
     }
-    if (malformed) return { steps: null, tokens: null, malformed: true };
-    if (steps === 0) {
-        return {
-            steps: 0,
-            tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0 },
-            malformed: false,
-        };
-    }
+    return {
+        steps,
+        tokens: steps === 0 ? emptyUsage().tokens : summedTokens(fields),
+        malformed,
+    };
+}
+
+/** One token total per field, or null when any observation omitted it. */
+function summedTokens(fields) {
     const sum = (values) =>
         values.length === 0 || values.includes(null)
             ? null
             : values.reduce((total, value) => total + value, 0);
     return {
-        steps,
-        tokens: {
-            input: sum(fields.input),
-            output: sum(fields.output),
-            reasoning: sum(fields.reasoning),
-            cacheRead: sum(fields.cacheRead),
-        },
-        malformed: false,
+        input: sum(fields.input),
+        output: sum(fields.output),
+        reasoning: sum(fields.reasoning),
+        cacheRead: sum(fields.cacheRead),
     };
+}
+
+/** One parsed trail line, or undefined when it is not JSON. */
+function parseTrailLine(line) {
+    try {
+        return JSON.parse(line);
+    } catch {
+        return undefined;
+    }
+}
+
+/** Record one step's token fields, keeping a missing field explicit. */
+function pushTokenSample(fields, tokens) {
+    fields.input.push(typeof tokens.input === "number" ? tokens.input : null);
+    fields.output.push(
+        typeof tokens.output === "number" ? tokens.output : null,
+    );
+    fields.reasoning.push(
+        typeof tokens.reasoning === "number" ? tokens.reasoning : null,
+    );
+    fields.cacheRead.push(
+        typeof tokens.cache?.read === "number" ? tokens.cache.read : null,
+    );
 }
 
 /** One judge attempt's evidence, including whether its judgement is usable. */
@@ -117,12 +146,10 @@ function judgeAttemptOf(dir) {
     const judgement = readJson(join(dir, "judgement.json"));
     const resolution = readJson(join(dir, "resolution.json"));
     const usage = usageOf(join(dir, "output.jsonl"));
-    const usable =
-        judgement?.status === "judged" || resolution?.status === "judged";
+    const usable = isUsableJudgement(judgement, resolution);
     const status = usable
         ? "judged"
-        : (judgement?.status ??
-          (meta?.status === "started" ? "started" : "unknown"));
+        : (judgement?.status ?? startedStatus(meta));
     return {
         attemptId: dir.split("/").at(-1),
         spawned: meta !== null || usage.steps !== null,
@@ -134,6 +161,32 @@ function judgeAttemptOf(dir) {
         durationMs:
             typeof meta?.durationMs === "number" ? meta.durationMs : null,
     };
+}
+
+/** One attributed operation, rendered for a human-review packet. */
+function operationSummary(entry) {
+    const input = entry.input ?? {};
+    const target = input.read ?? input.add?.path ?? "";
+    const verb = operationVerb(input, target);
+    return `- ${entry.surface ?? "native"} — ${entry.status ?? "unknown"} — ${verb}`;
+}
+
+/** The human-readable verb of one journal input. */
+function operationVerb(input, target) {
+    if (input.add) return `${input.add.mode ?? "write"} ${target}`;
+    if (input.read) return `read ${target}`;
+    if (input.search) return `search "${input.search}"`;
+    return input.check ? "check" : "help";
+}
+
+/** Whether a judgement or its resolution is usable. */
+function isUsableJudgement(judgement, resolution) {
+    return judgement?.status === "judged" || resolution?.status === "judged";
+}
+
+/** The status an attempt without a judgement reports. */
+function startedStatus(meta) {
+    return meta?.status === "started" ? "started" : "unknown";
 }
 
 /** Whether one slot has a usable judge attempt. */
@@ -194,7 +247,9 @@ if (ledgerParse.state === "closed") {
     process.exit(0);
 }
 
-const schedule = JSON.parse(readFileSync(join(EVIDENCE, "schedule.json"), "utf8"));
+const schedule = JSON.parse(
+    readFileSync(join(EVIDENCE, "schedule.json"), "utf8"),
+);
 const measurement = JSON.parse(
     readFileSync(join(EVIDENCE, "measurement-spec.json"), "utf8"),
 );
@@ -280,7 +335,8 @@ try {
     });
 
     const observed = observations.filter(
-        (slot) => slot.launched || slot.recorded || slot.judgeAttempts.length > 0,
+        (slot) =>
+            slot.launched || slot.recorded || slot.judgeAttempts.length > 0,
     );
     const decision = closeCampaign(report);
     if (!decision.ok) {
@@ -410,21 +466,7 @@ try {
             readText(join(caseDir(slot), "docs-operations.jsonl"))
                 .split("\n")
                 .filter((line) => line.trim() !== "")
-                .map((line) => {
-                    const entry = JSON.parse(line);
-                    const input = entry.input ?? {};
-                    const target = input.read ?? input.add?.path ?? "";
-                    const verb = input.add
-                        ? `${input.add.mode ?? "write"} ${target}`
-                        : input.read
-                          ? `read ${target}`
-                          : input.search
-                            ? `search "${input.search}"`
-                            : input.check
-                              ? "check"
-                              : "help";
-                    return `- ${entry.surface ?? "native"} — ${entry.status ?? "unknown"} — ${verb}`;
-                });
+                .map((line) => operationSummary(JSON.parse(line)));
         for (const entry of map) {
             const slot = affected.find((one) => one.stamp === entry.stamp);
             const dir = caseDir(slot);

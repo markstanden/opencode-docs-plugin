@@ -11,7 +11,6 @@
 import { createHash } from "node:crypto";
 import {
     chmodSync,
-    cpSync,
     existsSync,
     mkdirSync,
     mkdtempSync,
@@ -19,7 +18,6 @@ import {
     readFileSync,
     renameSync,
     rmSync,
-    statSync,
     writeFileSync,
 } from "node:fs";
 import { dirname, join, relative } from "node:path";
@@ -191,7 +189,9 @@ try {
     rmSync(staging, { recursive: true, force: true });
 } catch (error) {
     rmSync(staging, { recursive: true, force: true });
-    console.error(`materialisation failed before publication: ${String(error)}`);
+    console.error(
+        `materialisation failed before publication: ${String(error)}`,
+    );
     process.exit(1);
 }
 

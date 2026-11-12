@@ -1583,11 +1583,7 @@ export function runAnalysis(argv: readonly string[]): CliRun {
     }
     const consumed = new Map<string, ConsumedInput>();
     const reader = fsReader(options.evidenceRoot, consumed);
-    const loaded = loadCampaign(
-        manifest,
-        reader,
-        options.allowLegacyUnbound,
-    );
+    const loaded = loadCampaign(manifest, reader, options.allowLegacyUnbound);
     const manifestText = readFileSync(options.campaign, "utf8");
     const result = assemble(
         manifest,
@@ -1652,7 +1648,7 @@ export function runAnalysis(argv: readonly string[]): CliRun {
         messages: [
             result.measures.status === "available"
                 ? `${manifest.campaign.id}: ${result.measures.personalTrial.recommendation}; written to ${options.out}`
-                : `${manifest.campaign.id}: utility threshold ${result.decision.overall} (no measurement declaration); written to ${options.out}`,
+                : `${manifest.campaign.id}: ${result.decision.overall}; written to ${options.out}`,
         ],
     };
 }

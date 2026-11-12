@@ -2835,6 +2835,7 @@ interface NestedDispatch {
     tool: string;
     status: string;
     input: unknown;
+    callId: string | null;
 }
 
 /** The journal's registered tool name for one host dispatch name. */
@@ -2860,6 +2861,7 @@ function recordedDispatches(entry: ToolCall): NestedDispatch[] {
             tool,
             status: typeof call.status === "string" ? call.status : "unknown",
             input: call.input,
+            callId: typeof entry.id === "string" ? entry.id : null,
         });
     }
     return dispatches;
@@ -2981,6 +2983,7 @@ function readOperationJournal(
                 tool: dispatch.tool,
                 status: dispatch.status,
                 input: dispatch.input,
+                callId: dispatch.callId,
             }),
         ),
     });

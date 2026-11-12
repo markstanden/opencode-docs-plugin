@@ -22,9 +22,13 @@ export function loadJudgeKey(root) {
     const envPath = join(root, ".env");
     if (!existsSync(envPath)) return null;
     for (const line of readFileSync(envPath, "utf8").split("\n")) {
-        const match = /^\s*ZAI_API_KEY\s*=\s*(.*)\s*$/.exec(line);
-        if (match === null) continue;
-        const value = (match[1] ?? "").replace(/^["']|["']$/g, "").trim();
+        const equals = line.indexOf("=");
+        if (equals < 0) continue;
+        if (line.slice(0, equals).trim() !== "ZAI_API_KEY") continue;
+        const value = line
+            .slice(equals + 1)
+            .replace(/^["']|["']$/g, "")
+            .trim();
         if (value !== "") {
             process.env.ZAI_API_KEY = value;
             return "campaign .env";

@@ -173,7 +173,10 @@ function trial(
                 : {
                       retrievalApplication: {
                           state: options.retrieval,
-                          quote: options.retrieval === "applied" ? "used it" : "(none)",
+                          quote:
+                              options.retrieval === "applied"
+                                  ? "used it"
+                                  : "(none)",
                       },
                   }),
         }),
@@ -359,7 +362,6 @@ describe("shared evidence verifier through the analyser CLI", () => {
 /** Run the analyser and return the parsed analysis and report. */
 function analyse(root: string): {
     status: number | null;
-    stdout: string;
     out: string;
     analysis: {
         measures: {
@@ -387,10 +389,9 @@ function analyse(root: string): {
         "--out",
         out,
     ]);
-    if (run.status !== 0) throw new Error(String(run.stderr));
+    if (run.status !== 0) throw new Error(run.messages.join("; "));
     return {
         status: run.status,
-        stdout: String(run.stdout ?? ""),
         out,
         analysis: JSON.parse(readFileSync(join(out, "analysis.json"), "utf8")),
     };
@@ -401,12 +402,24 @@ describe("real producer shapes and operation outcomes", () => {
         // Arrange
         const { root } = campaign();
         try {
-            trial(root, "A", "ops/note.md", "modified: lakes/docs/ops/note.md (content)\n", {
-                surface: "native",
-            });
-            trial(root, "B", "ops/other.md", "modified: lakes/docs/ops/note.md (content)\n", {
-                surface: "native",
-            });
+            trial(
+                root,
+                "A",
+                "ops/note.md",
+                "modified: lakes/docs/ops/note.md (content)\n",
+                {
+                    surface: "native",
+                },
+            );
+            trial(
+                root,
+                "B",
+                "ops/other.md",
+                "modified: lakes/docs/ops/note.md (content)\n",
+                {
+                    surface: "native",
+                },
+            );
 
             // Act
             const { status, analysis } = analyse(root);
@@ -424,16 +437,24 @@ describe("real producer shapes and operation outcomes", () => {
         // Arrange
         const { root } = campaign();
         try {
-            trial(root, "A", "ops/note.md", "modified: lakes/docs/ops/note.md (content)\n", {
-                written: false,
-            });
+            trial(
+                root,
+                "A",
+                "ops/note.md",
+                "modified: lakes/docs/ops/note.md (content)\n",
+                {
+                    written: false,
+                },
+            );
 
             // Act
             const { status, analysis } = analyse(root);
 
             // Assert
             assert.equal(status, 0);
-            const a = analysis.measures.trials.find((entry) => entry.arm === "A");
+            const a = analysis.measures.trials.find(
+                (entry) => entry.arm === "A",
+            );
             assert.equal(a?.recording.success, false);
             assert.equal(a?.recording.disposition, "tool-error");
             assert.equal(analysis.measures.arms.A?.recording.success, 0);
@@ -446,10 +467,7 @@ describe("real producer shapes and operation outcomes", () => {
         // Arrange
         const { root } = campaign();
         try {
-            const dir = join(
-                root,
-                "gen/a/results/pd-A-r0-X/X",
-            );
+            const dir = join(root, "gen/a/results/pd-A-r0-X/X");
             write(
                 join(dir, "tools.jsonl"),
                 [
@@ -561,9 +579,15 @@ describe("real producer shapes and operation outcomes", () => {
         // Arrange
         const { root } = campaign();
         try {
-            trial(root, "A", "ops/note.md", "modified: lakes/docs/ops/note.md (content)\n", {
-                reportedPath: "lakes/other/ops/note.md",
-            });
+            trial(
+                root,
+                "A",
+                "ops/note.md",
+                "modified: lakes/docs/ops/note.md (content)\n",
+                {
+                    reportedPath: "lakes/other/ops/note.md",
+                },
+            );
 
             // Act
             const { status, analysis } = analyse(root);

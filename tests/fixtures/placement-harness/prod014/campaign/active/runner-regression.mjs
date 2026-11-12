@@ -27,7 +27,8 @@ const write = (path, body) => {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, body, "utf8");
 };
-const json = (path, value) => write(path, `${JSON.stringify(value, null, 2)}\n`);
+const json = (path, value) =>
+    write(path, `${JSON.stringify(value, null, 2)}\n`);
 const temp = (label) => mkdtempSync(join(tmpdir(), `pd-runner-${label}-`));
 
 /** A schedule and the minimum files the commands read before a launch. */

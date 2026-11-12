@@ -2,20 +2,11 @@
 // `attempt-002`. The failed `attempt-001` stays untouched.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-    appendFileSync,
-    existsSync,
-    readdirSync,
-    readFileSync,
-} from "node:fs";
+import { appendFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { credentialFileProblem, loadJudgeKey } from "./env.mjs";
 import { parseCampaignLedger } from "../runner/ledger.ts";
-import {
-    advanceClaim,
-    claimBudget,
-    releaseClaim,
-} from "../runner/budget.ts";
+import { advanceClaim, claimBudget, releaseClaim } from "../runner/budget.ts";
 import { resolveRecoverySelection } from "../runner/selector.ts";
 import { spendFreezeProblem, verifyFreeze } from "../runner/freeze.ts";
 
@@ -166,7 +157,9 @@ for (const slot of slots) {
     const attemptDir = join(caseDir, "ac", attemptId);
     if (existsSync(attemptDir)) {
         if (usableJudgement(attemptDir)) {
-            console.log(`${slot.stamp}: ${attemptId} already judged, preserved`);
+            console.log(
+                `${slot.stamp}: ${attemptId} already judged, preserved`,
+            );
             continue;
         }
         ledger({
@@ -241,22 +234,32 @@ for (const slot of slots) {
         [
             AC,
             "judge",
-            "--base", base,
-            "--stamp", slot.stamp,
-            "--case", slot.scenario,
-            "--truth", join(
+            "--base",
+            base,
+            "--stamp",
+            slot.stamp,
+            "--case",
+            slot.scenario,
+            "--truth",
+            join(
                 ROOT,
                 "arms/a/tests/fixtures/placement-harness/prod014/truth.json",
             ),
-            "--spec", join(EVIDENCE, "measurement-spec.json"),
-            "--attempt", attemptId,
-            "--launcher", join(
+            "--spec",
+            join(EVIDENCE, "measurement-spec.json"),
+            "--attempt",
+            attemptId,
+            "--launcher",
+            join(
                 MEASUREMENT,
                 "tests/fixtures/placement-harness/ac/judge-launcher.sh",
             ),
-            "--model", JUDGE,
-            "--workdir", join(EVIDENCE, "ac-runs"),
-            "--timeout", "600000",
+            "--model",
+            JUDGE,
+            "--workdir",
+            join(EVIDENCE, "ac-runs"),
+            "--timeout",
+            "600000",
         ],
         {
             encoding: "utf8",
@@ -278,7 +281,11 @@ for (const slot of slots) {
             attemptId,
             recovery: true,
             exit: result.status,
-            reason: String(result.stderr ?? "").trim().split("\n").at(-1) ?? "",
+            reason:
+                String(result.stderr ?? "")
+                    .trim()
+                    .split("\n")
+                    .at(-1) ?? "",
         });
         console.error(
             `BLOCKER: ${slot.stamp} recovery wrapper refused before dispatch`,

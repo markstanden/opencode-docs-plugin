@@ -88,6 +88,19 @@ export function claimDir(root: string, kind: BudgetKind): string {
     return join(root, kind);
 }
 
+/** A recognised claim state, or null. */
+function claimStateOf(value: unknown): ClaimState | null {
+    if (value === "reserved" || value === "spawned" || value === "closed") {
+        return value;
+    }
+    return null;
+}
+
+/** A string field, or null. */
+function stringOrNull(value: unknown): string | null {
+    return typeof value === "string" ? value : null;
+}
+
 /** Parse one claim file, or null when its bytes are unusable. */
 function claimOf(
     kind: BudgetKind,
@@ -102,20 +115,18 @@ function claimOf(
         return null;
     }
     if (!isRecord(value)) return null;
-    const state = value.state;
-    if (state !== "reserved" && state !== "spawned" && state !== "closed") {
-        return null;
-    }
+    const state = claimStateOf(value.state);
+    if (state === null) return null;
     return {
         kind,
         index,
         path,
         state,
-        at: typeof value.at === "string" ? value.at : null,
-        stamp: typeof value.stamp === "string" ? value.stamp : null,
-        attemptId: typeof value.attemptId === "string" ? value.attemptId : null,
-        note: typeof value.note === "string" ? value.note : null,
-        key: typeof value.key === "string" ? value.key : null,
+        at: stringOrNull(value.at),
+        stamp: stringOrNull(value.stamp),
+        attemptId: stringOrNull(value.attemptId),
+        note: stringOrNull(value.note),
+        key: stringOrNull(value.key),
     };
 }
 
@@ -277,11 +288,7 @@ function claimBytes(claim: BudgetClaim, at: string): string {
  * @param key The logical attempt key.
  * @returns True when this caller now owns the reservation.
  */
-function acquireKeyLock(
-    dir: string,
-    kind: BudgetKind,
-    key: string,
-): boolean {
+function acquireKeyLock(dir: string, kind: BudgetKind, key: string): boolean {
     try {
         writeFileSync(join(dir, keyLockName(kind, key)), `${key}\n`, {
             encoding: "utf8",

@@ -109,7 +109,8 @@ const ledger = (entry) => {
 };
 
 const schedule = readJson(join(EVIDENCE, "schedule.json"));
-if (schedule === null) fail("no frozen schedule; run prepare/schedule.mjs first");
+if (schedule === null)
+    fail("no frozen schedule; run prepare/schedule.mjs first");
 const slots = schedule.slots;
 
 const manifest = readJson(join(ROOT, "prepare/manifest.json"));
@@ -326,44 +327,79 @@ const premiseBlock = (slot, boundary) => {
     return true;
 };
 
-const dry = () => {
+/** Pair-level schedule defects. */
+const pairProblems = () => {
     const problems = [];
-    if (slots.length !== 16) problems.push(`expected 16 slots, ${slots.length}`);
     for (let index = 0; index < slots.length; index += 2) {
         const first = slots[index];
         const second = slots[index + 1];
-        if (!first || !second) {
+        if (first === undefined || second === undefined) {
             problems.push(`unpaired slot at index ${index}`);
             continue;
         }
-        if (first.pairId !== second.pairId)
+        if (first.pairId !== second.pairId) {
             problems.push(`pair split at ${first.slot}/${second.slot}`);
-        if (first.arm === second.arm)
+        }
+        if (first.arm === second.arm) {
             problems.push(`pair ${first.pairId} repeats arm ${first.arm}`);
-        if (first.scenario !== second.scenario)
+        }
+        if (first.scenario !== second.scenario) {
             problems.push(`pair ${first.pairId} mixes scenarios`);
+        }
     }
+    return problems;
+};
+
+/** One slot's missing inputs and stale launch state. */
+const slotProblems = (slot) => {
+    const problems = [];
+    const { repo, base, cases } = armPaths(slot.arm);
+    for (const [label, path] of [
+        ["arm repo", join(repo, "src/index.ts")],
+        ["lockfile", join(repo, "package-lock.json")],
+        [
+            "container runner",
+            join(repo, "tests/fixtures/placement-harness/container-run.sh"),
+        ],
+        [
+            "judge launcher",
+            join(
+                MEASUREMENT,
+                "tests/fixtures/placement-harness/ac/judge-launcher.sh",
+            ),
+        ],
+        ["corpus", cases],
+        [
+            "generated fixture",
+            join(base, "fixtures", slot.scenario, "generation.json"),
+        ],
+        ["prompt", join(base, "prompts", `${slot.scenario}.md`)],
+        ["rubric", join(base, "rubrics", slot.scenario)],
+    ]) {
+        if (!existsSync(path)) {
+            problems.push(`${slot.stamp}: missing ${label} (${path})`);
+        }
+    }
+    if (attemptsOf(slot.stamp).length > 0) {
+        problems.push(`${slot.stamp}: launch records already exist`);
+    }
+    if (existsSync(join(base, "results", slot.stamp))) {
+        problems.push(`${slot.stamp}: result directory already exists`);
+    }
+    return problems;
+};
+
+const dry = () => {
+    const problems = [];
+    if (slots.length !== 16)
+        problems.push(`expected 16 slots, ${slots.length}`);
+    problems.push(...pairProblems());
     const stamps = new Set();
     for (const slot of slots) {
-        const { repo, base, cases } = armPaths(slot.arm);
-        if (stamps.has(slot.stamp)) problems.push(`duplicate stamp ${slot.stamp}`);
+        if (stamps.has(slot.stamp))
+            problems.push(`duplicate stamp ${slot.stamp}`);
         stamps.add(slot.stamp);
-        for (const [label, path] of [
-            ["arm repo", join(repo, "src/index.ts")],
-            ["lockfile", join(repo, "package-lock.json")],
-            ["container runner", join(repo, "tests/fixtures/placement-harness/container-run.sh")],
-            ["judge launcher", join(MEASUREMENT, "tests/fixtures/placement-harness/ac/judge-launcher.sh")],
-            ["corpus", cases],
-            ["generated fixture", join(base, "fixtures", slot.scenario, "generation.json")],
-            ["prompt", join(base, "prompts", `${slot.scenario}.md`)],
-            ["rubric", join(base, "rubrics", slot.scenario)],
-        ]) {
-            if (!existsSync(path)) problems.push(`${slot.stamp}: missing ${label} (${path})`);
-        }
-        if (attemptsOf(slot.stamp).length > 0)
-            problems.push(`${slot.stamp}: launch records already exist`);
-        if (existsSync(join(base, "results", slot.stamp)))
-            problems.push(`${slot.stamp}: result directory already exists`);
+        problems.push(...slotProblems(slot));
     }
     for (const path of [
         join(EVIDENCE, "frozen-identities.json"),
@@ -374,15 +410,14 @@ const dry = () => {
     ]) {
         if (!existsSync(path)) problems.push(`missing ${path}`);
     }
-    try {
-        accessSync(join(SHIM, "podman"), constants.X_OK);
-    } catch {
+    if (!shimExecutable()) {
         problems.push(
             `container logging shim is not executable: ${join(SHIM, "podman")}`,
         );
     }
-    if (!existsSync(join(EVIDENCE, "FROZEN.json")))
+    if (!existsSync(join(EVIDENCE, "FROZEN.json"))) {
         problems.push("missing evidence/FROZEN.json");
+    }
     console.log(
         slots
             .map(
@@ -395,7 +430,9 @@ const dry = () => {
         console.error(problems.join("\n"));
         process.exit(1);
     }
-    console.log(`\ndry run: ${slots.length} slots, 8 adjacent pairs, no model session`);
+    console.log(
+        `\ndry run: ${slots.length} slots, 8 adjacent pairs, no model session`,
+    );
 };
 
 const runTrial = (slot, attempt) => {
@@ -504,10 +541,14 @@ const runGate = (slot) => {
         [
             join(MEASUREMENT, "tests/fixtures/placement-harness/ac/run.mjs"),
             "gate",
-            "--repo", MEASUREMENT,
-            "--base", base,
-            "--cases", cases,
-            "--stamps", slot.stamp,
+            "--repo",
+            MEASUREMENT,
+            "--base",
+            base,
+            "--cases",
+            cases,
+            "--stamps",
+            slot.stamp,
         ],
         { env: envFor(slot), encoding: "utf8", timeout: 300000 },
     );
@@ -525,25 +566,26 @@ const runGate = (slot) => {
     return gate;
 };
 
-const runJudge = (slot) => {
-    const { base } = armPaths(slot.arm);
-    const attemptDir = join(resultDir(slot), "ac", attemptId);
-    if (hasJudgement(resultDir(slot))) {
-        ledger({
-            event: "judge-skipped-existing",
-            slot: slot.slot,
-            stamp: slot.stamp,
-            arm: slot.arm,
-            attemptDir,
-        });
-        return true;
-    }
-    const unsettledJudge = readClaims(EVIDENCE, "judge").find(
+/** Record a skipped judge and return true, or false when a call is needed. */
+const judgeSkip = (slot, attemptDir) => {
+    if (!hasJudgement(resultDir(slot))) return false;
+    ledger({
+        event: "judge-skipped-existing",
+        slot: slot.slot,
+        stamp: slot.stamp,
+        arm: slot.arm,
+        attemptDir,
+    });
+    return true;
+};
+
+/** Claim the judge dispatch, or report why it is blocked. */
+const judgeClaimOf = (slot) => {
+    const unsettled = readClaims(EVIDENCE, "judge").find(
         (claim) =>
-            claim.stamp === slot.stamp &&
-            restartDisposition(claim) !== null,
+            claim.stamp === slot.stamp && restartDisposition(claim) !== null,
     );
-    if (unsettledJudge !== undefined) {
+    if (unsettled !== undefined) {
         ledger({
             event: "slot-blocked",
             slot: slot.slot,
@@ -554,9 +596,9 @@ const runJudge = (slot) => {
         console.error(
             `BLOCKER: ${slot.stamp} has an unsettled judge claim; preserve and report`,
         );
-        return false;
+        return { blocked: true };
     }
-    if (premiseBlock(slot, "judge dispatch")) return false;
+    if (premiseBlock(slot, "judge dispatch")) return { blocked: true };
     const claim = claimBudget(EVIDENCE, "judge", ceilings.judge, {
         stamp: slot.stamp,
         attemptId,
@@ -572,7 +614,7 @@ const runJudge = (slot) => {
             reason: claim.reason,
         });
         console.error(`BLOCKER: ${claim.reason}`);
-        return false;
+        return { blocked: true };
     }
     const closedAfterClaim = spendRefusal();
     if (closedAfterClaim !== null) {
@@ -586,23 +628,65 @@ const runJudge = (slot) => {
             reason: closedAfterClaim,
         });
         console.error(`BLOCKER: ${closedAfterClaim}`);
-        return false;
+        return { blocked: true };
     }
-    const result = spawnSync(
+    return { claim: claim.claim };
+};
+
+/** Release an undispatched claim and record the refusal. */
+const judgeRefusal = (slot, attemptDir, result, claim) => {
+    releaseClaim(claim);
+    ledger({
+        event: "judge-refused",
+        slot: slot.slot,
+        pairId: slot.pairId,
+        stamp: slot.stamp,
+        arm: slot.arm,
+        scenario: slot.scenario,
+        exit: result.status,
+        reason:
+            String(result.stderr ?? "")
+                .trim()
+                .split("\n")
+                .at(-1) ?? "",
+        attemptDir,
+    });
+    console.error(
+        `BLOCKER: ${slot.stamp} judge wrapper refused before dispatch: ${String(result.stderr ?? "").trim()}`,
+    );
+    return false;
+};
+
+/** Spawn the real judge wrapper for one slot. */
+const judgeWrapperResult = (slot, base) =>
+    spawnSync(
         process.execPath,
         [
             join(MEASUREMENT, "tests/fixtures/placement-harness/ac/run.mjs"),
             "judge",
-            "--base", base,
-            "--stamp", slot.stamp,
-            "--case", slot.scenario,
-            "--truth", truthPath,
-            "--spec", specPath,
-            "--attempt", attemptId,
-            "--launcher", join(MEASUREMENT, "tests/fixtures/placement-harness/ac/judge-launcher.sh"),
-            "--model", JUDGE,
-            "--workdir", join(EVIDENCE, "ac-runs"),
-            "--timeout", String(JUDGE_TIMEOUT),
+            "--base",
+            base,
+            "--stamp",
+            slot.stamp,
+            "--case",
+            slot.scenario,
+            "--truth",
+            truthPath,
+            "--spec",
+            specPath,
+            "--attempt",
+            attemptId,
+            "--launcher",
+            join(
+                MEASUREMENT,
+                "tests/fixtures/placement-harness/ac/judge-launcher.sh",
+            ),
+            "--model",
+            JUDGE,
+            "--workdir",
+            join(EVIDENCE, "ac-runs"),
+            "--timeout",
+            String(JUDGE_TIMEOUT),
         ],
         {
             env: envFor(slot),
@@ -610,34 +694,56 @@ const runJudge = (slot) => {
             timeout: JUDGE_TIMEOUT + 120000,
         },
     );
-    const resolve = spawnSync(
+
+/** Resolve a parse-failed judge answer, when one exists. */
+const resolveJudge = (base) =>
+    spawnSync(
         process.execPath,
         [
             join(MEASUREMENT, "tests/fixtures/placement-harness/ac/run.mjs"),
             "resolve",
-            "--base", base,
-            "--spec", specPath,
+            "--base",
+            base,
+            "--spec",
+            specPath,
         ],
-        { env: envFor(slot), encoding: "utf8", timeout: 120000 },
+        { encoding: "utf8", timeout: 120000 },
     );
-    const dispatched = existsSync(join(attemptDir, "dispatch.json"));
-    if (!dispatched) {
-        releaseClaim(claim.claim);
-        ledger({
-            event: "judge-refused",
-            slot: slot.slot,
-            pairId: slot.pairId,
-            stamp: slot.stamp,
-            arm: slot.arm,
-            scenario: slot.scenario,
-            exit: result.status,
-            reason: String(result.stderr ?? "").trim().split("\n").at(-1) ?? "",
-            attemptDir,
-        });
-        console.error(
-            `BLOCKER: ${slot.stamp} judge wrapper refused before dispatch: ${String(result.stderr ?? "").trim()}`,
-        );
-        return false;
+
+/** The terminal status of one judge attempt. */
+const judgeStatusOf = (judgement, resolution) => {
+    if (resolution?.status === "judged") return "judged-after-resolve";
+    return judgement?.status ?? "missing";
+};
+
+/** The first defined value, or null. */
+const firstValue = (...values) =>
+    values.find((value) => value !== undefined && value !== null) ?? null;
+
+/** The terminal facts one judge attempt recorded. */
+const judgeExitOf = (attemptDir, result, resolve) => {
+    const judgement = readJson(join(attemptDir, "judgement.json"));
+    const resolution = readJson(join(attemptDir, "resolution.json"));
+    return {
+        status: judgeStatusOf(judgement, resolution),
+        exit: result.status,
+        resolveExit: resolve.status,
+        outcome: firstValue(
+            judgement?.documentationOutcome,
+            resolution?.parsed?.documentationOutcome,
+        ),
+        retrieval: firstValue(
+            judgement?.retrievalApplication?.state,
+            resolution?.parsed?.retrievalApplication?.state,
+        ),
+    };
+};
+
+/** Dispatch one claimed judge call and record what actually happened. */
+const dispatchJudge = (slot, base, attemptDir, claim) => {
+    const result = judgeWrapperResult(slot, base);
+    if (!existsSync(join(attemptDir, "dispatch.json"))) {
+        return judgeRefusal(slot, attemptDir, result, claim);
     }
     ledger({
         event: "judge-launch",
@@ -648,14 +754,10 @@ const runJudge = (slot) => {
         scenario: slot.scenario,
         attemptDir,
     });
-    advanceClaim(claim.claim, "spawned");
-    advanceClaim(claim.claim, "closed");
-    const judgement = readJson(join(attemptDir, "judgement.json"));
-    const resolution = readJson(join(attemptDir, "resolution.json"));
-    const status =
-        resolution?.status === "judged"
-            ? "judged-after-resolve"
-            : judgement?.status ?? "missing";
+    advanceClaim(claim, "spawned");
+    advanceClaim(claim, "closed");
+    const resolve = resolveJudge(base);
+    const exit = judgeExitOf(attemptDir, result, resolve);
     ledger({
         event: "judge-exit",
         slot: slot.slot,
@@ -663,22 +765,21 @@ const runJudge = (slot) => {
         stamp: slot.stamp,
         arm: slot.arm,
         scenario: slot.scenario,
-        exit: result.status,
-        resolveExit: resolve.status,
-        status,
-        outcome:
-            judgement?.documentationOutcome ??
-            resolution?.parsed?.documentationOutcome ??
-            null,
-        retrieval:
-            judgement?.retrievalApplication?.state ??
-            resolution?.parsed?.retrievalApplication?.state ??
-            null,
         attemptDir,
+        ...exit,
     });
-    return status === "judged" || status === "judged-after-resolve";
+    return exit.status === "judged" || exit.status === "judged-after-resolve";
 };
 
+/** Run one judge wrapper, record its dispatch truth and its outcome. */
+const runJudge = (slot) => {
+    const { base } = armPaths(slot.arm);
+    const attemptDir = join(resultDir(slot), "ac", attemptId);
+    if (judgeSkip(slot, attemptDir)) return true;
+    const claimed = judgeClaimOf(slot);
+    if (claimed.claim === undefined) return false;
+    return dispatchJudge(slot, base, attemptDir, claimed.claim);
+};
 const finishRecordedSlot = (slot, meta) => {
     if (!existsSync(join(resultDir(slot), "gate.json"))) runGate(slot);
     if (!usableRun(meta)) {
@@ -722,8 +823,7 @@ const processSlot = (slot) => {
     const dir = resultDir(slot);
     const unsettledTrial = readClaims(EVIDENCE, "trial").find(
         (claim) =>
-            claim.stamp === slot.stamp &&
-            restartDisposition(claim) !== null,
+            claim.stamp === slot.stamp && restartDisposition(claim) !== null,
     );
     if (unsettledTrial !== undefined) {
         ledger({
