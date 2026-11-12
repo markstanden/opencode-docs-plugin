@@ -73,7 +73,7 @@ if (updateSnapshot) {
     }
     writeFileSync(
         join(here, "active/snapshot.json"),
-        `${JSON.stringify(snapshotOf(active), null, 2)}\n`,
+        `${JSON.stringify(snapshotOf(active), null, 4)}\n`,
         "utf8",
     );
     const runnerPath = join(here, "runner.json");
