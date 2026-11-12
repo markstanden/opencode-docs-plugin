@@ -6,6 +6,7 @@ import {
     mkdtempSync,
     readFileSync,
     rmSync,
+    unlinkSync,
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -255,6 +256,48 @@ describe("credit binding through the analyser CLI", () => {
                 report.includes(
                     `**Personal-trial screen:** ${analysis.measures.personalTrial.recommendation}`,
                 ),
+            );
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("shared evidence verifier through the analyser CLI", () => {
+    it("credits nothing when the journal signing key is absent", () => {
+        // Arrange
+        const { root, out } = campaign();
+        unlinkSync(join(root, "gen/a/results/pd-A-r0-X/X/docs-operations.key"));
+
+        try {
+            // Act
+            const run = runAnalysis([
+                "--campaign",
+                join(root, "manifest.json"),
+                "--evidence-root",
+                root,
+                "--out",
+                out,
+            ]);
+            const analysis = JSON.parse(
+                readFileSync(join(out, "analysis.json"), "utf8"),
+            ) as {
+                measures: {
+                    arms: Record<string, { recording: { success: number } }>;
+                    trials: Array<{
+                        arm: string;
+                        recording: { disposition: string };
+                    }>;
+                };
+            };
+
+            // Assert
+            assert.equal(run.status, 0);
+            assert.equal(analysis.measures.arms.A?.recording.success, 0);
+            assert.equal(
+                analysis.measures.trials.find((trial) => trial.arm === "A")
+                    ?.recording.disposition,
+                "unknown",
             );
         } finally {
             rmSync(root, { recursive: true, force: true });
