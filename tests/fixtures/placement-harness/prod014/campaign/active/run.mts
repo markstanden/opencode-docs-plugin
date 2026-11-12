@@ -7,7 +7,7 @@
 //   have begun.
 // - An existing result directory without meta.json is a started attempt, not
 //   a blank slot; it blocks and is reported.
-// - The judge runs only for a recorded, usable trial, and ac/run.mjs claims
+// - The judge runs only for a recorded, usable trial, and ac/run.mts claims
 //   its attempt directory before spawning the judge model.
 // - Gate and judge run from the independent measurement worktree.
 import { spawnSync } from "node:child_process";
@@ -23,7 +23,16 @@ import {
     writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { credentialFileProblem, loadJudgeKey } from "./env.mjs";
+import { credentialFileProblem, loadJudgeKey } from "./env.mts";
+import {
+    filesUnder,
+    freezeRecordOf,
+    manifestOf,
+    readText,
+    recordOf,
+    scheduleOf,
+    type ScheduleSlot,
+} from "./contracts.mts";
 import { parseCampaignLedger } from "../runner/ledger.ts";
 import {
     advanceClaim,
@@ -31,6 +40,7 @@ import {
     readClaims,
     releaseClaim,
     restartDisposition,
+    type BudgetClaim,
 } from "../runner/budget.ts";
 import { resolveAttemptSelection } from "../runner/selector.ts";
 import { spendFreezeProblem, verifyFreeze } from "../runner/freeze.ts";
@@ -51,14 +61,14 @@ const CONTAINER_LOGS = join(ROOT, "logs/containers");
 const MEASUREMENT = join(ROOT, "measurement");
 
 const argv = process.argv.slice(2);
-const flag = (name) =>
+const flag = (name: string): string | undefined =>
     argv.includes(name) ? argv[argv.indexOf(name) + 1] : undefined;
 const dryRun = argv.includes("--dry-run");
 const trialCommand = flag("--trial-command");
 const pairFrom = Number(flag("--pair-from") ?? 1);
 const pairTo = Number(flag("--pair-to") ?? 8);
 
-const fail = (message) => {
+const fail = (message: string): never => {
     console.error(`BLOCKER: ${message}`);
     process.exit(2);
 };
@@ -68,16 +78,15 @@ const keyProblem = credentialFileProblem(ROOT);
 if (keyProblem !== null) fail(keyProblem);
 const judgeKeySource = loadJudgeKey(ROOT);
 
-const readJson = (path) =>
+const readJson = (path: string): unknown =>
     existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
-const readText = (path) => (existsSync(path) ? readFileSync(path, "utf8") : "");
 
 /** The parsed ledger: absence is a state, never an empty trusted ledger. */
 const ledgerParse = () =>
     parseCampaignLedger(existsSync(LEDGER) ? readText(LEDGER) : undefined);
 
 /** Why spend is refused now, or null when a clean open ledger permits it. */
-const spendRefusal = () => {
+const spendRefusal = (): string | null => {
     const parsed = ledgerParse();
     if (parsed.state === "malformed") {
         return `attempt ledger is malformed: ${parsed.problems.join("; ")}`;
@@ -92,7 +101,7 @@ const spendRefusal = () => {
 };
 
 /** Whether the container logging shim can actually be executed. */
-const shimExecutable = () => {
+const shimExecutable = (): boolean => {
     try {
         accessSync(join(SHIM, "podman"), constants.X_OK);
         return true;
@@ -100,7 +109,7 @@ const shimExecutable = () => {
         return false;
     }
 };
-const ledger = (entry) => {
+const ledger = (entry: Record<string, unknown>): void => {
     appendFileSync(
         LEDGER,
         `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`,
@@ -108,12 +117,10 @@ const ledger = (entry) => {
     );
 };
 
-const schedule = readJson(join(EVIDENCE, "schedule.json"));
-if (schedule === null)
-    fail("no frozen schedule; run prepare/schedule.mjs first");
+const schedule = scheduleOf(join(EVIDENCE, "schedule.json"));
 const slots = schedule.slots;
 
-const manifest = readJson(join(ROOT, "prepare/manifest.json"));
+const manifest = manifestOf(join(ROOT, "prepare/manifest.json"));
 const selection = resolveAttemptSelection({
     manifestAttemptId: manifest?.assessment?.attemptId ?? null,
     overrideAttemptId: flag("--attempt-id") ?? null,
@@ -124,17 +131,21 @@ if (!selection.ok) {
 }
 const attemptId = selection.selection.attemptId;
 
-const frozen = readJson(join(EVIDENCE, "FROZEN.json"));
-const freezeRecord = frozen?.freeze ?? null;
+const frozenValue = readJson(join(EVIDENCE, "FROZEN.json"));
+const freezeRecord = freezeRecordOf(
+    frozenValue === null
+        ? null
+        : recordOf(frozenValue, "FROZEN.json").freeze,
+);
 // One authoritative ceiling: the validated freeze record. A missing or legacy
 // record yields zero, which every claim refuses.
 const ceilings = {
-    trial: Number(freezeRecord?.ceilings?.trial ?? 0),
-    judge: Number(freezeRecord?.ceilings?.judge ?? 0),
+    trial: freezeRecord?.ceilings.trial ?? 0,
+    judge: freezeRecord?.ceilings.judge ?? 0,
 };
 
 /** Capture one external command's trimmed output, or an empty string. */
-const capture = (command, args) => {
+const capture = (command: string, args: string[]): string => {
     const result = spawnSync(command, args, { encoding: "utf8" });
     return result.status === 0 ? String(result.stdout ?? "").trim() : "";
 };
@@ -144,19 +155,9 @@ const capture = (command, args) => {
  * every immutable input, the source revision, the image identity and the
  * container CLI. A historical freeze without a record returns no problems.
  */
-const filesUnder = (dir) => {
-    if (!existsSync(dir)) return [];
-    const found = [];
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const path = join(dir, entry.name);
-        if (entry.isDirectory()) found.push(...filesUnder(path));
-        else if (entry.isFile()) found.push(path);
-    }
-    return found.sort();
-};
-
-const premiseProblems = () => {
-    const record = frozen?.freeze ?? null;
+const premiseProblems = (): string[] => {
+    const record = freezeRecord;
+    if (record === null) return ["no freeze record"];
     const unusable = spendFreezeProblem(record);
     if (unusable !== null) return [unusable];
     const files = record.files.map((file) => {
@@ -192,7 +193,7 @@ const premiseProblems = () => {
     });
 };
 
-const armPaths = (arm) => {
+const armPaths = (arm: string) => {
     const letter = arm.toLowerCase();
     return {
         repo: join(ROOT, "arms", letter),
@@ -206,7 +207,7 @@ const armPaths = (arm) => {
     };
 };
 
-const resultDir = (slot) => {
+const resultDir = (slot: ScheduleSlot) => {
     const { base } = armPaths(slot.arm);
     return join(base, "results", slot.stamp, slot.scenario);
 };
@@ -217,19 +218,26 @@ const truthPath = join(
 );
 const specPath = join(EVIDENCE, "measurement-spec.json");
 
-const attemptsOf = (stamp) => {
+interface Attempt {
+    attemptId: string;
+}
+
+const attemptsOf = (stamp: string): Attempt[] => {
     const dir = join(LAUNCHES, stamp);
     if (!existsSync(dir)) return [];
     return readdirSync(dir)
         .filter((name) => /^attempt-\d{3}\.json$/.test(name))
         .sort()
         .map((name) => ({
-            id: name.replace(/\.json$/, ""),
-            record: readJson(join(dir, name)),
+            attemptId: name.replace(/\.json$/, ""),
         }));
 };
 
-const newAttempt = (slot, status, extra = {}) => {
+const newAttempt = (
+    slot: ScheduleSlot,
+    status: string,
+    extra: Record<string, unknown> = {},
+): { attemptId: string } & Record<string, unknown> => {
     const dir = join(LAUNCHES, slot.stamp);
     mkdirSync(dir, { recursive: true });
     const previous = attemptsOf(slot.stamp);
@@ -255,10 +263,9 @@ const newAttempt = (slot, status, extra = {}) => {
     return record;
 };
 
-const updateAttempt = (slot, attemptId, patch) => {
+const updateAttempt = (slot: ScheduleSlot, attemptId: string, patch: Record<string, unknown>) => {
     const path = join(LAUNCHES, slot.stamp, `${attemptId}.json`);
-    const current = readJson(path);
-    if (current === null) throw new Error(`missing attempt record ${path}`);
+    const current = recordOf(readJson(path), path);
     writeFileSync(
         path,
         `${JSON.stringify({ ...current, ...patch }, null, 2)}\n`,
@@ -266,32 +273,47 @@ const updateAttempt = (slot, attemptId, patch) => {
     );
 };
 
-const containerRunObserved = (logPath) =>
+const containerRunObserved = (logPath: string): boolean =>
     /^\S+ run(?:\s|$)/m.test(readText(logPath));
 
-const usableRun = (meta) =>
-    meta !== null &&
-    meta.exit === 0 &&
-    meta.signal === null &&
-    meta.timedOut !== true &&
-    meta.outputOverflow !== true &&
-    meta.answerValid === true;
-
-const hasJudgement = (dir) => {
-    const judgement = readJson(join(dir, "ac", attemptId, "judgement.json"));
-    if (judgement?.status === "judged") return true;
-    const resolution = readJson(join(dir, "ac", attemptId, "resolution.json"));
-    return resolution?.status === "judged";
+const usableRun = (meta: unknown): boolean => {
+    if (typeof meta !== "object" || meta === null) return false;
+    const value = meta as Record<string, unknown>;
+    return (
+        value.exit === 0 &&
+        value.signal === null &&
+        value.timedOut !== true &&
+        value.outputOverflow !== true &&
+        value.answerValid === true
+    );
 };
 
-const safeHead = (repo) => {
+const hasJudgement = (dir: string): boolean => {
+    const judgement = readJson(join(dir, "ac", attemptId, "judgement.json"));
+    if (
+        typeof judgement === "object" &&
+        judgement !== null &&
+        (judgement as Record<string, unknown>).status === "judged"
+    )
+        return true;
+    const resolution = readJson(
+        join(dir, "ac", attemptId, "resolution.json"),
+    );
+    return (
+        typeof resolution === "object" &&
+        resolution !== null &&
+        (resolution as Record<string, unknown>).status === "judged"
+    );
+};
+
+const safeHead = (repo: string): string => {
     const result = spawnSync("git", ["-C", repo, "rev-parse", "HEAD"], {
         encoding: "utf8",
     });
     return result.status === 0 ? result.stdout.trim() : "";
 };
 
-const envFor = (slot) => {
+const envFor = (slot: ScheduleSlot) => {
     const { repo, base, cases } = armPaths(slot.arm);
     return {
         ...process.env,
@@ -309,7 +331,7 @@ const envFor = (slot) => {
     };
 };
 
-const premiseBlock = (slot, boundary) => {
+const premiseBlock = (slot: ScheduleSlot, boundary: string) => {
     const problems = premiseProblems();
     if (problems.length === 0) return false;
     ledger({
@@ -350,10 +372,10 @@ const pairProblems = () => {
 };
 
 /** One slot's missing inputs and stale launch state. */
-const slotProblems = (slot) => {
+const slotProblems = (slot: ScheduleSlot) => {
     const problems = [];
     const { repo, base, cases } = armPaths(slot.arm);
-    for (const [label, path] of [
+    const inputs: Array<[string, string]> = [
         ["arm repo", join(repo, "src/index.ts")],
         ["lockfile", join(repo, "package-lock.json")],
         [
@@ -374,7 +396,8 @@ const slotProblems = (slot) => {
         ],
         ["prompt", join(base, "prompts", `${slot.scenario}.md`)],
         ["rubric", join(base, "rubrics", slot.scenario)],
-    ]) {
+    ];
+    for (const [label, path] of inputs) {
         if (!existsSync(path)) {
             problems.push(`${slot.stamp}: missing ${label} (${path})`);
         }
@@ -394,7 +417,7 @@ const slotProblems = (slot) => {
  * container with PLACEMENT_TRIAL_IMAGE_ID, so the host describe step is never
  * misclassified as an in-container run.
  */
-const judgeEnv = (slot) => ({
+const judgeEnv = (slot: ScheduleSlot) => ({
     ...envFor(slot),
     PLACEMENT_IMAGE: freezeRecord?.imageId ?? "",
 });
@@ -431,7 +454,7 @@ const dry = () => {
     console.log(
         slots
             .map(
-                (slot) =>
+                (slot: ScheduleSlot) =>
                     `slot ${String(slot.slot).padStart(2)} ${slot.pairId} ${slot.scenario} ${slot.arm} ${slot.stamp}`,
             )
             .join("\n"),
@@ -445,7 +468,7 @@ const dry = () => {
     );
 };
 
-const runTrial = (slot, attempt) => {
+const runTrial = (slot: ScheduleSlot, attempt: Attempt) => {
     const dir = resultDir(slot);
     const containerLog = join(CONTAINER_LOGS, `${slot.stamp}.log`);
     mkdirSync(TRIAL_LOGS, { recursive: true });
@@ -498,7 +521,9 @@ const runTrial = (slot, attempt) => {
         `# stdout\n${result.stdout ?? ""}\n# stderr\n${result.stderr ?? ""}\n`,
         "utf8",
     );
-    const meta = readJson(join(dir, "meta.json"));
+    const metaValue = readJson(join(dir, "meta.json"));
+    const meta =
+        metaValue === null ? null : recordOf(metaValue, join(dir, "meta.json"));
     const containerRun = containerRunObserved(containerLog);
     const usable = usableRun(meta);
     const startedAttempt = meta !== null || existsSync(dir);
@@ -511,7 +536,9 @@ const runTrial = (slot, attempt) => {
                   : "pre-model-failure",
         exit: result.status,
         signal: result.signal,
-        timedOut: result.error?.code === "ETIMEDOUT",
+        timedOut:
+            (result.error as NodeJS.ErrnoException | undefined)?.code ===
+            "ETIMEDOUT",
         startedAt: started,
         finishedAt: finished,
         containerRun,
@@ -544,12 +571,12 @@ const runTrial = (slot, attempt) => {
     };
 };
 
-const runGate = (slot) => {
+const runGate = (slot: ScheduleSlot) => {
     const { base, cases } = armPaths(slot.arm);
     const result = spawnSync(
         process.execPath,
         [
-            join(MEASUREMENT, "tests/fixtures/placement-harness/ac/run.mjs"),
+            join(MEASUREMENT, "tests/fixtures/placement-harness/ac/run.mts"),
             "gate",
             "--repo",
             MEASUREMENT,
@@ -562,7 +589,11 @@ const runGate = (slot) => {
         ],
         { env: envFor(slot), encoding: "utf8", timeout: 300000 },
     );
-    const gate = readJson(join(resultDir(slot), "gate.json"));
+    const gateValue = readJson(join(resultDir(slot), "gate.json"));
+    const gate =
+        gateValue === null
+            ? null
+            : recordOf(gateValue, join(resultDir(slot), "gate.json"));
     ledger({
         event: "gate",
         slot: slot.slot,
@@ -577,7 +608,7 @@ const runGate = (slot) => {
 };
 
 /** Record a skipped judge and return true, or false when a call is needed. */
-const judgeSkip = (slot, attemptDir) => {
+const judgeSkip = (slot: ScheduleSlot, attemptDir: string) => {
     if (!hasJudgement(resultDir(slot))) return false;
     ledger({
         event: "judge-skipped-existing",
@@ -590,7 +621,7 @@ const judgeSkip = (slot, attemptDir) => {
 };
 
 /** Claim the judge dispatch, or report why it is blocked. */
-const judgeClaimOf = (slot) => {
+const judgeClaimOf = (slot: ScheduleSlot) => {
     const unsettled = readClaims(EVIDENCE, "judge").find(
         (claim) =>
             claim.stamp === slot.stamp && restartDisposition(claim) !== null,
@@ -644,7 +675,7 @@ const judgeClaimOf = (slot) => {
 };
 
 /** Release an undispatched claim and record the refusal. */
-const judgeRefusal = (slot, attemptDir, result, claim) => {
+const judgeRefusal = (slot: ScheduleSlot, attemptDir: string, result: ReturnType<typeof spawnSync>, claim: BudgetClaim) => {
     releaseClaim(claim);
     ledger({
         event: "judge-refused",
@@ -668,11 +699,11 @@ const judgeRefusal = (slot, attemptDir, result, claim) => {
 };
 
 /** Spawn the real judge wrapper for one slot. */
-const judgeWrapperResult = (slot, base) =>
+const judgeWrapperResult = (slot: ScheduleSlot, base: string) =>
     spawnSync(
         process.execPath,
         [
-            join(MEASUREMENT, "tests/fixtures/placement-harness/ac/run.mjs"),
+            join(MEASUREMENT, "tests/fixtures/placement-harness/ac/run.mts"),
             "judge",
             "--base",
             base,
@@ -706,11 +737,11 @@ const judgeWrapperResult = (slot, base) =>
     );
 
 /** Resolve a parse-failed judge answer, when one exists. */
-const resolveJudge = (base) =>
+const resolveJudge = (base: string) =>
     spawnSync(
         process.execPath,
         [
-            join(MEASUREMENT, "tests/fixtures/placement-harness/ac/run.mjs"),
+            join(MEASUREMENT, "tests/fixtures/placement-harness/ac/run.mts"),
             "resolve",
             "--base",
             base,
@@ -721,36 +752,65 @@ const resolveJudge = (base) =>
     );
 
 /** The terminal status of one judge attempt. */
-const judgeStatusOf = (judgement, resolution) => {
+const judgeStatusOf = (
+    judgement: Record<string, unknown> | null,
+    resolution: Record<string, unknown> | null,
+): string => {
     if (resolution?.status === "judged") return "judged-after-resolve";
-    return judgement?.status ?? "missing";
+    return typeof judgement?.status === "string"
+        ? judgement.status
+        : "missing";
 };
 
 /** The first defined value, or null. */
-const firstValue = (...values) =>
+const firstValue = (...values: unknown[]): unknown =>
     values.find((value) => value !== undefined && value !== null) ?? null;
 
+/** A nested object field, or an empty record. */
+const nested = (value: unknown): Record<string, unknown> =>
+    typeof value === "object" && value !== null
+        ? (value as Record<string, unknown>)
+        : {};
+
 /** The terminal facts one judge attempt recorded. */
-const judgeExitOf = (attemptDir, result, resolve) => {
-    const judgement = readJson(join(attemptDir, "judgement.json"));
-    const resolution = readJson(join(attemptDir, "resolution.json"));
+const judgeExitOf = (
+    attemptDir: string,
+    result: ReturnType<typeof spawnSync>,
+    resolve: ReturnType<typeof spawnSync>,
+) => {
+    const judgementValue = readJson(join(attemptDir, "judgement.json"));
+    const resolutionValue = readJson(join(attemptDir, "resolution.json"));
+    const judgement =
+        typeof judgementValue === "object" && judgementValue !== null
+            ? (judgementValue as Record<string, unknown>)
+            : null;
+    const resolution =
+        typeof resolutionValue === "object" && resolutionValue !== null
+            ? (resolutionValue as Record<string, unknown>)
+            : null;
+    const parsed = nested(resolution?.parsed);
     return {
         status: judgeStatusOf(judgement, resolution),
         exit: result.status,
         resolveExit: resolve.status,
         outcome: firstValue(
             judgement?.documentationOutcome,
-            resolution?.parsed?.documentationOutcome,
+            parsed.documentationOutcome,
         ),
         retrieval: firstValue(
-            judgement?.retrievalApplication?.state,
-            resolution?.parsed?.retrievalApplication?.state,
+            nested(judgement?.retrievalApplication).state,
+            nested(parsed.retrievalApplication).state,
         ),
     };
 };
 
 /** Dispatch one claimed judge call and record what actually happened. */
-const dispatchJudge = (slot, base, attemptDir, claim) => {
+const dispatchJudge = (
+    slot: ScheduleSlot,
+    base: string,
+    attemptDir: string,
+    claim: BudgetClaim,
+) => {
     const result = judgeWrapperResult(slot, base);
     if (!existsSync(join(attemptDir, "dispatch.json"))) {
         return judgeRefusal(slot, attemptDir, result, claim);
@@ -782,7 +842,7 @@ const dispatchJudge = (slot, base, attemptDir, claim) => {
 };
 
 /** Run one judge wrapper, record its dispatch truth and its outcome. */
-const runJudge = (slot) => {
+const runJudge = (slot: ScheduleSlot) => {
     const { base } = armPaths(slot.arm);
     const attemptDir = join(resultDir(slot), "ac", attemptId);
     if (judgeSkip(slot, attemptDir)) return true;
@@ -790,7 +850,7 @@ const runJudge = (slot) => {
     if (claimed.claim === undefined) return false;
     return dispatchJudge(slot, base, attemptDir, claimed.claim);
 };
-const finishRecordedSlot = (slot, meta) => {
+const finishRecordedSlot = (slot: ScheduleSlot, meta: Record<string, unknown> | null) => {
     if (!existsSync(join(resultDir(slot), "gate.json"))) runGate(slot);
     if (!usableRun(meta)) {
         ledger({
@@ -829,7 +889,7 @@ const finishRecordedSlot = (slot, meta) => {
     return "complete";
 };
 
-const processSlot = (slot) => {
+const processSlot = (slot: ScheduleSlot) => {
     const dir = resultDir(slot);
     const unsettledTrial = readClaims(EVIDENCE, "trial").find(
         (claim) =>
@@ -851,9 +911,12 @@ const processSlot = (slot) => {
     const attempts = attemptsOf(slot.stamp);
     const latest = attempts.at(-1);
     if (latest) {
-        const meta = readJson(join(dir, "meta.json"));
-        if (meta !== null) {
-            return finishRecordedSlot(slot, meta);
+        const metaValue = readJson(join(dir, "meta.json"));
+        if (metaValue !== null) {
+            return finishRecordedSlot(
+                slot,
+                recordOf(metaValue, join(dir, "meta.json")),
+            );
         }
         if (existsSync(dir)) {
             ledger({
@@ -862,7 +925,7 @@ const processSlot = (slot) => {
                 stamp: slot.stamp,
                 arm: slot.arm,
                 reason: "started attempt has no recorded meta.json; evidence preserved",
-                attemptId: latest.id,
+                attemptId: latest.attemptId,
             });
             console.error(
                 `BLOCKER: ${slot.stamp} started but has no recorded result; preserved at ${dir}`,
@@ -875,7 +938,7 @@ const processSlot = (slot) => {
             stamp: slot.stamp,
             arm: slot.arm,
             reason: "pre-model failure; no replacement launch authorised",
-            attemptId: latest.id,
+            attemptId: latest.attemptId,
         });
         console.error(
             `BLOCKER: ${slot.stamp} stopped before the model call; no retry authorised`,
@@ -916,7 +979,11 @@ const processSlot = (slot) => {
     return launchRun(slot, attempt, claim.claim);
 };
 
-const launchRun = (slot, attempt, claim) => {
+const launchRun = (
+    slot: ScheduleSlot,
+    attempt: Attempt,
+    claim: BudgetClaim,
+) => {
     const outcome = runTrial(slot, attempt);
     const dispatched =
         outcome.meta !== null ||
@@ -976,7 +1043,7 @@ if (refusal !== null) {
  * @param firstIndex The index of the first slot in the requested range.
  * @returns The refusal, or null when every earlier slot completed.
  */
-const earlierSlotRefusal = (firstIndex) => {
+const earlierSlotRefusal = (firstIndex: number): string | null => {
     const completed = new Set(
         ledgerParse()
             .events.filter((event) => event.event === "slot-complete")
@@ -1010,7 +1077,7 @@ if (judgeKeySource === null) {
     process.exit(2);
 }
 
-const firstIndex = slots.findIndex((slot) => {
+const firstIndex = slots.findIndex((slot: ScheduleSlot) => {
     const pairNumber = Number(slot.pairId.slice(1));
     return pairNumber >= pairFrom && pairNumber <= pairTo;
 });
@@ -1025,7 +1092,7 @@ mkdirSync(EVIDENCE, { recursive: true });
 ledger({
     event: "campaign-start",
     campaign: schedule.campaign,
-    driver: "prepare/run.mjs",
+    driver: "prepare/run.mts",
     scheduleSha256: createHash("sha256")
         .update(JSON.stringify(slots), "utf8")
         .digest("hex"),
@@ -1037,7 +1104,9 @@ ledger({
 
 for (let index = 0; index < slots.length; index += 2) {
     const pair = slots.slice(index, index + 2);
-    const pairNumber = Number(pair[0].pairId.slice(1));
+    const first = pair[0];
+    if (first === undefined) continue;
+    const pairNumber = Number(first.pairId.slice(1));
     if (pairNumber < pairFrom || pairNumber > pairTo) continue;
     for (const slot of pair) {
         const status = processSlot(slot);
@@ -1050,10 +1119,10 @@ for (let index = 0; index < slots.length; index += 2) {
     }
     ledger({
         event: "pair-complete",
-        pairId: pair[0].pairId,
-        slots: pair.map((slot) => slot.slot),
+        pairId: first.pairId,
+        slots: pair.map((slot: ScheduleSlot) => slot.slot),
     });
-    console.log(`pair ${pair[0].pairId} complete`);
+    console.log(`pair ${first.pairId} complete`);
 }
 ledger({ event: "campaign-complete", pairFrom, pairTo });
 console.log("campaign range complete");

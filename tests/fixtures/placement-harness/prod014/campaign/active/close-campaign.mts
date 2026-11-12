@@ -16,10 +16,23 @@ import {
     rmSync,
     writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { parseCampaignLedger } from "../runner/ledger.ts";
 import { readClaims, restartDisposition } from "../runner/budget.ts";
-import { closeCampaign, deriveClosure } from "../runner/closure.ts";
+import {
+    closeCampaign,
+    deriveClosure,
+    type JudgeAttempt,
+    type SlotObservation,
+    type TokenFields,
+} from "../runner/closure.ts";
+import {
+    freezeRecordOf,
+    readJson as readJsonValue,
+    readText,
+    recordOf,
+    scheduleOf,
+} from "./contracts.mts";
 
 const ROOT = process.env.CAMPAIGN_ROOT;
 if (!ROOT) throw new Error("CAMPAIGN_ROOT is required");
@@ -28,22 +41,25 @@ const LEDGER = join(EVIDENCE, "ATTEMPTS.jsonl");
 const RECONCILIATION = join(EVIDENCE, "RECONCILIATION.json");
 const LOCK = join(EVIDENCE, "CLOSING.lock");
 
-const readJson = (path) =>
-    existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
-const readText = (path) => (existsSync(path) ? readFileSync(path, "utf8") : "");
-const write = (path, body) => {
+const readJson = (path: string): unknown =>
+    existsSync(path) ? readJsonValue(path) : null;
+const write = (path: string, body: string): void => {
     mkdirSync(dirname(path), { recursive: true });
     const tmp = `${path}.tmp-${process.pid}`;
     writeFileSync(tmp, body, "utf8");
     renameSync(tmp, path);
 };
-const ledger = (entry) =>
+const ledger = (entry: Record<string, unknown>): void =>
     appendFileSync(
         LEDGER,
         `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`,
     );
 
-const caseDir = (slot) =>
+const caseDir = (slot: {
+    arm: string;
+    stamp: string;
+    scenario: string;
+}): string =>
     join(
         ROOT,
         "gen",
@@ -59,7 +75,27 @@ const caseDir = (slot) =>
  * A malformed line makes the whole trail unreadable: steps and tokens become
  * unknown rather than a plausible zero.
  */
-function usageOf(path) {
+interface Usage {
+    steps: number | null;
+    tokens: TokenFields | null;
+    malformed: boolean;
+}
+
+interface TokenSamples {
+    input: (number | null)[];
+    output: (number | null)[];
+    reasoning: (number | null)[];
+    cacheRead: (number | null)[];
+}
+
+interface TokenRates {
+    input: number;
+    output: number;
+    reasoning: number;
+    cacheRead: number;
+}
+
+function usageOf(path: string): Usage {
     if (!existsSync(path))
         return { steps: null, tokens: null, malformed: false };
     const text = readText(path);
@@ -71,20 +107,30 @@ function usageOf(path) {
     return { steps: parsed.steps, tokens: parsed.tokens, malformed: false };
 }
 
+/** Zero token fields, for a successful trail with no steps. */
+function emptyTokens(): TokenFields {
+    return { input: 0, output: 0, reasoning: 0, cacheRead: 0 };
+}
+
 /** An empty, successful trail: zero steps and zero tokens. */
-function emptyUsage() {
-    return {
-        steps: 0,
-        tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0 },
-        malformed: false,
-    };
+function emptyUsage(): Usage {
+    return { steps: 0, tokens: emptyTokens(), malformed: false };
 }
 
 /** Read one trail's step count and per-field token samples. */
-function tokensFromTrail(text) {
+function tokensFromTrail(text: string): {
+    steps: number;
+    tokens: TokenFields;
+    malformed: boolean;
+} {
     let steps = 0;
     let malformed = false;
-    const fields = { input: [], output: [], reasoning: [], cacheRead: [] };
+    const fields: TokenSamples = {
+        input: [],
+        output: [],
+        reasoning: [],
+        cacheRead: [],
+    };
     for (const line of text.split("\n")) {
         if (line.trim() === "") continue;
         const event = parseTrailLine(line);
@@ -94,21 +140,27 @@ function tokensFromTrail(text) {
         }
         if (event.type !== "step_finish") continue;
         steps += 1;
-        pushTokenSample(fields, event.part?.tokens ?? {});
+        const part = event.part;
+        pushTokenSample(
+            fields,
+            typeof part === "object" && part !== null
+                ? (part as Record<string, unknown>).tokens
+                : undefined,
+        );
     }
     return {
         steps,
-        tokens: steps === 0 ? emptyUsage().tokens : summedTokens(fields),
+        tokens: steps === 0 ? emptyTokens() : summedTokens(fields),
         malformed,
     };
 }
 
 /** One token total per field, or null when any observation omitted it. */
-function summedTokens(fields) {
-    const sum = (values) =>
-        values.length === 0 || values.includes(null)
-            ? null
-            : values.reduce((total, value) => total + value, 0);
+function summedTokens(fields: TokenSamples): TokenFields {
+    const sum = (values: (number | null)[]): number | null => {
+        if (values.length === 0 || values.includes(null)) return null;
+        return values.reduce<number>((total, value) => total + (value ?? 0), 0);
+    };
     return {
         input: sum(fields.input),
         output: sum(fields.output),
@@ -118,61 +170,128 @@ function summedTokens(fields) {
 }
 
 /** One parsed trail line, or undefined when it is not JSON. */
-function parseTrailLine(line) {
+function parseTrailLine(line: string): Record<string, unknown> | undefined {
     try {
-        return JSON.parse(line);
+        const value: unknown = JSON.parse(line);
+        if (typeof value !== "object" || value === null) return undefined;
+        return value as Record<string, unknown>;
     } catch {
         return undefined;
     }
 }
 
 /** Record one step's token fields, keeping a missing field explicit. */
-function pushTokenSample(fields, tokens) {
-    fields.input.push(typeof tokens.input === "number" ? tokens.input : null);
-    fields.output.push(
-        typeof tokens.output === "number" ? tokens.output : null,
-    );
+function pushTokenSample(fields: TokenSamples, tokens: unknown): void {
+    const value =
+        typeof tokens === "object" && tokens !== null
+            ? (tokens as Record<string, unknown>)
+            : {};
+    const cache =
+        typeof value.cache === "object" && value.cache !== null
+            ? (value.cache as Record<string, unknown>)
+            : {};
+    fields.input.push(typeof value.input === "number" ? value.input : null);
+    fields.output.push(typeof value.output === "number" ? value.output : null);
     fields.reasoning.push(
-        typeof tokens.reasoning === "number" ? tokens.reasoning : null,
+        typeof value.reasoning === "number" ? value.reasoning : null,
     );
-    fields.cacheRead.push(
-        typeof tokens.cache?.read === "number" ? tokens.cache.read : null,
-    );
+    fields.cacheRead.push(typeof cache.read === "number" ? cache.read : null);
+}
+
+type AttemptStatus = JudgeAttempt["status"];
+
+/** One JSON object, or null when the file is absent. */
+function objectOrNull(path: string): Record<string, unknown> | null {
+    const value = readJson(path);
+    return value === null ? null : recordOf(value, path);
+}
+
+/** The recorded terminal status, narrowed to the accounting vocabulary. */
+function attemptStatus(
+    judgement: Record<string, unknown> | null,
+    meta: Record<string, unknown> | null,
+): AttemptStatus {
+    const status = judgement?.status;
+    if (
+        status === "judged" ||
+        status === "invalid-verdict" ||
+        status === "judge-error" ||
+        status === "started" ||
+        status === "unknown"
+    )
+        return status;
+    return startedStatus(meta);
 }
 
 /** One judge attempt's evidence, including whether its judgement is usable. */
-function judgeAttemptOf(dir) {
-    const meta = readJson(join(dir, "meta.json"));
-    const judgement = readJson(join(dir, "judgement.json"));
-    const resolution = readJson(join(dir, "resolution.json"));
+function judgeAttemptOf(dir: string): JudgeAttempt {
+    const meta = objectOrNull(join(dir, "meta.json"));
+    const judgement = objectOrNull(join(dir, "judgement.json"));
+    const resolution = objectOrNull(join(dir, "resolution.json"));
     const usage = usageOf(join(dir, "output.jsonl"));
     const usable = isUsableJudgement(judgement, resolution);
-    const status = usable
+    const status: AttemptStatus = usable
         ? "judged"
-        : (judgement?.status ?? startedStatus(meta));
+        : attemptStatus(judgement, meta);
     return {
-        attemptId: dir.split("/").at(-1),
+        attemptId: basename(dir),
         spawned: meta !== null || usage.steps !== null,
         reachedInference: (usage.steps ?? 0) > 0,
         steps: usage.steps,
         tokens: usage.tokens,
-        usable,
         status,
         durationMs:
-            typeof meta?.durationMs === "number" ? meta.durationMs : null,
+            meta !== null && typeof meta.durationMs === "number"
+                ? meta.durationMs
+                : null,
+    };
+}
+
+/** The journal input fields a human-review packet renders. */
+interface JournalInput {
+    add?: { mode?: string; path?: string };
+    read?: string;
+    search?: string;
+    check?: string;
+}
+
+/** One journal input, validated field by field. */
+function journalInputOf(value: unknown): JournalInput {
+    if (typeof value !== "object" || value === null) return {};
+    const input = value as Record<string, unknown>;
+    const add =
+        typeof input.add === "object" && input.add !== null
+            ? (input.add as Record<string, unknown>)
+            : undefined;
+    return {
+        ...(add === undefined
+            ? {}
+            : {
+                  add: {
+                      ...(typeof add.mode === "string"
+                          ? { mode: add.mode }
+                          : {}),
+                      ...(typeof add.path === "string"
+                          ? { path: add.path }
+                          : {}),
+                  },
+              }),
+        ...(typeof input.read === "string" ? { read: input.read } : {}),
+        ...(typeof input.search === "string" ? { search: input.search } : {}),
+        ...(typeof input.check === "string" ? { check: input.check } : {}),
     };
 }
 
 /** One attributed operation, rendered for a human-review packet. */
-function operationSummary(entry) {
-    const input = entry.input ?? {};
+function operationSummary(entry: Record<string, unknown>): string {
+    const input = journalInputOf(entry.input);
     const target = input.read ?? input.add?.path ?? "";
     const verb = operationVerb(input, target);
-    return `- ${entry.surface ?? "native"} — ${entry.status ?? "unknown"} — ${verb}`;
+    return `- ${String(entry.surface ?? "native")} — ${String(entry.status ?? "unknown")} — ${verb}`;
 }
 
 /** The human-readable verb of one journal input. */
-function operationVerb(input, target) {
+function operationVerb(input: JournalInput, target: string): string {
     if (input.add) return `${input.add.mode ?? "write"} ${target}`;
     if (input.read) return `read ${target}`;
     if (input.search) return `search "${input.search}"`;
@@ -180,22 +299,27 @@ function operationVerb(input, target) {
 }
 
 /** Whether a judgement or its resolution is usable. */
-function isUsableJudgement(judgement, resolution) {
+function isUsableJudgement(
+    judgement: Record<string, unknown> | null,
+    resolution: Record<string, unknown> | null,
+): boolean {
     return judgement?.status === "judged" || resolution?.status === "judged";
 }
 
 /** The status an attempt without a judgement reports. */
-function startedStatus(meta) {
+function startedStatus(
+    meta: Record<string, unknown> | null,
+): AttemptStatus {
     return meta?.status === "started" ? "started" : "unknown";
 }
 
 /** Whether one slot has a usable judge attempt. */
-const hasUsableJudgement = (slot) =>
-    slot.judgeAttempts.some((attempt) => attempt.usable);
+const hasUsableJudgement = (slot: SlotObservation): boolean =>
+    slot.judgeAttempts.some((attempt) => attempt.status === "judged");
 
 /** Pairs whose two recorded slots both carry a usable judgement. */
-function completedPairsOf(observations) {
-    const byPair = new Map();
+function completedPairsOf(observations: SlotObservation[]): number {
+    const byPair = new Map<string, SlotObservation[]>();
     for (const slot of observations) {
         if (slot.pairId === null) continue;
         const entry = byPair.get(slot.pairId) ?? [];
@@ -218,11 +342,12 @@ function completedPairsOf(observations) {
  * A catalogue estimate, or null when any subtotal is unknown. An unknown is
  * never coerced to zero.
  */
-function estimate(tokens, rates) {
-    const fields = ["input", "output", "reasoning", "cacheRead"];
+function estimate(tokens: TokenFields, rates: TokenRates): number | null {
+    const fields = ["input", "output", "reasoning", "cacheRead"] as const;
     if (fields.some((field) => tokens[field] === null)) return null;
     return fields.reduce(
-        (total, field) => total + (tokens[field] / 1_000_000) * rates[field],
+        (total, field) =>
+            total + ((tokens[field] ?? 0) / 1_000_000) * rates[field],
         0,
     );
 }
@@ -247,14 +372,77 @@ if (ledgerParse.state === "closed") {
     process.exit(0);
 }
 
-const schedule = JSON.parse(
-    readFileSync(join(EVIDENCE, "schedule.json"), "utf8"),
-);
-const measurement = JSON.parse(
-    readFileSync(join(EVIDENCE, "measurement-spec.json"), "utf8"),
+interface RetrievalDeclaration {
+    lake: string;
+    note: string;
+    detail: string;
+}
+
+interface MeasurementSpec {
+    retrievalOpportunities: string[];
+    scenarios: Record<string, { retrieval?: RetrievalDeclaration }>;
+}
+
+/** The measurement declaration, validated for the fields closure renders. */
+function measurementOf(path: string): MeasurementSpec {
+    const value = recordOf(readJsonValue(path), path);
+    const opportunities = value.retrievalOpportunities;
+    if (
+        !Array.isArray(opportunities) ||
+        opportunities.some((entry) => typeof entry !== "string")
+    ) {
+        throw new Error(`${path}.retrievalOpportunities must be strings`);
+    }
+    const scenarios = recordOf(value.scenarios ?? {}, `${path}.scenarios`);
+    const declared: Record<string, { retrieval?: RetrievalDeclaration }> =
+        {};
+    for (const [id, entry] of Object.entries(scenarios)) {
+        const scenario = recordOf(entry, `${path}.scenarios.${id}`);
+        const retrieval =
+            scenario.retrieval === undefined
+                ? undefined
+                : recordOf(
+                      scenario.retrieval,
+                      `${path}.scenarios.${id}.retrieval`,
+                  );
+        if (
+            retrieval !== undefined &&
+            (typeof retrieval.lake !== "string" ||
+                typeof retrieval.note !== "string" ||
+                typeof retrieval.detail !== "string")
+        ) {
+            throw new Error(
+                `${path}.scenarios.${id}.retrieval needs lake, note and detail`,
+            );
+        }
+        declared[id] =
+            retrieval === undefined
+                ? {}
+                : {
+                      retrieval: {
+                          lake: retrieval.lake as string,
+                          note: retrieval.note as string,
+                          detail: retrieval.detail as string,
+                      },
+                  };
+    }
+    return {
+        retrievalOpportunities: opportunities as string[],
+        scenarios: declared,
+    };
+}
+
+const schedule = scheduleOf(join(EVIDENCE, "schedule.json"));
+const measurement = measurementOf(
+    join(EVIDENCE, "measurement-spec.json"),
 );
 const slots = schedule.slots;
-const frozen = readJson(join(EVIDENCE, "FROZEN.json"));
+const frozenValue = readJson(join(EVIDENCE, "FROZEN.json"));
+const frozen = freezeRecordOf(
+    frozenValue === null
+        ? null
+        : recordOf(frozenValue, "FROZEN.json").freeze,
+);
 
 let lockHeld = false;
 try {
@@ -283,7 +471,7 @@ try {
         process.exit(1);
     }
 
-    const observations = slots.map((slot) => {
+    const observations: SlotObservation[] = slots.map((slot) => {
         const dir = caseDir(slot);
         const acDir = join(dir, "ac");
         const attempts = existsSync(acDir)
@@ -292,7 +480,13 @@ try {
                   .sort()
                   .map((name) => judgeAttemptOf(join(acDir, name)))
             : [];
-        const meta = readJson(join(dir, "meta.json"));
+        const meta = objectOrNull(join(dir, "meta.json"));
+        const timings =
+            meta !== null &&
+            typeof meta.timings === "object" &&
+            meta.timings !== null
+                ? (meta.timings as Record<string, unknown>)
+                : {};
         const usage = usageOf(join(dir, "stdout.jsonl"));
         const launched =
             existsSync(dir) ||
@@ -315,9 +509,7 @@ try {
             trialSteps: usage.steps,
             trialTokens: usage.tokens,
             trialDurationMs:
-                typeof meta?.timings?.totalMs === "number"
-                    ? meta.timings.totalMs
-                    : null,
+                typeof timings.totalMs === "number" ? timings.totalMs : null,
             judgeAttempts: attempts,
         };
     });
@@ -328,8 +520,8 @@ try {
         trialClaims,
         judgeClaims,
         ceilings: {
-            trial: Number(frozen?.freeze?.ceilings?.trial ?? 0),
-            judge: Number(frozen?.freeze?.ceilings?.judge ?? 0),
+            trial: frozen?.ceilings.trial ?? 0,
+            judge: frozen?.ceilings.judge ?? 0,
         },
         closed: false,
     });
@@ -437,7 +629,7 @@ try {
         const affected = observed.filter((slot) =>
             (measurement.retrievalOpportunities ?? []).includes(slot.scenario),
         );
-        const mulberry32 = (seed) => {
+        const mulberry32 = (seed: number): (() => number) => {
             let state = seed >>> 0;
             return () => {
                 state = (state + 0x6d2b79f5) >>> 0;
@@ -451,10 +643,11 @@ try {
         const shuffled = [...affected];
         for (let index = shuffled.length - 1; index > 0; index -= 1) {
             const swap = Math.floor(random() * (index + 1));
-            [shuffled[index], shuffled[swap]] = [
-                shuffled[swap],
-                shuffled[index],
-            ];
+            const current = shuffled[index];
+            const target = shuffled[swap];
+            if (current === undefined || target === undefined) continue;
+            shuffled[index] = target;
+            shuffled[swap] = current;
         }
         const map = shuffled.map((slot, index) => ({
             packet: `HR-${String(index + 1).padStart(2, "0")}`,
@@ -462,15 +655,23 @@ try {
             scenario: slot.scenario,
             arm: slot.arm,
         }));
-        const operationsOf = (slot) =>
+        const operationsOf = (slot: SlotObservation): string[] =>
             readText(join(caseDir(slot), "docs-operations.jsonl"))
                 .split("\n")
                 .filter((line) => line.trim() !== "")
-                .map((line) => operationSummary(JSON.parse(line)));
+                .map((line) =>
+                    operationSummary(
+                        recordOf(JSON.parse(line), "docs operation"),
+                    ),
+                );
         for (const entry of map) {
             const slot = affected.find((one) => one.stamp === entry.stamp);
+            const declaration =
+                slot === undefined
+                    ? undefined
+                    : measurement.scenarios[slot.scenario]?.retrieval;
+            if (slot === undefined || declaration === undefined) continue;
             const dir = caseDir(slot);
-            const declaration = measurement.scenarios[slot.scenario].retrieval;
             const body = `# Human review packet ${entry.packet}
 
 This packet is arm-blind. Assess only the evidence below.

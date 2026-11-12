@@ -28,7 +28,7 @@ const PROMPT = "canary-prompt-4d6e";
 /** A fresh materialised campaign root with the real shim. */
 function campaign() {
     const root = mkdtempSync(join(tmpdir(), "pd-credentials-"));
-    execFileSync(process.execPath, [join(CAMPAIGN, "materialise.mjs"), root], {
+    execFileSync(process.execPath, [join(CAMPAIGN, "materialise.mts"), root], {
         stdio: "ignore",
     });
     return root;
@@ -140,7 +140,7 @@ describe("credential containment", () => {
                 "--input-type=module",
                 "-e",
                 `import { credentialFileProblem } from ${JSON.stringify(
-                    join(root, "prepare/env.mjs"),
+                    join(root, "prepare/env.mts"),
                 )};
 process.stdout.write(String(credentialFileProblem(process.env.ROOT)));`,
             ],
@@ -153,7 +153,7 @@ process.stdout.write(String(credentialFileProblem(process.env.ROOT)));`,
                 "--input-type=module",
                 "-e",
                 `import { credentialFileProblem } from ${JSON.stringify(
-                    join(root, "prepare/env.mjs"),
+                    join(root, "prepare/env.mts"),
                 )};
 process.stdout.write(String(credentialFileProblem(process.env.ROOT)));`,
             ],

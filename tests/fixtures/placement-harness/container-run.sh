@@ -295,8 +295,12 @@ prepare_harness_runtime() {
     local checks=()
     if [ -n "$script" ] && [ -f "$HERE/primary-checks/$script" ]; then
         checks+=("primary-checks/$script")
-        [ -f "$HERE/primary-checks/_replication-shared.mjs" ] &&
-            checks+=("primary-checks/_replication-shared.mjs")
+        # Live corpus checks are .mts; historical replay checks stay .mjs with
+        # their frozen bytes. Ship whichever shared helper each one imports.
+        for shared in _replication-shared.mts _replication-shared.mjs; do
+            [ -f "$HERE/primary-checks/$shared" ] &&
+                checks+=("primary-checks/$shared")
+        done
     fi
     local hash identity runtime staging file
     hash="$(

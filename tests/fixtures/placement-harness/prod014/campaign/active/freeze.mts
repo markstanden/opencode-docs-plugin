@@ -19,19 +19,133 @@ const STOPPING_RULES = [
     "stop at the frozen trial and judge ceilings",
 ];
 
-const hash = (path) =>
+const hash = (path: string): string =>
     createHash("sha256").update(readFileSync(path)).digest("hex");
-const hashText = (text) =>
+const hashText = (text: string): string =>
     createHash("sha256").update(text, "utf8").digest("hex");
-const git = (repo, ...args) =>
+const git = (repo: string, ...args: string[]): string =>
     execFileSync("git", ["-C", repo, ...args], { encoding: "utf8" }).trim();
-const json = (path) => JSON.parse(readFileSync(path, "utf8"));
-const text = (path) => readFileSync(path, "utf8");
+const readJson = (path: string): unknown =>
+    JSON.parse(readFileSync(path, "utf8"));
+const text = (path: string): string => readFileSync(path, "utf8");
+
+/** One JSON object, or a refusal naming the file. */
+function recordOf(value: unknown, label: string): Record<string, unknown> {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        console.error(`${label} must be a JSON object`);
+        process.exit(1);
+    }
+    return value as Record<string, unknown>;
+}
+
+interface ScheduleSlot {
+    pairId: string;
+}
+
+interface Schedule {
+    campaign: string;
+    slots: ScheduleSlot[];
+}
+
+interface SurfaceRecord {
+    nativeChars: number;
+    nativeHash: string;
+    annotationChars: number;
+    annotationHash: string;
+}
+
+interface GenerationRecord {
+    pluginHash?: unknown;
+    inputsHash?: unknown;
+    outputs?: { promptHash?: unknown };
+}
+
+interface CaseEntry {
+    id: string;
+    primaryCheck: { script: string };
+}
+
+/** The frozen schedule, validated before any identity is derived from it. */
+function scheduleOf(path: string): Schedule {
+    const value = recordOf(readJson(path), path);
+    if (typeof value.campaign !== "string" || !Array.isArray(value.slots)) {
+        console.error(`${path} needs a campaign and a slots array`);
+        process.exit(1);
+    }
+    return {
+        campaign: value.campaign,
+        slots: value.slots.map((slot) => {
+            const entry = recordOf(slot, `${path}.slots`);
+            if (typeof entry.pairId !== "string") {
+                console.error(`${path}.slots needs a string pairId`);
+                process.exit(1);
+            }
+            return { pairId: entry.pairId };
+        }),
+    };
+}
+
+/** One arm's registered surface record. */
+function surfacesOf(path: string): SurfaceRecord {
+    const value = recordOf(readJson(path), path);
+    for (const key of [
+        "nativeChars",
+        "nativeHash",
+        "annotationChars",
+        "annotationHash",
+    ] as const) {
+        const expected = key.endsWith("Chars") ? "number" : "string";
+        if (typeof value[key] !== expected) {
+            console.error(`${path}.${key} must be a ${expected}`);
+            process.exit(1);
+        }
+    }
+    return {
+        nativeChars: value.nativeChars as number,
+        nativeHash: value.nativeHash as string,
+        annotationChars: value.annotationChars as number,
+        annotationHash: value.annotationHash as string,
+    };
+}
+
+/** One generated fixture's identity record. */
+function generationOf(path: string): GenerationRecord {
+    const value = recordOf(readJson(path), path);
+    const outputs =
+        value.outputs === undefined
+            ? undefined
+            : recordOf(value.outputs, `${path}.outputs`);
+    return {
+        pluginHash: value.pluginHash,
+        inputsHash: value.inputsHash,
+        ...(outputs === undefined
+            ? {}
+            : { outputs: { promptHash: outputs.promptHash } }),
+    };
+}
+
+/** The selected corpus entries, validated before their scripts are hashed. */
+function casesOf(path: string): CaseEntry[] {
+    const value = readJson(path);
+    if (!Array.isArray(value)) {
+        console.error(`${path} must be a JSON array`);
+        process.exit(1);
+    }
+    return value.map((entry) => {
+        const record = recordOf(entry, `${path} entry`);
+        const check = recordOf(record.primaryCheck, `${path} primaryCheck`);
+        if (typeof record.id !== "string" || typeof check.script !== "string") {
+            console.error(`${path} entries need an id and a primary script`);
+            process.exit(1);
+        }
+        return { id: record.id, primaryCheck: { script: check.script } };
+    });
+}
 
 /** Every file under a directory, recursively, sorted. */
-const filesUnder = (dir) => {
+const filesUnder = (dir: string): string[] => {
     if (!existsSync(dir)) return [];
-    const found = [];
+    const found: string[] = [];
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
         const path = join(dir, entry.name);
         if (entry.isDirectory()) found.push(...filesUnder(path));
@@ -41,13 +155,13 @@ const filesUnder = (dir) => {
 };
 
 /** Hash one absolute path as a root-relative immutable input. */
-const frozenFile = (path) => ({
+const frozenFile = (path: string): { path: string; sha256: string } => ({
     path: path.slice(ROOT.length + 1),
     sha256: hash(path),
 });
 
 /** One immutable directory and its complete file inventory. */
-const frozenInventory = (dir) => ({
+const frozenInventory = (dir: string) => ({
     path: dir.slice(ROOT.length + 1),
     files: filesUnder(dir).map(frozenFile),
 });
@@ -72,7 +186,7 @@ const resolveImage = () => {
         return `unavailable: ${String(error)}`;
     }
 };
-const capture = (command, args) => {
+const capture = (command: string, args: string[]): string => {
     try {
         return execFileSync(command, args, { encoding: "utf8" }).trim();
     } catch (error) {
@@ -80,15 +194,17 @@ const capture = (command, args) => {
     }
 };
 
-const schedule = json(join(ROOT, "evidence/schedule.json"));
+const schedule = scheduleOf(join(ROOT, "evidence/schedule.json"));
 const scenarios = ["R01", "S02", "R02", "R03", "S05", "S06", "S07", "R04"];
 
-const arm = (letter) => {
+const arm = (letter: "a" | "b") => {
     const repo = join(ROOT, "arms", letter);
-    const surfaces = json(join(ROOT, `evidence/surfaces-${letter}.json`));
+    const surfaces = surfacesOf(
+        join(ROOT, `evidence/surfaces-${letter}.json`),
+    );
     // The provider request the delivery probe actually received. No
     // hand-extracted copy: the served description is read from the payload.
-    const probe = json(
+    const probe: unknown = readJson(
         join(ROOT, `evidence/delivery-${letter}/request-1.json`),
     );
     const served = deliveredToolDescription(probe);
@@ -97,14 +213,18 @@ const arm = (letter) => {
             `delivery ${letter}: ${served.problem ?? "no served description"}`,
         );
     }
+    const body =
+        typeof probe === "object" && probe !== null
+            ? (probe as Record<string, unknown>)
+            : {};
     const delivery = {
-        model: probe.model ?? null,
+        model: body.model ?? null,
         nativeChars: served.delivered.chars,
         nativeHash: served.delivered.sha256,
     };
     const generations = Object.fromEntries(
         scenarios.map((id) => {
-            const record = json(
+            const record = generationOf(
                 join(ROOT, `gen/${letter}/fixtures/${id}/generation.json`),
             );
             return [
@@ -165,7 +285,7 @@ const identities = {
             acRunner: hash(
                 join(
                     ROOT,
-                    "measurement/tests/fixtures/placement-harness/ac/run.mjs",
+                    "measurement/tests/fixtures/placement-harness/ac/run.mts",
                 ),
             ),
             judgeLauncher: hash(
@@ -180,7 +300,7 @@ const identities = {
                     "measurement/tests/fixtures/placement-harness/analysis/analyse.mts",
                 ),
             ),
-            driver: hash(join(ROOT, "prepare/run.mjs")),
+            driver: hash(join(ROOT, "prepare/run.mts")),
             manifest: hash(join(ROOT, "prepare/manifest.json")),
         },
     },
@@ -224,12 +344,16 @@ const identities = {
     prompts,
     primaryChecks: Object.fromEntries(
         ["R01", "S02", "R02", "R03", "S05", "S06", "S07", "R04"].map((id) => {
-            const found = json(
+            const found = casesOf(
                 join(
                     ROOT,
                     "arms/a/tests/fixtures/placement-harness/prod014/cases.json",
                 ),
             ).find((entry) => entry.id === id);
+            if (found === undefined) {
+                console.error(`case ${id} is not in the selected corpus`);
+                process.exit(1);
+            }
             return [
                 id,
                 hash(
@@ -264,7 +388,7 @@ const identities = {
     },
 };
 
-const problems = [];
+const problems: string[] = [];
 for (const [id, pair] of Object.entries(prompts)) {
     if (pair.a !== pair.b) problems.push(`prompt differs between arms: ${id}`);
 }
@@ -275,7 +399,8 @@ if (
     identities.arms.B.surfaces.nativeHash
 )
     problems.push("A and B descriptions are identical");
-const sameModel = (served) => served === MODEL || MODEL.endsWith(`/${served}`);
+const sameModel = (served: unknown): boolean =>
+    served === MODEL || MODEL.endsWith(`/${String(served)}`);
 if (
     !sameModel(identities.arms.A.delivery.model) ||
     !sameModel(identities.arms.B.delivery.model)
@@ -297,21 +422,21 @@ if (problems.length > 0) {
     process.exit(1);
 }
 
-const armFreeze = (letter) => ({
-    id: letter.toUpperCase(),
-    commit: identities.arms[letter.toUpperCase()].commit,
-    tree: identities.arms[letter.toUpperCase()].tree,
-    clean: identities.arms[letter.toUpperCase()].clean,
-    descriptionChars:
-        identities.arms[letter.toUpperCase()].surfaces.nativeChars,
-    descriptionHash: identities.arms[letter.toUpperCase()].surfaces.nativeHash,
-    deliveredChars: identities.arms[letter.toUpperCase()].delivery.nativeChars,
-    deliveredHash: identities.arms[letter.toUpperCase()].delivery.nativeHash,
-    annotationChars:
-        identities.arms[letter.toUpperCase()].surfaces.annotationChars,
-    annotationHash:
-        identities.arms[letter.toUpperCase()].surfaces.annotationHash,
-});
+const armFreeze = (letter: "a" | "b") => {
+    const record = identities.arms[letter === "a" ? "A" : "B"];
+    return {
+        id: letter.toUpperCase(),
+        commit: record.commit,
+        tree: record.tree,
+        clean: record.clean,
+        descriptionChars: record.surfaces.nativeChars,
+        descriptionHash: record.surfaces.nativeHash,
+        deliveredChars: record.delivery.nativeChars,
+        deliveredHash: record.delivery.nativeHash,
+        annotationChars: record.surfaces.annotationChars,
+        annotationHash: record.surfaces.annotationHash,
+    };
+};
 
 const inventoryDirs = [
     join(ROOT, "gen/a/prompts"),

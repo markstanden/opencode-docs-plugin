@@ -1,6 +1,6 @@
 // Focused runner regressions with temporary roots and stub launchers.
 //
-// 1. A closed ledger prevents run.mjs and rejudge.mjs from writing launch
+// 1. A closed ledger prevents run.mts and rejudge.mts from writing launch
 //    events or invoking a child.
 // 2. A preserved recovery attempt with a non-judged status blocks; a judged
 //    attempt resumes without a duplicate call.
@@ -21,18 +21,18 @@ import { dirname, join } from "node:path";
 
 const PREPARE = new URL(".", import.meta.url).pathname;
 const STUB_COUNTER = "STUB_COUNTER";
-const results = {};
+const results: Record<string, unknown> = {};
 
-const write = (path, body) => {
+const write = (path: string, body: string): void => {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, body, "utf8");
 };
-const json = (path, value) =>
+const json = (path: string, value: unknown): void =>
     write(path, `${JSON.stringify(value, null, 2)}\n`);
-const temp = (label) => mkdtempSync(join(tmpdir(), `pd-runner-${label}-`));
+const temp = (label: string): string => mkdtempSync(join(tmpdir(), `pd-runner-${label}-`));
 
 /** A schedule and the minimum files the commands read before a launch. */
-const campaign = (label) => {
+const campaign = (label: string): string => {
     const root = temp(label);
     write(
         join(root, "evidence/schedule.json"),
@@ -56,18 +56,23 @@ const campaign = (label) => {
     chmodSync(join(root, "prepare/shim/podman"), 0o755);
     // If a broken guard reaches the child, this records it.
     write(
-        join(root, "measurement/tests/fixtures/placement-harness/ac/run.mjs"),
+        join(root, "measurement/tests/fixtures/placement-harness/ac/run.mts"),
         `import { appendFileSync } from "node:fs";\nappendFileSync(process.env.STUB_COUNTER, "judge\\n");\n`,
     );
     return root;
 };
 
-const counter = (root) => {
+const counter = (root: string): string => {
     const path = join(root, "counter.txt");
     return existsSync(path) ? readFileSync(path, "utf8") : "";
 };
 
-const run = (root, script, args, env = {}) =>
+const run = (
+    root: string,
+    script: string,
+    args: string[],
+    env: Record<string, string> = {},
+): ReturnType<typeof spawnSync> =>
     spawnSync(process.execPath, [join(PREPARE, script), ...args], {
         env: { ...process.env, CAMPAIGN_ROOT: root, ...env },
         encoding: "utf8",
@@ -89,11 +94,11 @@ const run = (root, script, args, env = {}) =>
     chmodSync(stub, 0o755);
     const trial = run(
         root,
-        "run.mjs",
+        "run.mts",
         ["--pair-from", "1", "--pair-to", "1", "--trial-command", stub],
         { [STUB_COUNTER]: join(root, "counter.txt") },
     );
-    const recovery = run(root, "rejudge.mjs", [], {
+    const recovery = run(root, "rejudge.mts", [], {
         [STUB_COUNTER]: join(root, "counter.txt"),
         ZAI_API_KEY: "stub",
     });
@@ -122,7 +127,7 @@ const run = (root, script, args, env = {}) =>
     json(join(caseDir, "ac/attempt-002/judgement.json"), {
         status: "failed",
     });
-    const failed = run(root, "rejudge.mjs", [], {
+    const failed = run(root, "rejudge.mts", [], {
         [STUB_COUNTER]: join(root, "counter.txt"),
         ZAI_API_KEY: "stub",
     });
@@ -140,7 +145,7 @@ const run = (root, script, args, env = {}) =>
         documentationReason: "preserved",
         evidence: ["preserved"],
     });
-    const judged = run(root, "rejudge.mjs", [], {
+    const judged = run(root, "rejudge.mts", [], {
         [STUB_COUNTER]: join(root, "counter.txt"),
         ZAI_API_KEY: "stub",
     });
@@ -170,7 +175,7 @@ const run = (root, script, args, env = {}) =>
     chmodSync(stub, 0o755);
     const trial = run(
         root,
-        "run.mjs",
+        "run.mts",
         ["--pair-from", "1", "--pair-to", "1", "--trial-command", stub],
         { [STUB_COUNTER]: join(root, "counter.txt") },
     );

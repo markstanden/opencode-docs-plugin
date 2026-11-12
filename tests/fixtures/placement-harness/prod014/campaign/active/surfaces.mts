@@ -11,7 +11,7 @@ import { pathToFileURL } from "node:url";
 
 const [armDir, outPath] = process.argv.slice(2);
 if (!armDir || !outPath) {
-    console.error("usage: surfaces.mjs <arm-dir> <out.json>");
+    console.error("usage: surfaces.mts <arm-dir> <out.json>");
     process.exit(2);
 }
 
@@ -21,8 +21,32 @@ const { Schema: effectSchema } = await import(pathToFileURL(effectPath).href);
 const plugin = (await import(pathToFileURL(join(armDir, "src/index.ts")).href))
     .default;
 
-const bucket = { tools: [], commands: [], skills: [] };
-const domain = (target) => ({
+interface ToolDefinition {
+    name: string;
+    description: string;
+    input?: unknown;
+}
+
+interface NamedSurface {
+    name: string;
+    description?: string;
+}
+
+interface Bucket {
+    tools: ToolDefinition[];
+    commands: NamedSurface[];
+    skills: NamedSurface[];
+}
+
+interface Domain<T> {
+    hook: () => Promise<{ dispose: () => Promise<void> }>;
+    transform: (
+        callback: (registry: { add: (definition: T) => void }) => void,
+    ) => Promise<void>;
+}
+
+const bucket: Bucket = { tools: [], commands: [], skills: [] };
+const domain = <T,>(target: T[]): Domain<T> => ({
     hook: async () => ({ dispose: async () => {} }),
     transform: async (callback) => {
         callback({ add: (definition) => void target.push(definition) });
@@ -46,12 +70,13 @@ const twin = bucket.tools.find((tool) => tool.name === "docs_search");
 if (native === undefined) throw new Error("native docs tool not registered");
 
 const document = effectSchema.toJsonSchemaDocument(native.input);
-const found = [];
-const seen = new Set();
-const walk = (node) => {
+const found: string[] = [];
+const seen = new Set<unknown>();
+const walk = (node: unknown): void => {
     if (typeof node !== "object" || node === null || seen.has(node)) return;
     seen.add(node);
-    if (typeof node.description === "string") found.push(node.description);
+    if ("description" in node && typeof node.description === "string")
+        found.push(node.description);
     for (const value of Object.values(node)) {
         if (Array.isArray(value)) value.forEach(walk);
         else walk(value);
@@ -59,7 +84,8 @@ const walk = (node) => {
 };
 walk(document.schema);
 
-const hash = (text) => createHash("sha256").update(text, "utf8").digest("hex");
+const hash = (text: string): string =>
+    createHash("sha256").update(text, "utf8").digest("hex");
 const nativeDescription = native.description;
 const annotationText = found.join(" ");
 

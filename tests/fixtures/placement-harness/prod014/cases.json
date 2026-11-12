@@ -92,7 +92,7 @@
         },
         "primaryCheck": {
             "id": "r01-csv-bom",
-            "script": "R01.mjs",
+            "script": "R01.mts",
             "timeoutMs": 120000
         }
     },
@@ -201,7 +201,7 @@
         },
         "primaryCheck": {
             "id": "s02-staging-order",
-            "script": "S02.mjs",
+            "script": "S02.mts",
             "timeoutMs": 120000
         }
     },
@@ -296,7 +296,7 @@
         },
         "primaryCheck": {
             "id": "r02-db-tls",
-            "script": "R02.mjs",
+            "script": "R02.mts",
             "timeoutMs": 120000
         }
     },
@@ -388,7 +388,7 @@
         },
         "primaryCheck": {
             "id": "r03-stale-socket",
-            "script": "R03.mjs",
+            "script": "R03.mts",
             "timeoutMs": 120000
         }
     },
@@ -524,7 +524,7 @@
         },
         "primaryCheck": {
             "id": "s05-bruno-assertion",
-            "script": "S05.mjs",
+            "script": "S05.mts",
             "timeoutMs": 180000
         }
     },
@@ -628,7 +628,7 @@
         },
         "primaryCheck": {
             "id": "s06-ado-status",
-            "script": "S06.mjs",
+            "script": "S06.mts",
             "timeoutMs": 120000
         }
     },
@@ -744,7 +744,7 @@
         },
         "primaryCheck": {
             "id": "s07-upgrade-condition",
-            "script": "S07.mjs",
+            "script": "S07.mts",
             "timeoutMs": 180000
         }
     },
@@ -850,7 +850,7 @@
         },
         "primaryCheck": {
             "id": "r04-migration-lint",
-            "script": "R04.mjs",
+            "script": "R04.mts",
             "timeoutMs": 120000
         },
         "docsCriterion": {

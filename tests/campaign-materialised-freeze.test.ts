@@ -53,7 +53,7 @@ exit 0
     write(
         join(dir, "tests/fixtures/placement-harness/prod014/cases.json"),
         JSON.stringify(
-            ids.map((id) => ({ id, primaryCheck: { script: `${id}.mjs` } })),
+            ids.map((id) => ({ id, primaryCheck: { script: `${id}.mts` } })),
         ),
     );
     write(
@@ -64,7 +64,7 @@ exit 0
         write(
             join(
                 dir,
-                `tests/fixtures/placement-harness/primary-checks/${id}.mjs`,
+                `tests/fixtures/placement-harness/primary-checks/${id}.mts`,
             ),
             "process.exit(0);\n",
         );
@@ -90,7 +90,7 @@ function fixture(): {
     source: string;
 } {
     const root = mkdtempSync(join(tmpdir(), "pd-freeze-cmd-"));
-    execFileSync(process.execPath, [join(campaign, "materialise.mjs"), root], {
+    execFileSync(process.execPath, [join(campaign, "materialise.mts"), root], {
         encoding: "utf8",
     });
     write(
@@ -170,7 +170,7 @@ function fixture(): {
     const measurement = join(root, "measurement");
     for (const path of [
         "tests/fixtures/placement-harness/ac-scoring.mts",
-        "tests/fixtures/placement-harness/ac/run.mjs",
+        "tests/fixtures/placement-harness/ac/run.mts",
         "tests/fixtures/placement-harness/ac/judge-launcher.sh",
         "tests/fixtures/placement-harness/analysis/analyse.mts",
         "tests/fixtures/placement-harness/harness.mts",
@@ -225,7 +225,7 @@ function freeze(
     bin: string,
     source: string,
 ): ReturnType<typeof spawnSync> {
-    return spawnSync(process.execPath, [join(root, "prepare/freeze.mjs")], {
+    return spawnSync(process.execPath, [join(root, "prepare/freeze.mts")], {
         env: {
             ...process.env,
             CAMPAIGN_ROOT: root,
@@ -279,7 +279,7 @@ function runCampaign(
     return spawnSync(
         process.execPath,
         [
-            join(root, "prepare/run.mjs"),
+            join(root, "prepare/run.mts"),
             "--pair-from",
             "1",
             "--pair-to",
@@ -311,13 +311,13 @@ function rejudgeCampaign(
 ): ReturnType<typeof spawnSync> {
     const stub = join(
         root,
-        "measurement/tests/fixtures/placement-harness/ac/run.mjs",
+        "measurement/tests/fixtures/placement-harness/ac/run.mts",
     );
     write(
         stub,
         `import { appendFileSync } from "node:fs";\nappendFileSync(process.env.STUB_COUNTER, "judge\\n");\n`,
     );
-    return spawnSync(process.execPath, [join(root, "prepare/rejudge.mjs")], {
+    return spawnSync(process.execPath, [join(root, "prepare/rejudge.mts")], {
         env: {
             ...process.env,
             CAMPAIGN_ROOT: root,
@@ -405,7 +405,7 @@ describe("freeze use at the spend boundary", () => {
             write(
                 join(
                     root,
-                    "measurement/tests/fixtures/placement-harness/ac/run.mjs",
+                    "measurement/tests/fixtures/placement-harness/ac/run.mts",
                 ),
                 "// changed launcher\n",
             );
@@ -484,7 +484,7 @@ describe("frozen premise enforcement", () => {
             write(
                 join(
                     root,
-                    "arms/a/tests/fixtures/placement-harness/primary-checks/R01.mjs",
+                    "arms/a/tests/fixtures/placement-harness/primary-checks/R01.mts",
                 ),
                 "process.exit(1);\n",
             );
@@ -565,7 +565,7 @@ describe("frozen premise enforcement", () => {
             write(
                 join(
                     root,
-                    "arms/a/tests/fixtures/placement-harness/primary-checks/R01.mjs",
+                    "arms/a/tests/fixtures/placement-harness/primary-checks/R01.mts",
                 ),
                 "process.exit(1);\n",
             );

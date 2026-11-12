@@ -53,7 +53,7 @@ function filesUnder(dir: string, root: string): string[] {
 /** Materialise a fresh campaign root with the minimum schedule and identity. */
 function campaign(): { root: string; counter: string; bin: string } {
     const root = mkdtempSync(join(tmpdir(), "pd-materialised-"));
-    execFileSync(process.execPath, [join(fixture, "materialise.mjs"), root], {
+    execFileSync(process.execPath, [join(fixture, "materialise.mts"), root], {
         encoding: "utf8",
     });
     const counter = join(root, "counter.txt");
@@ -215,7 +215,7 @@ describe("materialised launch boundary", () => {
 
         try {
             // Act
-            const result = run(root, counter, bin, "run.mjs", [
+            const result = run(root, counter, bin, "run.mts", [
                 "--pair-from",
                 "1",
                 "--pair-to",
@@ -242,7 +242,7 @@ describe("materialised launch boundary", () => {
 
         try {
             // Act
-            const result = run(root, counter, bin, "run.mjs", [
+            const result = run(root, counter, bin, "run.mts", [
                 "--pair-from",
                 "1",
                 "--pair-to",
@@ -267,7 +267,7 @@ describe("materialised launch boundary", () => {
 
         try {
             // Act
-            const result = run(root, counter, bin, "run.mjs", [
+            const result = run(root, counter, bin, "run.mts", [
                 "--pair-from",
                 "1",
                 "--pair-to",
@@ -304,12 +304,12 @@ describe("materialised launch boundary", () => {
         );
         const stub = join(
             root,
-            "measurement/tests/fixtures/placement-harness/ac/run.mjs",
+            "measurement/tests/fixtures/placement-harness/ac/run.mts",
         );
         write(stub, `process.exit(2);\n`);
         try {
             // Act
-            const result = run(root, counter, bin, "rejudge.mjs", []);
+            const result = run(root, counter, bin, "rejudge.mts", []);
 
             // Assert
             assert.equal(result.status, 2);
@@ -350,7 +350,7 @@ describe("materialised launch boundary", () => {
         );
         const stub = join(
             root,
-            "measurement/tests/fixtures/placement-harness/ac/run.mjs",
+            "measurement/tests/fixtures/placement-harness/ac/run.mts",
         );
         write(
             stub,
@@ -366,7 +366,7 @@ writeFileSync(join(attemptDir, "judgement.json"), JSON.stringify({ status: "judg
         );
         try {
             // Act
-            const result = run(root, counter, bin, "rejudge.mjs", []);
+            const result = run(root, counter, bin, "rejudge.mts", []);
 
             // Assert
             assert.equal(result.status, 0, String(result.stderr));
@@ -404,7 +404,7 @@ node -e 'const fs=require("fs");fs.writeFileSync(process.env.ENV_FILE,JSON.strin
                 root,
                 counter,
                 bin,
-                "run.mjs",
+                "run.mts",
                 ["--pair-from", "1", "--pair-to", "1", "--trial-command", stub],
                 { ENV_FILE: envFile },
             );
@@ -428,7 +428,7 @@ node -e 'const fs=require("fs");fs.writeFileSync(process.env.ENV_FILE,JSON.strin
 
         try {
             // Act
-            const result = run(root, counter, bin, "run.mjs", [
+            const result = run(root, counter, bin, "run.mts", [
                 "--pair-from",
                 "1",
                 "--pair-to",
@@ -452,7 +452,7 @@ node -e 'const fs=require("fs");fs.writeFileSync(process.env.ENV_FILE,JSON.strin
 
         try {
             // Act
-            const result = run(root, counter, bin, "run.mjs", [
+            const result = run(root, counter, bin, "run.mts", [
                 "--pair-from",
                 "2",
                 "--pair-to",
@@ -481,7 +481,7 @@ node -e 'const fs=require("fs");fs.writeFileSync(process.env.ENV_FILE,JSON.strin
 
         try {
             // Act
-            const result = run(root, counter, bin, "run.mjs", [
+            const result = run(root, counter, bin, "run.mts", [
                 "--pair-from",
                 "1",
                 "--pair-to",

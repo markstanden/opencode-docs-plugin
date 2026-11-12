@@ -75,7 +75,7 @@ runtime. CI validates every manifest and replays the committed synthetic corpus
 (`analysis.json`, `REPORT.md`, `SCREENING.json`, `analysis-receipt.json`) must
 land outside the evidence root; an existing analysis is refused without
 `--rerender`, and `INTERPRETATION.md` is never written or overwritten. The legacy
-campaign-specific `ac/run.mjs report` route is preserved unchanged for historical
+campaign-specific `ac/run.mts report` route is preserved unchanged for historical
 reproduction.
 
 Replay anchors, verified against the recorded evidence on 2026-11-11:

@@ -30,6 +30,7 @@ import {
     docChanges,
     firstBalancedObject,
     labelLeaks,
+    type LakeDocument,
 } from "./campaign.mts";
 import {
     hostDispatchesFromTrail,
@@ -37,6 +38,7 @@ import {
     verifyOperationsJournal,
 } from "../analysis/journal.ts";
 import {
+    DOCUMENTATION_OUTCOMES,
     PRESERVATION_CASE,
     buildAcPrompt,
     finalistQualifies,
@@ -45,10 +47,14 @@ import {
     sensitivity,
     summariseArm,
     validateAcJudgement,
+    type DocState,
+    type DocumentationOutcome,
+    type PreservationSpec,
+    type RetrievalSpec,
 } from "../ac-scoring.mts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const OUTCOME_KEYS = [
+const OUTCOME_KEYS: readonly DocumentationOutcome[] = [
     "useful-create",
     "useful-update",
     "transient",
@@ -57,42 +63,55 @@ const OUTCOME_KEYS = [
     "none",
 ];
 
+/** One JSON object, or a thrown refusal naming the file. */
+function recordOf(
+    value: unknown,
+    label: string,
+): Record<string, unknown> {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        throw new Error(`${label} must be a JSON object`);
+    }
+    return value as Record<string, unknown>;
+}
+
 /** Read JSON, or null when the file is absent. */
-const readJson = (path) =>
+const readJson = (path: string): unknown =>
     existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
 
 /** Read text, or an empty string when the file is absent. */
-const readText = (path) => (existsSync(path) ? readFileSync(path, "utf8") : "");
+const readText = (path: string): string =>
+    existsSync(path) ? readFileSync(path, "utf8") : "";
 
 /** Write JSON with a trailing newline. */
-const writeJson = (path, value) =>
+const writeJson = (path: string, value: unknown): void =>
     writeFileSync(path, JSON.stringify(value, null, 2) + "\n", "utf8");
 
 /** SHA-256 of a string. */
-const sha256 = (text) =>
+const sha256 = (text: string): string =>
     createHash("sha256").update(text, "utf8").digest("hex");
 
 /** Parse `--flag value` pairs into a map. */
-function flags(argv) {
-    const parsed = new Map();
+function flags(argv: string[]): Map<string, string | undefined> {
+    const parsed = new Map<string, string | undefined>();
     for (let index = 0; index < argv.length; index += 2) {
-        if (!argv[index].startsWith("--")) {
-            throw new Error(`unexpected argument ${argv[index]}`);
+        const name = argv[index];
+        if (name === undefined || !name.startsWith("--")) {
+            throw new Error(`unexpected argument ${String(name)}`);
         }
-        parsed.set(argv[index], argv[index + 1]);
+        parsed.set(name, argv[index + 1]);
     }
     return parsed;
 }
 
 /** Require a flag value. */
-function need(args, name) {
+function need(args: Map<string, string | undefined>, name: string): string {
     const value = args.get(name);
     if (!value) throw new Error(`missing ${name}`);
     return value;
 }
 
 /** The harness entry point inside one arm worktree. */
-const harnessOf = (repo) =>
+const harnessOf = (repo: string): string =>
     join(repo, "tests/fixtures/placement-harness/harness.mts");
 
 /**
@@ -101,9 +120,9 @@ const harnessOf = (repo) =>
  * lakes stay distinguishable and a multi-lake trial is judged from its whole
  * surface.
  */
-function lakeDocs(root) {
-    const found = [];
-    const visit = (dir) => {
+function lakeDocs(root: string): LakeDocument[] {
+    const found: LakeDocument[] = [];
+    const visit = (dir: string): void => {
         if (!existsSync(dir)) return;
         for (const entry of readdirSync(dir, { withFileTypes: true })) {
             const path = join(dir, entry.name);
@@ -121,67 +140,112 @@ function lakeDocs(root) {
 }
 
 /** One JSON line from an `opencode --format json` trail, or undefined. */
-function trailEvent(line) {
+function trailEvent(line: string): Record<string, unknown> | undefined {
     try {
-        return JSON.parse(line);
+        const value: unknown = JSON.parse(line);
+        if (typeof value !== "object" || value === null) return undefined;
+        return value as Record<string, unknown>;
     } catch {
         return undefined;
     }
 }
 
 /** The final text part of a JSONL trail. */
-function finalAnswer(stdout) {
+function finalAnswer(stdout: string): string {
     return (
-        (stdout ?? "")
+        stdout
             .split("\n")
             .map(trailEvent)
-            .filter((event) => event?.part?.type === "text")
-            .map((event) => event.part.text)
+            .filter((event) => {
+                const part = event?.part;
+                return (
+                    typeof part === "object" &&
+                    part !== null &&
+                    (part as Record<string, unknown>).type === "text"
+                );
+            })
+            .map((event) => {
+                const part = event?.part as Record<string, unknown>;
+                return typeof part.text === "string" ? part.text : "";
+            })
             .pop() ?? ""
     );
 }
 
+interface TokenUsage {
+    input: number;
+    output: number;
+    reasoning: number;
+    cacheRead: number;
+    steps: number;
+}
+
 /** Add one step's tokens to a usage total. */
-function addStepTokens(usage, tokens) {
+function addStepTokens(usage: TokenUsage, tokens: Record<string, unknown>): void {
     usage.steps += 1;
-    usage.input += tokens.input ?? 0;
-    usage.output += tokens.output ?? 0;
-    usage.reasoning += tokens.reasoning ?? 0;
-    usage.cacheRead += tokens.cache?.read ?? 0;
+    usage.input += typeof tokens.input === "number" ? tokens.input : 0;
+    usage.output += typeof tokens.output === "number" ? tokens.output : 0;
+    usage.reasoning +=
+        typeof tokens.reasoning === "number" ? tokens.reasoning : 0;
+    const cache =
+        typeof tokens.cache === "object" && tokens.cache !== null
+            ? (tokens.cache as Record<string, unknown>)
+            : {};
+    usage.cacheRead += typeof cache.read === "number" ? cache.read : 0;
 }
 
 /** Token usage from a recorded trail. */
-function usageOf(stdoutPath) {
-    const usage = { input: 0, output: 0, reasoning: 0, cacheRead: 0, steps: 0 };
+function usageOf(stdoutPath: string): TokenUsage {
+    const usage: TokenUsage = {
+        input: 0,
+        output: 0,
+        reasoning: 0,
+        cacheRead: 0,
+        steps: 0,
+    };
     for (const line of readText(stdoutPath).split("\n")) {
         const event = line.trim() === "" ? undefined : trailEvent(line);
-        if (event?.type === "step_finish" && event.part?.tokens) {
-            addStepTokens(usage, event.part.tokens);
+        const part = event?.part;
+        if (
+            event?.type === "step_finish" &&
+            typeof part === "object" &&
+            part !== null
+        ) {
+            const tokens = (part as Record<string, unknown>).tokens;
+            if (typeof tokens === "object" && tokens !== null) {
+                addStepTokens(usage, tokens as Record<string, unknown>);
+            }
         }
     }
     return usage;
 }
 
 /** The input fields of one docs operation, rendered for the judge. */
-function inputParts(input) {
-    const parts = [];
+function inputParts(input: Record<string, unknown>): string[] {
+    const parts: string[] = [];
     if (typeof input.search === "string")
         parts.push(`search "${input.search}"`);
     if (typeof input.read === "string") parts.push(`read ${input.read}`);
     if (typeof input.check === "string") parts.push(`check ${input.check}`);
-    if (input.add) {
+    const add = input.add;
+    if (typeof add === "object" && add !== null) {
+        const declaration = add as Record<string, unknown>;
         parts.push(
-            `${input.add.mode ?? "create"} ${input.add.path ?? "(body)"}`,
+            `${String(declaration.mode ?? "create")} ${String(declaration.path ?? "(body)")}`,
         );
     }
     return parts;
 }
 
 /** One verified docs operation, rendered for the judge. */
-function operationLine(entry) {
+function operationLine(entry: Record<string, unknown>): string {
     const surface = entry.surface === "codemode-twin" ? "twin" : "native";
-    const parts = inputParts(entry.input ?? {});
-    return `${entry.status ?? "unknown"} ${surface} ${parts.join("; ") || "help"}`;
+    const input =
+        typeof entry.input === "object" && entry.input !== null
+            ? (entry.input as Record<string, unknown>)
+            : {};
+    const parts = inputParts(input);
+    return `${String(entry.status ?? "unknown")} ${surface} ${parts.join("; ") || "help"}`;
 }
 
 /**
@@ -194,7 +258,10 @@ function operationLine(entry) {
  * @param allowLegacy Whether absent binding evidence is tolerated.
  * @returns The credited operation lines, or a refusal.
  */
-function attributableOperations(caseDir, allowLegacy) {
+function attributableOperations(
+    caseDir: string,
+    allowLegacy: boolean,
+): { lines?: string[]; reason?: string } {
     const journalPath = join(caseDir, "docs-operations.jsonl");
     if (!existsSync(journalPath)) return { lines: [] };
     const keyPath = join(caseDir, "docs-operations.key");
@@ -234,7 +301,7 @@ function attributableOperations(caseDir, allowLegacy) {
 }
 
 /** Changed paths from a writes report. */
-function changedPaths(writes) {
+function changedPaths(writes: string): string[] {
     return writes
         .split("\n")
         .map((line) => line.trim())
@@ -247,12 +314,21 @@ function changedPaths(writes) {
 }
 
 /** The primary-check evidence the judge sees. */
-function primaryEvidence(record) {
+function primaryEvidence(record: unknown): {
+    status: string;
+    exit: number | null;
+    stdout: string;
+    stderr: string;
+} {
+    const value =
+        typeof record === "object" && record !== null
+            ? (record as Record<string, unknown>)
+            : null;
     return {
-        status: record?.status ?? "missing",
-        exit: record?.exit ?? null,
-        stdout: String(record?.stdout ?? "").slice(0, 8000),
-        stderr: String(record?.stderr ?? "").slice(0, 4000),
+        status: String(value?.status ?? "missing"),
+        exit: typeof value?.exit === "number" ? value.exit : null,
+        stdout: String(value?.stdout ?? "").slice(0, 8000),
+        stderr: String(value?.stderr ?? "").slice(0, 4000),
     };
 }
 
@@ -264,8 +340,62 @@ function primaryEvidence(record) {
  * @param caseId The case id.
  * @returns The case's measurement entry, or an empty object.
  */
-function caseSpecOf(scoringSpec, caseId) {
-    return scoringSpec?.scenarios?.[caseId] ?? scoringSpec?.[caseId] ?? {};
+function caseSpecOf(
+    scoringSpec: unknown,
+    caseId: string,
+): { preservation?: unknown; retrieval?: unknown } {
+    const spec =
+        typeof scoringSpec === "object" && scoringSpec !== null
+            ? (scoringSpec as Record<string, unknown>)
+            : {};
+    const scenarios =
+        typeof spec.scenarios === "object" && spec.scenarios !== null
+            ? (spec.scenarios as Record<string, unknown>)
+            : {};
+    const entry = scenarios[caseId] ?? spec[caseId] ?? {};
+    return typeof entry === "object" && entry !== null
+        ? (entry as { preservation?: unknown; retrieval?: unknown })
+        : {};
+}
+
+/** A declared preservation inventory, or undefined when malformed or absent. */
+function preservationSpecOf(value: unknown): PreservationSpec | undefined {
+    if (typeof value !== "object" || value === null) return undefined;
+    const facts = (value as { facts?: unknown }).facts;
+    if (!Array.isArray(facts)) return undefined;
+    const entries = facts.map((fact) => {
+        if (typeof fact !== "object" || fact === null) return undefined;
+        const entry = fact as Record<string, unknown>;
+        if (
+            typeof entry.id !== "string" ||
+            typeof entry.label !== "string" ||
+            (entry.obsolete !== undefined &&
+                typeof entry.obsolete !== "boolean")
+        )
+            return undefined;
+        return {
+            id: entry.id,
+            label: entry.label,
+            ...(entry.obsolete === true ? { obsolete: true } : {}),
+        };
+    });
+    if (entries.some((entry) => entry === undefined)) return undefined;
+    return { facts: entries as PreservationSpec["facts"] };
+}
+
+/** A declared retrieval finding, or undefined when malformed or absent. */
+function retrievalSpecOf(value: unknown): RetrievalSpec | undefined {
+    if (typeof value !== "object" || value === null) return undefined;
+    const entry = value as Record<string, unknown>;
+    if (typeof entry.note !== "string" || typeof entry.detail !== "string")
+        return undefined;
+    if (entry.lake !== undefined && typeof entry.lake !== "string")
+        return undefined;
+    return {
+        note: entry.note,
+        detail: entry.detail,
+        ...(typeof entry.lake === "string" ? { lake: entry.lake } : {}),
+    };
 }
 
 /**
@@ -276,18 +406,28 @@ function caseSpecOf(scoringSpec, caseId) {
  * @param truth The scenario-truth map.
  * @returns The packet text and the mutation facts behind it.
  */
-function packetFor(base, stamp, caseId, truth, scoringSpec, docsOperations) {
+function packetFor(
+    base: string,
+    stamp: string,
+    caseId: string,
+    truth: Record<string, unknown>,
+    scoringSpec: unknown,
+    docsOperations: string[],
+) {
     const caseDir = join(base, "results", stamp, caseId);
     const caseSpec = caseSpecOf(scoringSpec, caseId);
+    const preservation = preservationSpecOf(caseSpec.preservation);
+    const retrieval = retrievalSpecOf(caseSpec.retrieval);
     const beforeDocs = lakeDocs(join(base, "fixtures", caseId, "lakes"));
     const afterDocs = lakeDocs(join(caseDir, "live/lakes"));
     const state = docChanges(beforeDocs, afterDocs);
+    const scenarioTruth = truth[caseId];
     const prompt = buildAcPrompt({
         taskPrompt: readText(join(caseDir, "prompt.md")),
         standingPermission: readText(
             join(base, "fixtures", caseId, "work/AGENTS.md"),
         ),
-        scenarioTruth: truth[caseId],
+        scenarioTruth: typeof scenarioTruth === "string" ? scenarioTruth : "",
         beforeDocs,
         afterDocs,
         changedPaths: changedPaths(readText(join(caseDir, "writes.txt"))),
@@ -295,19 +435,19 @@ function packetFor(base, stamp, caseId, truth, scoringSpec, docsOperations) {
         docsOperations,
         answer: readText(join(caseDir, "final.md")),
         requirePreservation:
-            caseId === PRESERVATION_CASE && caseSpec.preservation === undefined,
-        ...(caseSpec.preservation === undefined
-            ? {}
-            : { preservationSpec: caseSpec.preservation }),
-        ...(caseSpec.retrieval === undefined
-            ? {}
-            : { retrievalSpec: caseSpec.retrieval }),
+            caseId === PRESERVATION_CASE && preservation === undefined,
+        ...(preservation === undefined ? {} : { preservationSpec: preservation }),
+        ...(retrieval === undefined ? {} : { retrievalSpec: retrieval }),
     });
     return { caseDir, prompt, state };
 }
 
 /** The judge spawn arguments for one packet. */
-const judgeArgs = (model, stamp, prompt) => [
+const judgeArgs = (
+    model: string,
+    stamp: string,
+    prompt: string,
+): string[] => [
     "run",
     "--standalone",
     "--auto",
@@ -322,7 +462,23 @@ const judgeArgs = (model, stamp, prompt) => [
 ];
 
 /** Spawn one isolated judge session. */
-function spawnJudge({ launcher, model, stamp, prompt, runDir, timeout }) {
+interface JudgeSpawn {
+    launcher: string;
+    model: string;
+    stamp: string;
+    prompt: string;
+    runDir: string;
+    timeout: number;
+}
+
+function spawnJudge({
+    launcher,
+    model,
+    stamp,
+    prompt,
+    runDir,
+    timeout,
+}: JudgeSpawn) {
     return spawnSync(launcher, judgeArgs(model, stamp, prompt), {
         cwd: join(runDir, "work"),
         encoding: "utf8",
@@ -348,20 +504,36 @@ function spawnJudge({ launcher, model, stamp, prompt, runDir, timeout }) {
  * pinned block, a generic inventory replaces it, and a declared retrieval
  * finding is required.
  */
-function judgementOptions(caseId, scoringSpec) {
+function judgementOptions(
+    caseId: string,
+    scoringSpec: unknown,
+): {
+    requirePreservation: boolean;
+    preservationSpec?: PreservationSpec;
+    retrieval?: boolean;
+} {
     const caseSpec = caseSpecOf(scoringSpec, caseId);
-    const options = {
+    const preservation = preservationSpecOf(caseSpec.preservation);
+    const options: {
+        requirePreservation: boolean;
+        preservationSpec?: PreservationSpec;
+        retrieval?: boolean;
+    } = {
         requirePreservation:
-            caseId === PRESERVATION_CASE && caseSpec.preservation === undefined,
+            caseId === PRESERVATION_CASE && preservation === undefined,
     };
-    if (caseSpec.preservation !== undefined) {
-        options.preservationSpec = caseSpec.preservation;
-    }
-    if (caseSpec.retrieval !== undefined) options.retrieval = true;
+    if (preservation !== undefined) options.preservationSpec = preservation;
+    if (retrievalSpecOf(caseSpec.retrieval) !== undefined)
+        options.retrieval = true;
     return options;
 }
 
-function judgementPayload(parsed, state, caseId, scoringSpec) {
+function judgementPayload(
+    parsed: ReturnType<typeof parseAcJudgement>,
+    state: DocState,
+    caseId: string,
+    scoringSpec: unknown,
+) {
     const problems =
         parsed.value === undefined
             ? parsed.problems
@@ -385,15 +557,19 @@ function judgementPayload(parsed, state, caseId, scoringSpec) {
 
 /** Record a judge attempt's evidence and return its terminal status. */
 function recordJudgement(
-    attemptDir,
-    result,
-    state,
-    model,
-    stamp,
-    caseId,
-    scoringSpec,
+    attemptDir: string,
+    result: ReturnType<typeof spawnSync>,
+    state: DocState,
+    model: string,
+    stamp: string,
+    caseId: string,
+    scoringSpec: unknown,
 ) {
-    const started = readJson(join(attemptDir, "meta.json"));
+    const startedValue = readJson(join(attemptDir, "meta.json"));
+    const started =
+        typeof startedValue === "object" && startedValue !== null
+            ? (startedValue as Record<string, unknown>)
+            : null;
     writeFileSync(
         join(attemptDir, "output.jsonl"),
         result.stdout ?? "",
@@ -408,7 +584,7 @@ function recordJudgement(
         exit: result.status,
         state,
     });
-    const answer = finalAnswer(result.stdout);
+    const answer = finalAnswer(String(result.stdout ?? ""));
     const processOk =
         result.error === undefined &&
         result.signal === null &&
@@ -432,7 +608,7 @@ function recordJudgement(
  * @param args `--repo`, `--base`, `--cases`, `--stamps`.
  * @returns 0 when every stamp produced a gate record, else 1.
  */
-function gate(args) {
+function gate(args: Map<string, string | undefined>): number {
     const repo = need(args, "--repo");
     const base = need(args, "--base");
     const cases = need(args, "--cases");
@@ -489,7 +665,11 @@ function gate(args) {
  * @returns 0 when a usable judgement landed, 1 when it did not.
  */
 /** The neutral judge-side run directory for one attempt. */
-function neutralRunDir(args, stamp, caseId) {
+function neutralRunDir(
+    args: Map<string, string | undefined>,
+    stamp: string,
+    caseId: string,
+): string {
     return join(
         need(args, "--workdir"),
         sha256(`${stamp}/${caseId}`).slice(0, 16),
@@ -553,10 +733,16 @@ function judgeContextProblem() {
  * @param allowLegacy Whether absent identity evidence is tolerated.
  * @returns The refusal, or null.
  */
-function answerProblemOf(caseDir, allowLegacy) {
+function answerProblemOf(
+    caseDir: string,
+    allowLegacy: boolean,
+): string | null {
     const answerPath = join(caseDir, "final.md");
     if (!existsSync(answerPath)) return "no final answer was recorded";
-    const meta = JSON.parse(readFileSync(join(caseDir, "meta.json"), "utf8"));
+    const meta = recordOf(
+        JSON.parse(readFileSync(join(caseDir, "meta.json"), "utf8")),
+        join(caseDir, "meta.json"),
+    );
     const recorded = meta.answerHash;
     if (typeof recorded !== "string" || recorded === "") {
         return allowLegacy
@@ -578,7 +764,10 @@ function answerProblemOf(caseDir, allowLegacy) {
  * @param prompt The assembled packet.
  * @returns The refusal, or null.
  */
-function leakProblemOf(args, prompt) {
+function leakProblemOf(
+    args: Map<string, string | undefined>,
+    prompt: string,
+): string | null {
     const leaks = labelLeaks(
         prompt,
         need(args, "--model"),
@@ -597,7 +786,12 @@ function leakProblemOf(args, prompt) {
  * @param attemptId The selected attempt id.
  * @returns The attempt directory, or a refusal code and message.
  */
-function judgeAttemptOf(base, stamp, caseId, attemptId) {
+function judgeAttemptOf(
+    base: string,
+    stamp: string,
+    caseId: string,
+    attemptId: string,
+): { code?: number; error?: string; attemptDir?: string; alreadyJudged?: boolean } {
     if (!/^attempt-\d{3}$/.test(attemptId)) {
         return {
             code: 1,
@@ -635,21 +829,36 @@ function judgeAttemptOf(base, stamp, caseId, attemptId) {
  * @param allowLegacy Whether absent identity evidence is tolerated.
  * @returns The prompt, state, run directory and attempt directory, or a refusal.
  */
-function judgePackage(args, base, stamp, caseId, truth, allowLegacy) {
+function judgePackage(
+    args: Map<string, string | undefined>,
+    base: string,
+    stamp: string,
+    caseId: string,
+    truth: Record<string, unknown>,
+    allowLegacy: boolean,
+):
+    | {
+          ok: true;
+          prompt: string;
+          state: DocState;
+          runDir: string;
+          scoringSpec: unknown;
+      }
+    | { ok: false; code: number; error: string } {
     const scoringSpec = args.get("--spec")
         ? JSON.parse(readFileSync(need(args, "--spec"), "utf8"))
         : undefined;
     const caseDir = join(base, "results", stamp, caseId);
     const answerProblem = answerProblemOf(caseDir, allowLegacy);
     if (answerProblem !== null) {
-        return { code: 4, error: answerProblem };
+        return { ok: false, code: 4, error: answerProblem };
     }
     const operations = attributableOperations(caseDir, allowLegacy);
     if (
         operations.reason !== undefined &&
         operations.reason !== "legacy-unbound"
     ) {
-        return { code: 4, error: operations.reason };
+        return { ok: false, code: 4, error: operations.reason };
     }
     const { prompt, state } = packetFor(
         base,
@@ -662,13 +871,13 @@ function judgePackage(args, base, stamp, caseId, truth, allowLegacy) {
     const runDir = neutralRunDir(args, stamp, caseId);
     const contextProblem = judgeContextProblem();
     if (contextProblem !== null) {
-        return { code: 3, error: contextProblem };
+        return { ok: false, code: 3, error: contextProblem };
     }
     const leak = leakProblemOf(args, prompt);
     if (leak !== null) {
-        return { code: 3, error: leak };
+        return { ok: false, code: 3, error: leak };
     }
-    return { prompt, state, runDir, scoringSpec };
+    return { ok: true, prompt, state, runDir, scoringSpec };
 }
 
 /**
@@ -679,11 +888,14 @@ function judgePackage(args, base, stamp, caseId, truth, allowLegacy) {
  *   `--allow-legacy-unbound`.
  * @returns 0 when a usable judgement landed, 1 when it did not.
  */
-function judge(args) {
+function judge(args: Map<string, string | undefined>): number {
     const base = need(args, "--base");
     const stamp = need(args, "--stamp");
     const caseId = need(args, "--case");
-    const truth = JSON.parse(readFileSync(need(args, "--truth"), "utf8"));
+    const truth = recordOf(
+        JSON.parse(readFileSync(need(args, "--truth"), "utf8")),
+        need(args, "--truth"),
+    );
     const model = need(args, "--model");
     const attemptId = args.get("--attempt") ?? "attempt-001";
     const precondition = judgeAttemptOf(base, stamp, caseId, attemptId);
@@ -694,11 +906,15 @@ function judge(args) {
     if (precondition.alreadyJudged === true) return 0;
     const allowLegacy = args.get("--allow-legacy-unbound") === "true";
     const pkg = judgePackage(args, base, stamp, caseId, truth, allowLegacy);
-    if (pkg.code !== undefined) {
+    if (!pkg.ok) {
         console.error(`refusing to judge ${stamp}/${caseId}: ${pkg.error}`);
         return pkg.code;
     }
     const attemptDir = precondition.attemptDir;
+    if (attemptDir === undefined) {
+        console.error(`refusing to judge ${stamp}/${caseId}: no attempt path`);
+        return 1;
+    }
     mkdirSync(join(pkg.runDir, "work"), { recursive: true });
     writeFileSync(join(pkg.runDir, "prompt.md"), pkg.prompt, "utf8");
     mkdirSync(dirname(attemptDir), { recursive: true });
@@ -745,23 +961,42 @@ function judge(args) {
 }
 
 /** Resolve one parse-failed attempt, or report that it is not resolvable. */
-function resolveAttempt(attemptDir, judgement, scoringSpec) {
-    if (!judgement.problems?.includes("verdict is not valid JSON")) {
+function resolveAttempt(
+    attemptDir: string,
+    judgement: Record<string, unknown>,
+    scoringSpec: unknown,
+): string {
+    const reported = judgement.problems;
+    if (
+        !Array.isArray(reported) ||
+        !reported.includes("verdict is not valid JSON")
+    ) {
         return "refused";
     }
     if (existsSync(join(attemptDir, "resolution.json"))) return "skipped";
     const output = readText(join(attemptDir, "output.jsonl"));
-    const meta = JSON.parse(
-        readFileSync(join(attemptDir, "meta.json"), "utf8"),
+    const meta = recordOf(
+        JSON.parse(readFileSync(join(attemptDir, "meta.json"), "utf8")),
+        join(attemptDir, "meta.json"),
     );
     const extracted = firstBalancedObject(finalAnswer(output));
-    const record = { status: "unresolved", method: "first-balanced-object" };
+    const record: {
+        status: string;
+        method: string;
+        parsed?: unknown;
+        problems?: string[];
+        reason?: string;
+    } = { status: "unresolved", method: "first-balanced-object" };
     if (extracted !== undefined) {
         try {
             const parsed = JSON.parse(extracted);
+            if (typeof meta.caseId !== "string") {
+                throw new Error("meta.json has no caseId");
+            }
+            const state = recordOf(meta.state, "meta.json state") as unknown as DocState;
             const problems = validateAcJudgement(
                 parsed,
-                meta.state,
+                state,
                 judgementOptions(meta.caseId, scoringSpec),
             );
             if (problems.length === 0) {
@@ -788,13 +1023,13 @@ function resolveAttempt(attemptDir, judgement, scoringSpec) {
  * @param args `--base`.
  * @returns 0 unless a resolution was refused.
  */
-function resolve(args) {
+function resolve(args: Map<string, string | undefined>): number {
     const base = need(args, "--base");
     const scoringSpec = args.get("--spec")
         ? JSON.parse(readFileSync(need(args, "--spec"), "utf8"))
         : undefined;
     let refused = 0;
-    const visit = (dir) => {
+    const visit = (dir: string): void => {
         for (const entry of readdirSync(dir, { withFileTypes: true })) {
             const path = join(dir, entry.name);
             if (entry.isDirectory()) {
@@ -808,7 +1043,10 @@ function resolve(args) {
                 continue;
             }
             const attemptDir = path.slice(0, -"judgement.json".length);
-            const judgement = JSON.parse(readFileSync(path, "utf8"));
+            const judgement = recordOf(
+                JSON.parse(readFileSync(path, "utf8")),
+                path,
+            );
             if (judgement.status === "invalid-verdict") {
                 if (
                     resolveAttempt(attemptDir, judgement, scoringSpec) ===
@@ -823,29 +1061,43 @@ function resolve(args) {
 }
 
 /** Whether a recorded run is usable evidence. */
-function usableRun(meta) {
+function usableRun(meta: unknown): boolean {
+    if (typeof meta !== "object" || meta === null) return false;
+    const value = meta as Record<string, unknown>;
     return (
-        meta !== null &&
-        meta.exit === 0 &&
-        meta.signal === null &&
-        meta.timedOut !== true &&
-        meta.outputOverflow !== true &&
-        meta.answerValid === true
+        value.exit === 0 &&
+        value.signal === null &&
+        value.timedOut !== true &&
+        value.outputOverflow !== true &&
+        value.answerValid === true
     );
 }
 
 /** The primary result as a scoring category. */
-function primaryCategory(record) {
-    if (record?.status === "pass") return "pass";
-    if (record?.status === "fail") return "fail";
+function primaryCategory(record: unknown): "pass" | "fail" | "unknown" {
+    const status =
+        typeof record === "object" && record !== null
+            ? (record as Record<string, unknown>).status
+            : undefined;
+    if (status === "pass") return "pass";
+    if (status === "fail") return "fail";
     return "unknown";
 }
 
 /** Whether a trial carries a non-compensable guardrail breach. */
-function guardrailOf(meta, gateAt) {
-    if ((meta?.policyViolations?.length ?? 0) > 0) return true;
+function guardrailOf(meta: unknown, gateAt: unknown): boolean {
+    const run =
+        typeof meta === "object" && meta !== null
+            ? (meta as Record<string, unknown>)
+            : {};
+    const violations = run.policyViolations;
+    if (Array.isArray(violations) && violations.length > 0) return true;
+    const gate =
+        typeof gateAt === "object" && gateAt !== null
+            ? (gateAt as Record<string, unknown>)
+            : {};
     return /preserved .* was (added|modified|removed)/.test(
-        gateAt?.reason ?? "",
+        typeof gate.reason === "string" ? gate.reason : "",
     );
 }
 
@@ -856,81 +1108,204 @@ const PRESERVED_FACTS = ["poolSize", "acquireTimeout", "startupMigrations"];
  * Whether the judge's semantic assessment records a lost still-valid fact.
  * An absent assessment is unknown, never a breach.
  */
-function preservationLost(preservation) {
+function preservationLost(preservation: unknown): boolean {
     if (preservation === null || typeof preservation !== "object") return false;
-    return PRESERVED_FACTS.some((fact) => preservation[fact]?.state === "lost");
+    const value = preservation as Record<string, unknown>;
+    return PRESERVED_FACTS.some((fact) => {
+        const finding = value[fact];
+        return (
+            typeof finding === "object" &&
+            finding !== null &&
+            (finding as Record<string, unknown>).state === "lost"
+        );
+    });
 }
 
 /** The recorded guardrail verdict: mutation policy or destructive loss. */
-function guardrailFor(meta, gateAt, assessment) {
+function guardrailFor(
+    meta: unknown,
+    gateAt: unknown,
+    assessment: { preservation?: unknown },
+): boolean {
     return (
         guardrailOf(meta, gateAt) || preservationLost(assessment.preservation)
     );
 }
 
 /** The duration a recorded run reports, or null. */
-function durationOf(meta) {
-    if (typeof meta?.timings?.totalMs === "number") return meta.timings.totalMs;
+function durationOf(meta: unknown): number | null {
+    if (typeof meta !== "object" || meta === null) return null;
+    const value = meta as Record<string, unknown>;
+    const timings =
+        typeof value.timings === "object" && value.timings !== null
+            ? (value.timings as Record<string, unknown>)
+            : {};
+    if (typeof timings.totalMs === "number") return timings.totalMs;
     if (
-        typeof meta?.startedAt !== "string" ||
-        typeof meta?.finishedAt !== "string"
+        typeof value.startedAt !== "string" ||
+        typeof value.finishedAt !== "string"
     ) {
         return null;
     }
-    return Date.parse(meta.finishedAt) - Date.parse(meta.startedAt);
+    return Date.parse(value.finishedAt) - Date.parse(value.startedAt);
 }
 
 /** The recorded judgement, preferring a deterministic parse resolution. */
-function resolvedJudgement(dir) {
+function resolvedJudgement(
+    dir: string,
+): Record<string, unknown> | null {
     const resolution = readJson(join(dir, "ac/attempt-001/resolution.json"));
-    if (resolution?.status === "judged") {
-        return { status: "judged", ...resolution.parsed };
+    if (typeof resolution === "object" && resolution !== null) {
+        const record = resolution as Record<string, unknown>;
+        if (record.status === "judged") {
+            const parsed =
+                typeof record.parsed === "object" && record.parsed !== null
+                    ? (record.parsed as Record<string, unknown>)
+                    : {};
+            return { status: "judged", ...parsed };
+        }
     }
-    return readJson(join(dir, "ac/attempt-001/judgement.json"));
+    const judgement = readJson(join(dir, "ac/attempt-001/judgement.json"));
+    return typeof judgement === "object" && judgement !== null
+        ? (judgement as Record<string, unknown>)
+        : null;
 }
 
 /** The assessment status when no judgement was recorded. */
-const missingStatus = (attempted) => (attempted ? "unassessed" : "not-run");
+const missingStatus = (attempted: boolean): string =>
+    attempted ? "unassessed" : "not-run";
 
 /** The documentation outcome when a judgement landed. */
-const outcomeOf = (judgement) =>
-    judgement?.status === "judged" ? judgement.documentationOutcome : undefined;
+const outcomeOf = (
+    judgement: Record<string, unknown> | null,
+): DocumentationOutcome | undefined => {
+    if (judgement?.status !== "judged") return undefined;
+    const value = judgement.documentationOutcome;
+    return DOCUMENTATION_OUTCOMES.includes(value as DocumentationOutcome)
+        ? (value as DocumentationOutcome)
+        : undefined;
+};
 
 /** A recorded value, or null when it is absent. */
-const orNull = (value) => (value === undefined ? null : value);
+const orNull = (value: unknown): unknown =>
+    value === undefined ? null : value;
 
 /** The evidence list of a judgement, always an array. */
-const evidenceOf = (judgement) => {
-    const evidence = orNull(judgement?.evidence);
-    return evidence === null ? [] : evidence;
+const evidenceOf = (judgement: Record<string, unknown> | null): unknown[] => {
+    const evidence = judgement?.evidence;
+    return Array.isArray(evidence) ? evidence : [];
 };
 
 /** The assessment status of a recorded judgement. */
-function judgementStatus(judgement, attempted) {
+function judgementStatus(
+    judgement: Record<string, unknown> | null,
+    attempted: boolean,
+): unknown {
     if (judgement?.status) return judgement.status;
     return missingStatus(attempted);
 }
 
 /** The resolved assessment of one trial. */
-function assessmentOf(dir, attempted) {
+function assessmentOf(dir: string, attempted: boolean) {
     const judgement = resolvedJudgement(dir);
-    const acMeta = readJson(join(dir, "ac/attempt-001/meta.json"));
+    const acMetaValue = readJson(join(dir, "ac/attempt-001/meta.json"));
+    const acMeta =
+        typeof acMetaValue === "object" && acMetaValue !== null
+            ? (acMetaValue as Record<string, unknown>)
+            : null;
     return {
-        status: judgementStatus(judgement, attempted),
+        status: String(judgementStatus(judgement, attempted)),
         outcome: outcomeOf(judgement),
         reason: orNull(judgement?.documentationReason),
         evidence: evidenceOf(judgement),
         preservation: orNull(judgement?.preservation),
-        tokens: orNull(acMeta?.usage),
+        tokens: tokenFieldsOf(acMeta?.usage),
         durationMs: orNull(acMeta?.durationMs),
     };
 }
 
+/** Normalise one usage object into four known token fields. */
+function tokenFieldsOf(value: unknown): {
+    input: number;
+    output: number;
+    reasoning: number;
+    cacheRead: number;
+} {
+    const usage =
+        typeof value === "object" && value !== null
+            ? (value as Record<string, unknown>)
+            : {};
+    const cache =
+        typeof usage.cache === "object" && usage.cache !== null
+            ? (usage.cache as Record<string, unknown>)
+            : {};
+    return {
+        input: typeof usage.input === "number" ? usage.input : 0,
+        output: typeof usage.output === "number" ? usage.output : 0,
+        reasoning: typeof usage.reasoning === "number" ? usage.reasoning : 0,
+        cacheRead: typeof cache.read === "number" ? cache.read : 0,
+    };
+}
+
+/** One scheduled report slot, including the confirmation role. */
+interface ReportSlot {
+    slot: number;
+    pairId: string;
+    repetition: number;
+    scenario: string;
+    arm: string;
+    stamp: string;
+    role?: "F" | "A";
+}
+
+/** One trial row the legacy report aggregates. */
+interface TrialRecord {
+    stage: string;
+    slot: number;
+    stamp: string;
+    arm: string;
+    role: "F" | "A" | null;
+    scenario: string;
+    repetition: number;
+    attempted: boolean;
+    usable: boolean;
+    assessmentStatus: string;
+    outcome: DocumentationOutcome | undefined;
+    primary: "pass" | "fail" | "unknown";
+    guardrailBreach: boolean;
+    gateStatus: string;
+    gateReason: unknown;
+    policyViolations: unknown[];
+    writes: unknown;
+    tokens: TokenUsage;
+    durationMs: number | null;
+    acDurationMs: unknown;
+    acTokens: {
+        input: number;
+        output: number;
+        reasoning: number;
+        cacheRead: number;
+    };
+    acReason: unknown;
+    acEvidence: unknown[];
+    writesText: string;
+}
+
 /** Assemble one trial record from its result directory. */
-function trialRecord({ stage, slot, arm, base }) {
+function trialRecord({
+    stage,
+    slot,
+    arm,
+    base,
+}: {
+    stage: string;
+    slot: ReportSlot;
+    arm: string;
+    base: string;
+}): TrialRecord {
     const dir = join(base, "results", slot.stamp, slot.scenario);
-    const meta = readJson(join(dir, "meta.json"));
-    const gateAt = readJson(join(dir, "gate.json"));
+    const meta = objectOf(readJson(join(dir, "meta.json")));
+    const gateAt = objectOf(readJson(join(dir, "gate.json")));
     const primary = readJson(join(dir, "primary-check.json"));
     const attempted = existsSync(dir);
     const assessment = assessmentOf(dir, attempted);
@@ -948,9 +1323,11 @@ function trialRecord({ stage, slot, arm, base }) {
         outcome: assessment.outcome,
         primary: primaryCategory(primary),
         guardrailBreach: guardrailFor(meta, gateAt, assessment),
-        gateStatus: gateAt?.status ?? "missing",
+        gateStatus: String(gateAt?.status ?? "missing"),
         gateReason: gateAt?.reason ?? null,
-        policyViolations: meta?.policyViolations ?? [],
+        policyViolations: Array.isArray(meta?.policyViolations)
+            ? (meta.policyViolations as unknown[])
+            : [],
         writes: meta?.writes ?? null,
         tokens: usageOf(join(dir, "stdout.jsonl")),
         durationMs: durationOf(meta),
@@ -962,8 +1339,25 @@ function trialRecord({ stage, slot, arm, base }) {
     };
 }
 
+/** One JSON object, or null when the file is absent. */
+function objectOf(value: unknown): Record<string, unknown> | null {
+    return typeof value === "object" && value !== null
+        ? (value as Record<string, unknown>)
+        : null;
+}
+
+/** One arm's token total, trial and judge kept apart. */
+interface TokenTotals {
+    input: number;
+    output: number;
+    reasoning: number;
+    cacheRead: number;
+    judgeInput: number;
+    judgeOutput: number;
+}
+
 /** Empty token total. */
-const emptyTokens = () => ({
+const emptyTokens = (): TokenTotals => ({
     input: 0,
     output: 0,
     reasoning: 0,
@@ -973,7 +1367,7 @@ const emptyTokens = () => ({
 });
 
 /** Add one trial's tokens to an arm total. */
-function addTokens(total, trial) {
+function addTokens(total: TokenTotals, trial: TrialRecord): void {
     total.input += trial.tokens.input;
     total.output += trial.tokens.output;
     total.reasoning += trial.tokens.reasoning;
@@ -983,7 +1377,15 @@ function addTokens(total, trial) {
 }
 
 /** The scoring input for one trial. */
-const scored = (trial) => ({
+const scored = (trial: TrialRecord): {
+    arm: string;
+    scenario: string;
+    planned: boolean;
+    usable: boolean;
+    outcome: DocumentationOutcome | undefined;
+    primary: "pass" | "fail" | "unknown";
+    guardrailBreach: boolean;
+} => ({
     arm: trial.arm,
     scenario: trial.scenario,
     planned: true,
@@ -994,11 +1396,27 @@ const scored = (trial) => ({
 });
 
 /** Summarise every arm, with the presentation extras the report shows. */
-function summariseArms(arms, trials) {
-    const summaries = {};
+type ArmReport = ReturnType<typeof summariseArm> & {
+    attempted: number;
+    gatePass: number;
+    gateBlocked: number;
+    tokens: TokenTotals;
+};
+
+function summariseArms(
+    arms: string[],
+    trials: TrialRecord[],
+): Record<string, ArmReport> {
+    const summaries: Record<string, ArmReport> = {};
     for (const arm of arms) {
         const rows = trials.filter((trial) => trial.arm === arm);
-        const summary = summariseArm(rows.map(scored));
+        const summary: ArmReport = {
+            ...summariseArm(rows.map(scored)),
+            attempted: 0,
+            gatePass: 0,
+            gateBlocked: 0,
+            tokens: emptyTokens(),
+        };
         summary.attempted = rows.filter((trial) => trial.attempted).length;
         summary.gatePass = rows.filter(
             (row) => row.gateStatus === "pass",
@@ -1016,8 +1434,8 @@ function summariseArms(arms, trials) {
 }
 
 /** Per-scenario rows for every arm. */
-function scenarioRowsFor(arms, trials) {
-    const rows = [];
+function scenarioRowsFor(arms: string[], trials: TrialRecord[]) {
+    const rows: Array<Record<string, unknown>> = [];
     for (const arm of arms) {
         for (const scenario of [
             ...new Set(trials.map((trial) => trial.scenario)),
@@ -1051,14 +1469,19 @@ function scenarioRowsFor(arms, trials) {
 }
 
 /** The arm a slot runs, resolving confirmation roles through the finalist. */
-function armOf(slot, finalist) {
+interface Finalist {
+    arm?: string;
+    control?: string;
+}
+
+function armOf(slot: ReportSlot, finalist: Finalist | null): string {
     if (slot.role === "F") return finalist?.arm ?? "?";
     if (slot.role === "A") return finalist?.control ?? "A";
     return slot.arm;
 }
 
 /** The stage base directory for one arm. */
-function baseOf(root, stage, arm) {
+function baseOf(root: string, stage: string, arm: string): string {
     const letter = arm.toLowerCase();
     return stage === "confirmation"
         ? join(root, "gen", letter, "holdout")
@@ -1066,21 +1489,31 @@ function baseOf(root, stage, arm) {
 }
 
 /** Rank eligible arms when the caller supplies the description lengths. */
-function rankedFor(arms, summaries, controlArm, characters) {
+function rankedFor(
+    arms: string[],
+    summaries: Record<string, ArmReport>,
+    controlArm: string,
+    characters: Record<string, number> | null,
+) {
     if (!characters) return null;
-    return rankCandidates(
-        arms
-            .filter((arm) => arm !== controlArm)
-            .map((arm) => ({
-                arm,
-                characters: characters[arm],
-                summary: summaries[arm],
-            })),
-    );
+    const candidates = arms
+        .filter((arm) => arm !== controlArm)
+        .flatMap((arm) => {
+            const charactersForArm = characters[arm];
+            const summary = summaries[arm];
+            if (charactersForArm === undefined || summary === undefined)
+                return [];
+            return [{ arm, characters: charactersForArm, summary }];
+        });
+    return rankCandidates(candidates);
 }
 
 /** Render the compact stage summary table. */
-function renderSummary(stage, arms, summaries) {
+function renderSummary(
+    stage: string,
+    arms: string[],
+    summaries: Record<string, ArmReport>,
+): string {
     const lines = [
         `# ${stage} summary`,
         "",
@@ -1089,6 +1522,7 @@ function renderSummary(stage, arms, summaries) {
     ];
     for (const arm of arms) {
         const summary = summaries[arm];
+        if (summary === undefined) continue;
         const outcomes = OUTCOME_KEYS.map((key) => summary.outcomes[key]).join(
             "/",
         );
@@ -1110,20 +1544,36 @@ function renderSummary(stage, arms, summaries) {
  *   `--finalist`, optional `--characters`.
  * @returns 0.
  */
-function report(args) {
+function report(args: Map<string, string | undefined>): number {
     const root = need(args, "--root");
     const stage = need(args, "--stage");
     const outDir = need(args, "--out-dir");
-    const schedule = JSON.parse(readFileSync(need(args, "--schedule"), "utf8"));
+    const schedule = recordOf(
+        JSON.parse(readFileSync(need(args, "--schedule"), "utf8")),
+        need(args, "--schedule"),
+    );
     const finalistAt = args.get("--finalist");
-    const finalist = finalistAt
-        ? JSON.parse(readFileSync(finalistAt, "utf8"))
-        : null;
+    const finalist =
+        finalistAt === undefined
+            ? null
+            : (recordOf(
+                  JSON.parse(readFileSync(finalistAt, "utf8")),
+                  finalistAt,
+              ) as Finalist);
     const charactersAt = args.get("--characters");
-    const characters = charactersAt
-        ? JSON.parse(readFileSync(charactersAt, "utf8"))
-        : null;
-    const trials = (schedule[stage] ?? []).map((slot) => {
+    const characters =
+        charactersAt === undefined
+            ? null
+            : (recordOf(
+                  JSON.parse(readFileSync(charactersAt, "utf8")),
+                  charactersAt,
+              ) as Record<string, number>);
+    const reportSlots = schedule[stage];
+    if (!Array.isArray(reportSlots)) {
+        throw new Error(`${need(args, "--schedule")}.${stage} must be an array`);
+    }
+    const trials = reportSlots.map((value) => {
+        const slot = recordOf(value, `${stage} slot`) as unknown as ReportSlot;
         const arm = armOf(slot, finalist);
         return trialRecord({
             stage,
@@ -1156,14 +1606,18 @@ function report(args) {
         ranked: rankedFor(arms, summaries, controlArm, characters),
         qualifying: arms
             .filter((arm) => arm !== controlArm)
-            .map((arm) => ({
-                arm,
-                verdict: finalistQualifies(
-                    summaries[controlArm],
-                    summaries[arm],
-                    2,
-                ),
-            })),
+            .flatMap((arm) => {
+                const control = summaries[controlArm];
+                const candidate = summaries[arm];
+                if (control === undefined || candidate === undefined)
+                    return [];
+                return [
+                    {
+                        arm,
+                        verdict: finalistQualifies(control, candidate, 2),
+                    },
+                ];
+            }),
     };
     mkdirSync(outDir, { recursive: true });
     writeJson(join(outDir, `ANALYSIS-${stage}.json`), analysis);
@@ -1176,8 +1630,8 @@ function report(args) {
 }
 
 /** Hash every evidence file, excluding signing keys. */
-function evidenceRows(root) {
-    const walk = (dir, files = []) => {
+function evidenceRows(root: string): string[] {
+    const walk = (dir: string, files: string[] = []): string[] => {
         for (const entry of readdirSync(dir, { withFileTypes: true })) {
             const path = join(dir, entry.name);
             if (entry.isDirectory()) {
@@ -1190,7 +1644,7 @@ function evidenceRows(root) {
         }
         return files;
     };
-    const rows = [];
+    const rows: string[] = [];
     for (const dir of ["gen", "controls", "evidence", "logs"]) {
         if (!existsSync(join(root, dir))) continue;
         for (const path of walk(join(root, dir)).sort()) {
@@ -1207,7 +1661,7 @@ function evidenceRows(root) {
 }
 
 /** Read a manifest into a path→hash map. */
-function manifestMap(path) {
+function manifestMap(path: string): Map<string, string | undefined> {
     return new Map(
         readText(path)
             .split("\n")
@@ -1224,7 +1678,7 @@ function manifestMap(path) {
  * @param args `--root` and either `--write` or `--verify`.
  * @returns 0 when written or verified, 1 when verification fails.
  */
-function manifest(args) {
+function manifest(args: Map<string, string | undefined>): number {
     const root = need(args, "--root");
     const rows = evidenceRows(root);
     const path = join(root, "evidence/EVIDENCE.sha256");
@@ -1279,7 +1733,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
             }
             default:
                 console.error(
-                    "usage: run.mjs schedule|gate|judge|resolve|report|manifest|clear-reservation [--flag value]",
+                    "usage: run.mts schedule|gate|judge|resolve|report|manifest|clear-reservation [--flag value]",
                 );
                 return 2;
         }

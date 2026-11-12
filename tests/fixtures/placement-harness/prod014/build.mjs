@@ -54,7 +54,12 @@ const base = (id, fields) => ({
 const reused = (id, overrides = {}) => {
     const found = repaired.find((entry) => entry.id === id);
     if (found === undefined) throw new Error(`missing repaired case ${id}`);
-    return { ...found, ...overrides };
+    // The live corpus runs the typechecked .mts primary checks.
+    return {
+        ...found,
+        ...overrides,
+        primaryCheck: { ...found.primaryCheck, script: `${id}.mts` },
+    };
 };
 
 const stagingSeeds = [
@@ -651,7 +656,7 @@ const s02 = base("S02", {
     },
     primaryCheck: {
         id: "s02-staging-order",
-        script: "S02.mjs",
+        script: "S02.mts",
         timeoutMs: 120000,
     },
 });
@@ -713,7 +718,7 @@ const s05 = base("S05", {
     },
     primaryCheck: {
         id: "s05-bruno-assertion",
-        script: "S05.mjs",
+        script: "S05.mts",
         timeoutMs: 180000,
     },
 });
@@ -777,7 +782,7 @@ const s06 = base("S06", {
     },
     primaryCheck: {
         id: "s06-ado-status",
-        script: "S06.mjs",
+        script: "S06.mts",
         timeoutMs: 120000,
     },
 });
@@ -835,7 +840,7 @@ const s07 = base("S07", {
     },
     primaryCheck: {
         id: "s07-upgrade-condition",
-        script: "S07.mjs",
+        script: "S07.mts",
         timeoutMs: 180000,
     },
 });

@@ -4,7 +4,16 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { credentialFileProblem, loadJudgeKey } from "./env.mjs";
+import { credentialFileProblem, loadJudgeKey } from "./env.mts";
+import {
+    filesUnder,
+    freezeRecordOf,
+    manifestOf,
+    readJson,
+    readText,
+    recordOf,
+    scheduleOf,
+} from "./contracts.mts";
 import { parseCampaignLedger } from "../runner/ledger.ts";
 import { advanceClaim, claimBudget, releaseClaim } from "../runner/budget.ts";
 import { resolveRecoverySelection } from "../runner/selector.ts";
@@ -14,26 +23,21 @@ const ROOT = process.env.CAMPAIGN_ROOT;
 if (!ROOT) throw new Error("CAMPAIGN_ROOT is required");
 const EVIDENCE = join(ROOT, "evidence");
 const MEASUREMENT = join(ROOT, "measurement");
-const AC = join(MEASUREMENT, "tests/fixtures/placement-harness/ac/run.mjs");
+const AC = join(MEASUREMENT, "tests/fixtures/placement-harness/ac/run.mts");
 const LEDGER = join(EVIDENCE, "ATTEMPTS.jsonl");
 const JUDGE = "zai-coding-plan/glm-5.3-flash";
 const argv = process.argv.slice(2);
-const selectionFlag = (name) =>
+const selectionFlag = (name: string): string | undefined =>
     argv.includes(name) ? argv[argv.indexOf(name) + 1] : undefined;
-const schedule = JSON.parse(
-    readFileSync(join(EVIDENCE, "schedule.json"), "utf8"),
-).slots;
+const schedule = scheduleOf(join(EVIDENCE, "schedule.json")).slots;
 const slots = schedule.filter((slot) => Number(slot.pairId.slice(1)) <= 4);
-const readJson = (path) =>
-    existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
-const ledger = (entry) =>
+const ledger = (entry: Record<string, unknown>): void =>
     appendFileSync(
         LEDGER,
         `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`,
     );
-const readText = (path) => (existsSync(path) ? readFileSync(path, "utf8") : "");
 
-const manifest = readJson(join(ROOT, "prepare/manifest.json"));
+const manifest = manifestOf(join(ROOT, "prepare/manifest.json"));
 const selection = resolveRecoverySelection({
     manifestAttemptId: manifest?.assessment?.attemptId ?? null,
     recoveryAttemptId: selectionFlag("--attempt-id") ?? "attempt-002",
@@ -43,27 +47,20 @@ if (!selection.ok) {
     process.exit(2);
 }
 const attemptId = selection.selection.attemptId;
-const frozen = readJson(join(EVIDENCE, "FROZEN.json"));
-const freezeRecord = frozen?.freeze ?? null;
+const frozen = recordOf(
+    readJson(join(EVIDENCE, "FROZEN.json")),
+    "FROZEN.json",
+);
+const freezeRecord = freezeRecordOf(frozen.freeze);
 const judgeCeiling = Number(freezeRecord?.ceilings?.judge ?? 0);
 const MAIN = process.env.CAMPAIGN_SOURCE_REPO ?? process.cwd();
-const capture = (command, args) => {
+const capture = (command: string, args: string[]): string => {
     const result = spawnSync(command, args, { encoding: "utf8" });
     return result.status === 0 ? String(result.stdout ?? "").trim() : "";
 };
-const filesUnder = (dir) => {
-    if (!existsSync(dir)) return [];
-    const found = [];
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const path = join(dir, entry.name);
-        if (entry.isDirectory()) found.push(...filesUnder(path));
-        else if (entry.isFile()) found.push(path);
-    }
-    return found.sort();
-};
-
-const premiseProblems = () => {
-    const record = frozen?.freeze ?? null;
+const premiseProblems = (): string[] => {
+    const record = freezeRecord;
+    if (record === null) return ["no freeze record"];
     const unusable = spendFreezeProblem(record);
     if (unusable !== null) return [unusable];
     const files = record.files.map((file) => {
@@ -120,11 +117,17 @@ const spendRefusal = () => {
 };
 
 /** Whether an existing recovery attempt carries a usable judgement. */
-const usableJudgement = (dir) => {
-    const judgement = readJson(join(dir, "judgement.json"));
-    if (judgement?.status === "judged") return true;
-    const resolution = readJson(join(dir, "resolution.json"));
-    return resolution?.status === "judged";
+const usableJudgement = (dir: string): boolean => {
+    const judgement = recordOf(
+        readJson(join(dir, "judgement.json")),
+        `${dir}/judgement.json`,
+    );
+    if (judgement.status === "judged") return true;
+    const resolution = recordOf(
+        readJson(join(dir, "resolution.json")),
+        `${dir}/resolution.json`,
+    );
+    return resolution.status === "judged";
 };
 
 const refusal = spendRefusal();
@@ -176,8 +179,11 @@ for (const slot of slots) {
         );
         process.exit(2);
     }
-    const meta = readJson(join(caseDir, "meta.json"));
-    if (meta === null || meta.answerValid !== true || meta.exit !== 0) {
+    const meta = recordOf(
+        readJson(join(caseDir, "meta.json")),
+        `${caseDir}/meta.json`,
+    );
+    if (meta.answerValid !== true || meta.exit !== 0) {
         console.error(`${slot.stamp}: trial is not a usable recorded result`);
         process.exit(2);
     }
@@ -304,17 +310,26 @@ for (const slot of slots) {
     });
     advanceClaim(claim.claim, "spawned");
     advanceClaim(claim.claim, "closed");
-    const judgement = readJson(join(attemptDir, "judgement.json"));
+    const judgement = recordOf(
+        readJson(join(attemptDir, "judgement.json")),
+        `${attemptDir}/judgement.json`,
+    );
     loggerExit(slot, result, judgement);
-    if (judgement?.status !== "judged") {
+    const retrieval =
+        typeof judgement.retrievalApplication === "object" &&
+        judgement.retrievalApplication !== null
+            ? ((judgement.retrievalApplication as Record<string, unknown>)
+                  .state ?? "n/a")
+            : "n/a";
+    if (judgement.status !== "judged") {
         console.error(
-            `BLOCKER: ${slot.stamp} recovery judgement is ${judgement?.status ?? "missing"}`,
+            `BLOCKER: ${slot.stamp} recovery judgement is ${String(judgement.status ?? "missing")}`,
         );
         process.exit(2);
     }
     judged += 1;
     console.log(
-        `${slot.stamp}: ${judgement.documentationOutcome}; retrieval ${judgement.retrievalApplication?.state ?? "n/a"}`,
+        `${slot.stamp}: ${String(judgement.documentationOutcome)}; retrieval ${String(retrieval)}`,
     );
 }
 
@@ -327,7 +342,11 @@ console.log(`recovery complete: ${judged} judgement(s)`);
  * @param result The spawned process result.
  * @param judgement The parsed judgement pointer.
  */
-function loggerExit(slot, result, judgement) {
+function loggerExit(
+    slot: (typeof slots)[number],
+    result: ReturnType<typeof spawnSync>,
+    judgement: Record<string, unknown> | null,
+): void {
     ledger({
         event: "judge-exit",
         slot: slot.slot,
@@ -340,6 +359,11 @@ function loggerExit(slot, result, judgement) {
         exit: result.status,
         status: judgement?.status ?? "missing",
         outcome: judgement?.documentationOutcome ?? null,
-        retrieval: judgement?.retrievalApplication?.state ?? null,
+        retrieval:
+            typeof judgement?.retrievalApplication === "object" &&
+            judgement.retrievalApplication !== null
+                ? ((judgement.retrievalApplication as Record<string, unknown>)
+                      .state ?? null)
+                : null,
     });
 }
