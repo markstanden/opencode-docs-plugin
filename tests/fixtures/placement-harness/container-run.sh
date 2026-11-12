@@ -73,21 +73,32 @@ require_podman() {
 
 prepare_image() {
     require_podman
-    podman build -q \
-        --build-arg "HOST_UID=$(id -u)" \
-        --build-arg "HOST_GID=$(id -g)" \
-        --network host \
-        -t "$IMAGE" \
-        "$HERE" >&2
-
+    if [ -n "${PLACEMENT_TRIAL_IMAGE_ID:-}" ]; then
+        # Dispatch the frozen image by immutable id, never by a mutable tag.
+        podman image exists "$PLACEMENT_TRIAL_IMAGE_ID" >/dev/null 2>&1 || {
+            echo "frozen image $PLACEMENT_TRIAL_IMAGE_ID is not available" >&2
+            exit 1
+        }
+        IMAGE_ID="$PLACEMENT_TRIAL_IMAGE_ID"
+    else
+        podman build -q \
+            --build-arg "HOST_UID=$(id -u)" \
+            --build-arg "HOST_GID=$(id -g)" \
+            --network host \
+            -t "$IMAGE" \
+            "$HERE" >&2
+        IMAGE_ID="$(podman image inspect --format '{{.Id}}' "$IMAGE" 2>/dev/null || true)"
+    fi
     mkdir -p "$PROMPTS" "$FIXTURES" "$RUBRICS" "$RESULTS" "$RUN_FIXTURES"
 
-    IMAGE_ID="$(podman image inspect --format '{{.Id}}' "$IMAGE" 2>/dev/null || true)"
     TIMEOUT_ENV=()
     if [ -n "${TRIAL_TIMEOUT_MS:-}" ]; then
         TIMEOUT_ENV=(-e "TRIAL_TIMEOUT_MS=$TRIAL_TIMEOUT_MS")
     fi
-    FIXTURE_HASH="$(sha256sum "$CASES" | awk '{print $1}')"
+    FIXTURE_HASH=""
+    if [ -f "$CASES" ]; then
+        FIXTURE_HASH="$(sha256sum "$CASES" | awk '{print $1}')"
+    fi
 
     # The overlay travels by name: its value must not be a container argument
     # (or a shim log line).
@@ -122,7 +133,7 @@ run_generate() {
         -v "$FIXTURES:/fixtures" \
         -v "$RUBRICS:/rubrics" \
         -v "$RESULTS:/results" \
-        "$IMAGE" \
+        "$IMAGE_ID" \
         node /repo/tests/fixtures/placement-harness/harness.mts \
         generate \
         --plugin /repo \
@@ -443,7 +454,7 @@ run_cases() {
             -v "$REPO/src:/repo/src:ro" \
             -v "$REPO/node_modules:/repo/node_modules:ro" \
             -v "$REPO/CONVENTION.md:/repo/CONVENTION.md:ro" \
-            "$IMAGE" \
+            "$IMAGE_ID" \
             node /harness/harness.mts \
             run "$id" \
             --plugin /repo \
@@ -505,6 +516,10 @@ describe)
     ;;
 generate)
     run_generate "$@"
+    ;;
+build-image)
+    prepare_image
+    printf '%s\n' "$IMAGE_ID"
     ;;
 run)
     run_cases "$@"

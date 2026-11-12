@@ -35,13 +35,21 @@ function arm(dir: string): void {
     write(join(dir, "src/index.ts"), "export default {};\n");
     write(
         join(dir, "tests/fixtures/placement-harness/container-run.sh"),
-        "#!/usr/bin/env sh\nexit 0\n",
+        `#!/usr/bin/env sh
+if [ "$1" = build-image ]; then printf 'sha256:frozen-image\\n'; fi
+exit 0
+`,
     );
     write(
         join(dir, "tests/fixtures/placement-harness/harness.mts"),
         "// harness\n",
     );
     write(join(dir, "package-lock.json"), "{}\n");
+    write(join(dir, "package.json"), "{}\n");
+    write(
+        join(dir, "tests/fixtures/placement-harness/scenario-names.mts"),
+        "// names\n",
+    );
     write(
         join(dir, "tests/fixtures/placement-harness/prod014/cases.json"),
         JSON.stringify(
@@ -61,6 +69,10 @@ function arm(dir: string): void {
             "process.exit(0);\n",
         );
     }
+    chmodSync(
+        join(dir, "tests/fixtures/placement-harness/container-run.sh"),
+        0o755,
+    );
     execFileSync("git", ["init", "-q"], { cwd: dir });
     execFileSync("git", ["add", "-A"], { cwd: dir });
     execFileSync(
@@ -104,6 +116,10 @@ function fixture(): {
     for (const letter of ["a", "b"] as const) {
         arm(join(root, "arms", letter));
         write(join(root, `gen/${letter}/prompts/R01.md`), "task prompt\n");
+        write(
+            join(root, `gen/${letter}/rubrics/R01/rubric.md`),
+            "rubric\n",
+        );
         for (const id of ids) {
             write(
                 join(root, `gen/${letter}/fixtures/${id}/generation.json`),
@@ -160,6 +176,7 @@ function fixture(): {
         "tests/fixtures/placement-harness/ac/run.mjs",
         "tests/fixtures/placement-harness/ac/judge-launcher.sh",
         "tests/fixtures/placement-harness/analysis/analyse.mts",
+        "tests/fixtures/placement-harness/harness.mts",
     ]) {
         write(join(measurement, path), "// measurement\n");
     }
@@ -180,7 +197,9 @@ function fixture(): {
         join(bin, "podman"),
         `#!/usr/bin/env sh
 case "$1" in
+  --version) echo "podman 5.0.0" ; exit 0 ;;
   image) cat ${JSON.stringify(imageFile)} ; exit 0 ;;
+  build) exit 0 ;;
   run) echo "opencode 2.2.7" ; exit 0 ;;
 esac
 exit 0
@@ -315,6 +334,132 @@ function rejudgeCampaign(
     });
 }
 
+/** Run one launch and assert the premise blocked before any child ran. */
+function expectBlocked(
+    root: string,
+    bin: string,
+    source: string,
+    counter: string,
+    pattern: RegExp,
+): void {
+    const run = runCampaign(root, bin, source, counter);
+    assert.equal(run.status, 2, String(run.stderr));
+    assert.match(String(run.stderr), pattern);
+    assert.equal(
+        existsSync(counter) ? readFileSync(counter, "utf8") : "",
+        "",
+    );
+}
+
+describe("freeze use at the spend boundary", () => {
+    it("refuses to spend without a freeze at all", () => {
+        // Arrange
+        const { root, bin, source } = fixture();
+        const counter = join(root, "counter.txt");
+        try {
+            rmSync(join(root, "evidence/FROZEN.json"), { force: true });
+
+            // Act / Assert
+            expectBlocked(root, bin, source, counter, /no freeze record/);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("refuses a changed B plugin", () => {
+        // Arrange
+        const { root, bin, source } = fixture();
+        const counter = join(root, "counter.txt");
+        try {
+            assert.equal(freeze(root, bin, source).status, 0);
+            write(join(root, "arms/b/src/index.ts"), "export default 2;\n");
+
+            // Act / Assert
+            expectBlocked(root, bin, source, counter, /frozen premise changed/);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("refuses an input added after the freeze", () => {
+        // Arrange
+        const { root, bin, source } = fixture();
+        const counter = join(root, "counter.txt");
+        try {
+            assert.equal(freeze(root, bin, source).status, 0);
+            write(join(root, "gen/a/fixtures/R01/added.txt"), "added\n");
+
+            // Act / Assert
+            expectBlocked(root, bin, source, counter, /immutable input changed/);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("refuses a changed measurement launcher before recovery", () => {
+        // Arrange
+        const { root, bin, source } = fixture();
+        const counter = join(root, "counter.txt");
+        try {
+            assert.equal(freeze(root, bin, source).status, 0);
+            write(
+                join(
+                    root,
+                    "measurement/tests/fixtures/placement-harness/ac/run.mjs",
+                ),
+                "// changed launcher\n",
+            );
+
+            // Act
+            const rejudge = rejudgeCampaign(root, bin, source, counter);
+
+            // Assert
+            assert.equal(rejudge.status, 2);
+            assert.match(String(rejudge.stderr), /frozen premise changed/);
+            assert.equal(
+                existsSync(counter) ? readFileSync(counter, "utf8") : "",
+                "",
+            );
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("refuses an image substituted between preflight and dispatch", () => {
+        // Arrange
+        const { root, bin, imageFile, source } = fixture();
+        const counter = join(root, "counter.txt");
+        try {
+            assert.equal(freeze(root, bin, source).status, 0);
+            // The first inspect passes; every later one reports a rebuild.
+            write(
+                join(bin, "podman"),
+                `#!/usr/bin/env sh
+case "$1" in
+  --version) echo "podman 5.0.0" ; exit 0 ;;
+  image)
+    if [ -f ${JSON.stringify(join(root, "seen-image"))} ]; then
+      echo "sha256:substituted"
+    else
+      : >${JSON.stringify(join(root, "seen-image"))}
+      cat ${JSON.stringify(imageFile)}
+    fi
+    exit 0 ;;
+  run) echo "opencode 2.2.7" ; exit 0 ;;
+esac
+exit 0
+`,
+            );
+            chmodSync(join(bin, "podman"), 0o755);
+
+            // Act / Assert
+            expectBlocked(root, bin, source, counter, /container image changed/);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+});
+
 describe("frozen premise enforcement", () => {
     it("refuses a changed rubric with no trial spawn and an intact freeze", () => {
         // Arrange
@@ -369,12 +514,13 @@ describe("frozen premise enforcement", () => {
             assert.equal(freeze(root, bin, source).status, 0);
 
             // Act
-            runCampaign(root, bin, source, counter);
+            const run = runCampaign(root, bin, source, counter);
 
             // Assert: the premise passed and the single trial stub ran.
             assert.match(
                 existsSync(counter) ? readFileSync(counter, "utf8") : "",
                 /trial/,
+                `stderr: ${String(run.stderr)}`,
             );
         } finally {
             rmSync(root, { recursive: true, force: true });

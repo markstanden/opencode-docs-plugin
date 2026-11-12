@@ -20,6 +20,17 @@ export interface FrozenFile {
     sha256: string;
 }
 
+/** One directory inventory: every file under it, path-sorted. */
+export interface FrozenInventory {
+    /** The root-relative directory identity. */
+    path: string;
+    /** Every file beneath it. */
+    files: FrozenFile[];
+}
+
+/** The current freeze record format. */
+export const FREEZE_SCHEMA_VERSION = 2;
+
 /** One arm's frozen identity. */
 export interface FrozenArm {
     /** The arm id. */
@@ -46,6 +57,8 @@ export interface FrozenArm {
 
 /** The frozen record. */
 export interface FreezeRecord {
+    /** The record format; absent means a legacy, read-only freeze. */
+    schemaVersion: number;
     /** The campaign id. */
     campaign: string;
     /** The source revision the campaign was materialised from. */
@@ -60,8 +73,10 @@ export interface FreezeRecord {
     measurementSha256: string;
     /** The arms, in id order. */
     arms: FrozenArm[];
-    /** Every immutable input, path-sorted. */
+    /** Every immutable single-file input, path-sorted. */
     files: FrozenFile[];
+    /** Every immutable input directory and its complete file inventory. */
+    inventories: FrozenInventory[];
     /** The stopping rules, verbatim. */
     stoppingRules: string[];
     /** The trial and judge ceilings. */
@@ -90,6 +105,8 @@ export interface FreezeInput {
     arms: readonly FrozenArm[];
     /** Every immutable input. */
     files: readonly FrozenFile[];
+    /** Every immutable input directory. */
+    inventories: readonly FrozenInventory[];
     /** The stopping rules. */
     stoppingRules: readonly string[];
     /** The trial and judge ceilings. */
@@ -214,6 +231,7 @@ export function freezeExperiment(input: FreezeInput): FreezeOutcome {
         ...armSetProblems(input.arms),
         ...identityProblems(input),
         ...inputFileProblems(input.files),
+        ...inventoryProblems(input.inventories),
     ];
     if (problems.length > 0) return { ok: false, problems };
     const byPath = new Map<string, FrozenFile>();
@@ -221,6 +239,7 @@ export function freezeExperiment(input: FreezeInput): FreezeOutcome {
     return {
         ok: true,
         record: {
+            schemaVersion: FREEZE_SCHEMA_VERSION,
             campaign: input.campaign,
             sourceRevision: input.sourceRevision,
             sourceTree: input.sourceTree,
@@ -233,10 +252,43 @@ export function freezeExperiment(input: FreezeInput): FreezeOutcome {
             files: [...byPath.values()].sort((left, right) =>
                 left.path.localeCompare(right.path),
             ),
+            inventories: [...input.inventories]
+                .map((inventory) => ({
+                    path: inventory.path,
+                    files: [...inventory.files].sort((left, right) =>
+                        left.path.localeCompare(right.path),
+                    ),
+                }))
+                .sort((left, right) => left.path.localeCompare(right.path)),
             stoppingRules: [...input.stoppingRules],
             ceilings: input.ceilings as { trial: number; judge: number },
         },
     };
+}
+
+/**
+ * The inventory preconditions.
+ * @param inventories The declared directory inventories.
+ * @returns Problems; empty means each inventory is usable.
+ */
+function inventoryProblems(inventories: readonly FrozenInventory[]): string[] {
+    const problems: string[] = [];
+    for (const inventory of inventories) {
+        if (inventory.path.trim() === "") {
+            problems.push("every inventory needs a directory path");
+        }
+        if (inventory.files.length === 0) {
+            problems.push(`inventory ${inventory.path} is empty`);
+        }
+        for (const file of inventory.files) {
+            if (!file.path.startsWith(`${inventory.path}/`)) {
+                problems.push(
+                    `inventory file ${file.path} is outside ${inventory.path}`,
+                );
+            }
+        }
+    }
+    return problems;
 }
 
 /**
@@ -385,8 +437,10 @@ export function writeFreeze(
 
 /** The observed state a verification compares against the freeze. */
 export interface FreezeObservation {
-    /** The current immutable inputs. */
+    /** The current immutable single-file inputs. */
     files: readonly FrozenFile[];
+    /** The current inventory for every declared directory. */
+    inventories: readonly FrozenInventory[];
     /** The image identity actually executed. */
     imageId: string;
     /** The container CLI actually used. */
@@ -396,7 +450,40 @@ export interface FreezeObservation {
 }
 
 /**
- * Compare observed inputs with the frozen record.
+ * Why a freeze cannot authorise new spend, or null when it can.
+ * @param record The recorded freeze, or undefined when absent.
+ * @returns The refusal, or null for a modern complete record.
+ */
+export function spendFreezeProblem(
+    record: FreezeRecord | null | undefined,
+): string | null {
+    if (record === null || record === undefined) {
+        return "no freeze record; new spend requires a validated freeze";
+    }
+    if (record.schemaVersion !== FREEZE_SCHEMA_VERSION) {
+        return `freeze format ${String(record.schemaVersion)} is legacy and read-only; re-freeze before spending`;
+    }
+    if (!Array.isArray(record.inventories) || record.inventories.length === 0) {
+        return "the freeze carries no input inventory; it cannot detect added inputs";
+    }
+    if (
+        record.ceilings === null ||
+        !Number.isInteger(record.ceilings.trial) ||
+        !Number.isInteger(record.ceilings.judge) ||
+        record.ceilings.trial < 1 ||
+        record.ceilings.judge < 1
+    ) {
+        return "the freeze carries no valid trial and judge ceilings";
+    }
+    if (record.imageId.trim() === "") {
+        return "the freeze carries no container image identity";
+    }
+    return null;
+}
+
+/**
+ * Compare observed inputs with the frozen record, including directory
+ * inventories in both directions so an added input is caught too.
  * @param record The frozen record.
  * @param observation What is present now.
  * @returns Every mismatch; empty means the premise still holds.
@@ -432,6 +519,47 @@ export function verifyFreeze(
     }
     for (const path of [...frozen.keys()].sort()) {
         problems.push(`immutable input missing: ${path}`);
+    }
+    problems.push(
+        ...inventoryProblemsOf(record.inventories, observation.inventories),
+    );
+    return problems;
+}
+
+/**
+ * Compare every declared directory inventory with what is present.
+ * @param frozen The recorded inventories.
+ * @param observed The inventories read now.
+ * @returns Added, changed and missing file problems.
+ */
+function inventoryProblemsOf(
+    frozen: readonly FrozenInventory[],
+    observed: readonly FrozenInventory[],
+): string[] {
+    const problems: string[] = [];
+    const byPath = new Map(observed.map((entry) => [entry.path, entry]));
+    for (const inventory of frozen) {
+        const current = byPath.get(inventory.path);
+        if (current === undefined) {
+            problems.push(`inventory missing: ${inventory.path}`);
+            continue;
+        }
+        byPath.delete(inventory.path);
+        const expected = new Map(
+            inventory.files.map((file) => [file.path, file.sha256]),
+        );
+        for (const file of current.files) {
+            if (expected.get(file.path) !== file.sha256) {
+                problems.push(`immutable input changed: ${file.path}`);
+            }
+            expected.delete(file.path);
+        }
+        for (const path of [...expected.keys()].sort()) {
+            problems.push(`immutable input missing: ${path}`);
+        }
+    }
+    for (const path of [...byPath.keys()].sort()) {
+        problems.push(`unexpected inventory: ${path}`);
     }
     return problems;
 }

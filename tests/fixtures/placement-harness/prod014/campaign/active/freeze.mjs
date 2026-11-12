@@ -5,7 +5,6 @@ import {
     existsSync,
     readFileSync,
     readdirSync,
-    statSync,
     writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -51,6 +50,33 @@ const frozenFile = (path) => ({
     path: path.slice(ROOT.length + 1),
     sha256: hash(path),
 });
+
+/** One immutable directory and its complete file inventory. */
+const frozenInventory = (dir) => ({
+    path: dir.slice(ROOT.length + 1),
+    files: filesUnder(dir).map(frozenFile),
+});
+
+/**
+ * Build (or resolve) the image before freezing, then keep its immutable id.
+ * A tag rebuilt between freeze and dispatch can no longer change what runs.
+ */
+const resolveImage = () => {
+    try {
+        const id = execFileSync(
+            join(
+                ROOT,
+                "arms/a/tests/fixtures/placement-harness/container-run.sh",
+            ),
+            ["build-image"],
+            { encoding: "utf8", env: { ...process.env } },
+        ).trim();
+        if (id === "") return "unavailable: image build returned no id";
+        return id;
+    } catch (error) {
+        return `unavailable: ${String(error)}`;
+    }
+};
 const capture = (command, args) => {
     try {
         return execFileSync(command, args, { encoding: "utf8" }).trim();
@@ -240,20 +266,8 @@ const identities = {
         hostOpencode: capture("opencode", ["--version"]),
         node: process.version,
         image: "localhost/opencode-placement-trials",
-        imageId: capture("podman", [
-            "image",
-            "inspect",
-            "--format",
-            "{{.Id}}",
-            "localhost/opencode-placement-trials",
-        ]),
-        containerOpencode: capture("podman", [
-            "run",
-            "--rm",
-            "localhost/opencode-placement-trials",
-            "opencode",
-            "--version",
-        ]),
+        imageId: resolveImage(),
+        containerCli: capture("podman", ["--version"]),
     },
     budget: {
         plannedTrials: 16,
@@ -311,6 +325,23 @@ const armFreeze = (letter) => ({
         identities.arms[letter.toUpperCase()].surfaces.annotationHash,
 });
 
+const inventoryDirs = [
+    join(ROOT, "gen/a/prompts"),
+    join(ROOT, "gen/b/prompts"),
+    join(ROOT, "gen/a/fixtures"),
+    join(ROOT, "gen/b/fixtures"),
+    join(ROOT, "gen/a/rubrics"),
+    join(ROOT, "gen/b/rubrics"),
+    join(ROOT, "arms/a/src"),
+    join(ROOT, "arms/b/src"),
+    join(ROOT, "arms/a/tests/fixtures/placement-harness/primary-checks"),
+    join(
+        ROOT,
+        "measurement/tests/fixtures/placement-harness/analysis",
+    ),
+    join(ROOT, "measurement/tests/fixtures/placement-harness/ac"),
+];
+
 const immutable = [
     ...filesUnder(join(ROOT, "prepare")),
     ...filesUnder(join(ROOT, "runner")),
@@ -323,19 +354,30 @@ const immutable = [
             ROOT,
             `arms/${letter}/tests/fixtures/placement-harness/harness.mts`,
         ),
+        join(
+            ROOT,
+            `arms/${letter}/tests/fixtures/placement-harness/scenario-names.mts`,
+        ),
+        join(ROOT, `arms/${letter}/package.json`),
+        join(ROOT, `arms/${letter}/package-lock.json`),
         join(ROOT, `evidence/surfaces-${letter}.json`),
         join(ROOT, `evidence/delivery-${letter}/request-1.json`),
-        join(ROOT, `gen/${letter}/prompts`),
-        join(ROOT, `gen/${letter}/fixtures`),
     ]),
     join(EVIDENCE, "schedule.json"),
     join(EVIDENCE, "measurement-spec.json"),
     join(ROOT, "arms/a/tests/fixtures/placement-harness/prod014/cases.json"),
     join(ROOT, "arms/a/tests/fixtures/placement-harness/prod014/truth.json"),
-    join(ROOT, "arms/a/tests/fixtures/placement-harness/primary-checks"),
-].flatMap((path) =>
-    statSync(path).isDirectory() ? filesUnder(path) : [path],
-);
+    join(
+        ROOT,
+        "measurement/tests/fixtures/placement-harness/ac-scoring.mts",
+    ),
+    join(ROOT, "measurement/tests/fixtures/placement-harness/harness.mts"),
+    join(
+        ROOT,
+        "measurement/tests/fixtures/placement-harness/analysis/analyse.mts",
+    ),
+];
+const inventories = inventoryDirs.map(frozenInventory);
 
 const started =
     ["a", "b"].some((letter) => {
@@ -350,10 +392,11 @@ const decision = freezeExperiment({
     sourceRevision: identities.base.commit,
     sourceTree: identities.base.tree,
     imageId: identities.runtime.imageId,
-    containerCli: identities.runtime.containerOpencode,
+    containerCli: identities.runtime.containerCli,
     measurementSha256: identities.measurementSpec.sha256,
     arms: [armFreeze("a"), armFreeze("b")],
     files: immutable.map(frozenFile),
+    inventories,
     stoppingRules: STOPPING_RULES,
     ceilings: {
         trial: identities.budget.plannedTrials,

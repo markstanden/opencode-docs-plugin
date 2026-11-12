@@ -7,6 +7,7 @@ import {
     deliveredToolDescription,
     freezeExperiment,
     sha256Text,
+    spendFreezeProblem,
     verifyFreeze,
     writeFreeze,
     type FreezeInput,
@@ -41,8 +42,19 @@ const files = [
     { path: "cases.json", sha256: sha256Text("cases") },
     { path: "truth.json", sha256: sha256Text("truth") },
     { path: "prompts/P01.md", sha256: sha256Text("prompt") },
-    { path: "rubrics/P01/rubric.md", sha256: sha256Text("rubric") },
     { path: "measurement.json", sha256: sha256Text("measurement") },
+];
+
+const inventories = [
+    {
+        path: "rubrics",
+        files: [
+            {
+                path: "rubrics/P01/rubric.md",
+                sha256: sha256Text("rubric"),
+            },
+        ],
+    },
 ];
 
 /** A complete, not-yet-started freeze input. */
@@ -56,6 +68,7 @@ function input(overrides: Partial<FreezeInput> = {}): FreezeInput {
         measurementSha256: sha256Text("measurement"),
         arms: [arm("A"), arm("B")],
         files,
+        inventories,
         stoppingRules: ["stop on first unusable assessment"],
         ceilings: { trial: 16, judge: 16 },
         started: false,
@@ -226,6 +239,7 @@ describe("freeze verification", () => {
         // Act
         const problems = verifyFreeze(record, {
             files,
+            inventories,
             imageId: record.imageId,
             containerCli: record.containerCli,
             sourceRevision: record.sourceRevision,
@@ -238,11 +252,18 @@ describe("freeze verification", () => {
     it("reports a modified rubric, fixture or script", () => {
         // Act
         const problems = verifyFreeze(record, {
-            files: files.map((file) =>
-                file.path === "rubrics/P01/rubric.md"
-                    ? { ...file, sha256: sha256Text("edited rubric") }
-                    : file,
-            ),
+            files,
+            inventories: [
+                {
+                    path: "rubrics",
+                    files: [
+                        {
+                            path: "rubrics/P01/rubric.md",
+                            sha256: sha256Text("edited rubric"),
+                        },
+                    ],
+                },
+            ],
             imageId: record.imageId,
             containerCli: record.containerCli,
             sourceRevision: record.sourceRevision,
@@ -256,6 +277,7 @@ describe("freeze verification", () => {
         // Act
         const rebuilt = verifyFreeze(record, {
             files,
+            inventories,
             imageId: "sha256:rebuilt",
             containerCli: "opencode 2.3.0",
             sourceRevision: record.sourceRevision,
@@ -264,5 +286,45 @@ describe("freeze verification", () => {
         // Assert
         assert.match(rebuilt.join("; "), /container image changed/);
         assert.match(rebuilt.join("; "), /container CLI changed/);
+    });
+
+    it("reports an input added after the freeze", () => {
+        // Act
+        const problems = verifyFreeze(record, {
+            files,
+            inventories: [
+                {
+                    path: "rubrics",
+                    files: [
+                        {
+                            path: "rubrics/P01/rubric.md",
+                            sha256: sha256Text("rubric"),
+                        },
+                        {
+                            path: "rubrics/P02/rubric.md",
+                            sha256: sha256Text("added"),
+                        },
+                    ],
+                },
+            ],
+            imageId: record.imageId,
+            containerCli: record.containerCli,
+            sourceRevision: record.sourceRevision,
+        });
+
+        // Assert
+        assert.match(problems.join("; "), /immutable input changed/);
+        assert.match(problems.join("; "), /rubrics\/P02\/rubric\.md/);
+    });
+
+    it("treats a legacy freeze as read-only for spend", () => {
+        // Arrange
+        const legacy = { ...record, schemaVersion: 1 };
+
+        // Act
+        const problem = spendFreezeProblem(legacy);
+
+        // Assert
+        assert.match(String(problem), /legacy and read-only/);
     });
 });

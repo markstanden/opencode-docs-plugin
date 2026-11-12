@@ -2,13 +2,18 @@
 // `attempt-002`. The failed `attempt-001` stays untouched.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import {
+    appendFileSync,
+    existsSync,
+    readdirSync,
+    readFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { credentialFileProblem, loadJudgeKey } from "./env.mjs";
 import { parseCampaignLedger } from "../runner/ledger.ts";
 import { advanceClaim, claimBudget } from "../runner/budget.ts";
 import { resolveRecoverySelection } from "../runner/selector.ts";
-import { verifyFreeze } from "../runner/freeze.ts";
+import { spendFreezeProblem, verifyFreeze } from "../runner/freeze.ts";
 
 const ROOT = process.env.CAMPAIGN_ROOT;
 if (!ROOT) throw new Error("CAMPAIGN_ROOT is required");
@@ -44,15 +49,28 @@ if (!selection.ok) {
 }
 const attemptId = selection.selection.attemptId;
 const frozen = readJson(join(EVIDENCE, "FROZEN.json"));
-const judgeCeiling = Number(frozen?.budget?.plannedJudgeAttempts ?? 16);
+const freezeRecord = frozen?.freeze ?? null;
+const judgeCeiling = Number(freezeRecord?.ceilings?.judge ?? 0);
 const MAIN = process.env.CAMPAIGN_SOURCE_REPO ?? process.cwd();
 const capture = (command, args) => {
     const result = spawnSync(command, args, { encoding: "utf8" });
     return result.status === 0 ? String(result.stdout ?? "").trim() : "";
 };
+const filesUnder = (dir) => {
+    if (!existsSync(dir)) return [];
+    const found = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) found.push(...filesUnder(path));
+        else if (entry.isFile()) found.push(path);
+    }
+    return found.sort();
+};
+
 const premiseProblems = () => {
-    const record = frozen?.freeze;
-    if (!record) return [];
+    const record = frozen?.freeze ?? null;
+    const unusable = spendFreezeProblem(record);
+    if (unusable !== null) return [unusable];
     const files = record.files.map((file) => {
         const path = join(ROOT, file.path);
         return {
@@ -62,25 +80,29 @@ const premiseProblems = () => {
                 : "missing",
         };
     });
+    const inventories = record.inventories.map((inventory) => ({
+        path: inventory.path,
+        files: filesUnder(join(ROOT, inventory.path)).map((path) => ({
+            path: path.slice(ROOT.length + 1),
+            sha256: createHash("sha256")
+                .update(readFileSync(path))
+                .digest("hex"),
+        })),
+    }));
     const revision = spawnSync("git", ["-C", MAIN, "rev-parse", "HEAD"], {
         encoding: "utf8",
     });
     return verifyFreeze(record, {
         files,
+        inventories,
         imageId: capture("podman", [
             "image",
             "inspect",
             "--format",
             "{{.Id}}",
-            "localhost/opencode-placement-trials",
+            record.imageId,
         ]),
-        containerCli: capture("podman", [
-            "run",
-            "--rm",
-            "localhost/opencode-placement-trials",
-            "opencode",
-            "--version",
-        ]),
+        containerCli: capture("podman", ["--version"]),
         sourceRevision:
             revision.status === 0 ? String(revision.stdout).trim() : "",
     });
@@ -162,6 +184,22 @@ for (const slot of slots) {
         console.error(`${slot.stamp}: trial is not a usable recorded result`);
         process.exit(2);
     }
+    const changed = premiseProblems();
+    if (changed.length > 0) {
+        ledger({
+            event: "slot-blocked",
+            slot: slot.slot,
+            pairId: slot.pairId,
+            stamp: slot.stamp,
+            arm: slot.arm,
+            attemptId,
+            reason: `frozen premise changed at judge dispatch: ${changed.join("; ")}`,
+        });
+        console.error(
+            `BLOCKER: ${slot.stamp} frozen premise changed at judge dispatch: ${changed.join("; ")}`,
+        );
+        process.exit(2);
+    }
     const claim = claimBudget(EVIDENCE, "judge", judgeCeiling, {
         stamp: slot.stamp,
         attemptId,
@@ -212,7 +250,15 @@ for (const slot of slots) {
             "--workdir", join(EVIDENCE, "ac-runs"),
             "--timeout", "600000",
         ],
-        { encoding: "utf8", timeout: 720000 },
+        {
+            encoding: "utf8",
+            timeout: 720000,
+            env: {
+                ...process.env,
+                PLACEMENT_IMAGE: freezeRecord?.imageId ?? "",
+                PLACEMENT_TRIAL_IMAGE_ID: freezeRecord?.imageId ?? "",
+            },
+        },
     );
     advanceClaim(claim.claim, "closed");
     const judgement = readJson(join(attemptDir, "judgement.json"));

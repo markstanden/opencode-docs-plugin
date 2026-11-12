@@ -32,7 +32,7 @@ import {
     restartDisposition,
 } from "../runner/budget.ts";
 import { resolveAttemptSelection } from "../runner/selector.ts";
-import { verifyFreeze } from "../runner/freeze.ts";
+import { spendFreezeProblem, verifyFreeze } from "../runner/freeze.ts";
 
 const ROOT = process.env.CAMPAIGN_ROOT;
 if (!ROOT) throw new Error("CAMPAIGN_ROOT is required");
@@ -120,9 +120,12 @@ if (!selection.ok) {
 const attemptId = selection.selection.attemptId;
 
 const frozen = readJson(join(EVIDENCE, "FROZEN.json"));
+const freezeRecord = frozen?.freeze ?? null;
+// One authoritative ceiling: the validated freeze record. A missing or legacy
+// record yields zero, which every claim refuses.
 const ceilings = {
-    trial: Number(frozen?.budget?.plannedTrials ?? 16),
-    judge: Number(frozen?.budget?.plannedJudgeAttempts ?? 16),
+    trial: Number(freezeRecord?.ceilings?.trial ?? 0),
+    judge: Number(freezeRecord?.ceilings?.judge ?? 0),
 };
 
 /** Capture one external command's trimmed output, or an empty string. */
@@ -136,9 +139,21 @@ const capture = (command, args) => {
  * every immutable input, the source revision, the image identity and the
  * container CLI. A historical freeze without a record returns no problems.
  */
+const filesUnder = (dir) => {
+    if (!existsSync(dir)) return [];
+    const found = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) found.push(...filesUnder(path));
+        else if (entry.isFile()) found.push(path);
+    }
+    return found.sort();
+};
+
 const premiseProblems = () => {
-    const record = frozen?.freeze;
-    if (!record) return [];
+    const record = frozen?.freeze ?? null;
+    const unusable = spendFreezeProblem(record);
+    if (unusable !== null) return [unusable];
     const files = record.files.map((file) => {
         const path = join(ROOT, file.path);
         return {
@@ -148,22 +163,26 @@ const premiseProblems = () => {
                 : "missing",
         };
     });
+    const inventories = record.inventories.map((inventory) => ({
+        path: inventory.path,
+        files: filesUnder(join(ROOT, inventory.path)).map((path) => ({
+            path: path.slice(ROOT.length + 1),
+            sha256: createHash("sha256")
+                .update(readFileSync(path))
+                .digest("hex"),
+        })),
+    }));
     return verifyFreeze(record, {
         files,
+        inventories,
         imageId: capture("podman", [
             "image",
             "inspect",
             "--format",
             "{{.Id}}",
-            "localhost/opencode-placement-trials",
+            record.imageId,
         ]),
-        containerCli: capture("podman", [
-            "run",
-            "--rm",
-            "localhost/opencode-placement-trials",
-            "opencode",
-            "--version",
-        ]),
+        containerCli: capture("podman", ["--version"]),
         sourceRevision: safeHead(MAIN),
     });
 };
@@ -273,6 +292,8 @@ const envFor = (slot) => {
         ...process.env,
         PATH: `${SHIM}:${process.env.PATH ?? ""}`,
         CONTAINER_LOG: join(CONTAINER_LOGS, `${slot.stamp}.log`),
+        PLACEMENT_TRIAL_IMAGE_ID: freezeRecord?.imageId ?? "",
+        PLACEMENT_IMAGE: freezeRecord?.imageId ?? "",
         PLACEMENT_CASES: cases,
         PLACEMENT_PROMPTS: join(base, "prompts"),
         PLACEMENT_FIXTURES: join(base, "fixtures"),
@@ -282,6 +303,23 @@ const envFor = (slot) => {
         PLACEMENT_PLUGIN_COMMIT: safeHead(repo),
         TRIAL_TIMEOUT_MS: String(TRIAL_TIMEOUT),
     };
+};
+
+const premiseBlock = (slot, boundary) => {
+    const problems = premiseProblems();
+    if (problems.length === 0) return false;
+    ledger({
+        event: "slot-blocked",
+        slot: slot.slot,
+        pairId: slot.pairId,
+        stamp: slot.stamp,
+        arm: slot.arm,
+        reason: `frozen premise changed at ${boundary}: ${problems.join("; ")}`,
+    });
+    console.error(
+        `BLOCKER: ${slot.stamp} frozen premise changed at ${boundary}: ${problems.join("; ")}`,
+    );
+    return true;
 };
 
 const dry = () => {
@@ -514,6 +552,7 @@ const runJudge = (slot) => {
         );
         return false;
     }
+    if (premiseBlock(slot, "judge dispatch")) return false;
     const claim = claimBudget(EVIDENCE, "judge", ceilings.judge, {
         stamp: slot.stamp,
         attemptId,
@@ -695,6 +734,7 @@ const processSlot = (slot) => {
         );
         return "blocked";
     }
+    if (premiseBlock(slot, "trial dispatch")) return "blocked";
     const claim = claimBudget(EVIDENCE, "trial", ceilings.trial, {
         stamp: slot.stamp,
         attemptId: "attempt-001",
