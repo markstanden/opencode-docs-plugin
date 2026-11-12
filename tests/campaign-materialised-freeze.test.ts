@@ -63,7 +63,12 @@ function arm(dir: string): void {
 }
 
 /** A campaign root with every immutable input freeze reads. */
-function fixture(): { root: string; bin: string; imageFile: string } {
+function fixture(): {
+    root: string;
+    bin: string;
+    imageFile: string;
+    source: string;
+} {
     const root = mkdtempSync(join(tmpdir(), "pd-freeze-cmd-"));
     execFileSync(process.execPath, [join(campaign, "materialise.mjs"), root], {
         encoding: "utf8",
@@ -176,16 +181,31 @@ exit 0
     write(join(bin, "opencode"), "#!/usr/bin/env sh\necho 'opencode 2.2.7'\n");
     chmodSync(join(bin, "podman"), 0o755);
     chmodSync(join(bin, "opencode"), 0o755);
-    return { root, bin, imageFile };
+    // A source repo independent of the test checkout, so the read-only gate
+    // scope needs no .git metadata.
+    const source = join(root, "source");
+    write(join(source, "README.md"), "source\n");
+    execFileSync("git", ["init", "-q"], { cwd: source });
+    execFileSync("git", ["add", "-A"], { cwd: source });
+    execFileSync(
+        "git",
+        ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "s"],
+        { cwd: source },
+    );
+    return { root, bin, imageFile, source };
 }
 
 /** Run the materialised freeze command. */
-function freeze(root: string, bin: string): ReturnType<typeof spawnSync> {
+function freeze(
+    root: string,
+    bin: string,
+    source: string,
+): ReturnType<typeof spawnSync> {
     return spawnSync(process.execPath, [join(root, "prepare/freeze.mjs")], {
         env: {
             ...process.env,
             CAMPAIGN_ROOT: root,
-            CAMPAIGN_SOURCE_REPO: here,
+            CAMPAIGN_SOURCE_REPO: source,
             PATH: `${bin}:${process.env.PATH ?? ""}`,
         },
         encoding: "utf8",
@@ -196,15 +216,15 @@ function freeze(root: string, bin: string): ReturnType<typeof spawnSync> {
 describe("materialised freeze command", () => {
     it("refuses the second freeze and preserves the first bytes", () => {
         // Arrange
-        const { root, bin } = fixture();
+        const { root, bin, source } = fixture();
         try {
-            const first = freeze(root, bin);
+            const first = freeze(root, bin, source);
             assert.equal(first.status, 0, String(first.stderr));
             const frozen = join(root, "evidence/FROZEN.json");
             const before = readFileSync(frozen, "utf8");
 
             // Act
-            const second = freeze(root, bin);
+            const second = freeze(root, bin, source);
 
             // Assert
             assert.notEqual(second.status, 0);
@@ -226,6 +246,7 @@ describe("materialised freeze command", () => {
 function runCampaign(
     root: string,
     bin: string,
+    source: string,
     counter: string,
 ): ReturnType<typeof spawnSync> {
     const stub = join(root, "trial-stub.sh");
@@ -246,7 +267,7 @@ function runCampaign(
             env: {
                 ...process.env,
                 CAMPAIGN_ROOT: root,
-                CAMPAIGN_SOURCE_REPO: here,
+                CAMPAIGN_SOURCE_REPO: source,
                 STUB_COUNTER: counter,
                 ZAI_API_KEY: "stub",
                 PATH: `${bin}:${process.env.PATH ?? ""}`,
@@ -261,6 +282,7 @@ function runCampaign(
 function rejudgeCampaign(
     root: string,
     bin: string,
+    source: string,
     counter: string,
 ): ReturnType<typeof spawnSync> {
     const stub = join(
@@ -275,7 +297,7 @@ function rejudgeCampaign(
         env: {
             ...process.env,
             CAMPAIGN_ROOT: root,
-            CAMPAIGN_SOURCE_REPO: here,
+            CAMPAIGN_SOURCE_REPO: source,
             STUB_COUNTER: counter,
             ZAI_API_KEY: "stub",
             PATH: `${bin}:${process.env.PATH ?? ""}`,
@@ -288,10 +310,10 @@ function rejudgeCampaign(
 describe("frozen premise enforcement", () => {
     it("refuses a changed rubric with no trial spawn and an intact freeze", () => {
         // Arrange
-        const { root, bin } = fixture();
+        const { root, bin, source } = fixture();
         const counter = join(root, "counter.txt");
         try {
-            assert.equal(freeze(root, bin).status, 0);
+            assert.equal(freeze(root, bin, source).status, 0);
             const frozenBytes = readFileSync(
                 join(root, "evidence/FROZEN.json"),
                 "utf8",
@@ -309,7 +331,7 @@ describe("frozen premise enforcement", () => {
             );
 
             // Act
-            const run = runCampaign(root, bin, counter);
+            const run = runCampaign(root, bin, source, counter);
 
             // Assert
             assert.equal(run.status, 2);
@@ -333,13 +355,13 @@ describe("frozen premise enforcement", () => {
 
     it("allows a clean continuation after the premise is restored", () => {
         // Arrange
-        const { root, bin } = fixture();
+        const { root, bin, source } = fixture();
         const counter = join(root, "counter.txt");
         try {
-            assert.equal(freeze(root, bin).status, 0);
+            assert.equal(freeze(root, bin, source).status, 0);
 
             // Act
-            runCampaign(root, bin, counter);
+            const run = runCampaign(root, bin, source, counter);
 
             // Assert: the premise passed and the single trial stub ran.
             assert.match(
@@ -353,14 +375,14 @@ describe("frozen premise enforcement", () => {
 
     it("refuses a rebuilt image identity", () => {
         // Arrange
-        const { root, bin, imageFile } = fixture();
+        const { root, bin, imageFile, source } = fixture();
         const counter = join(root, "counter.txt");
         try {
-            assert.equal(freeze(root, bin).status, 0);
+            assert.equal(freeze(root, bin, source).status, 0);
             write(imageFile, "sha256:rebuilt-image\n");
 
             // Act
-            const run = runCampaign(root, bin, counter);
+            const run = runCampaign(root, bin, source, counter);
 
             // Assert
             assert.equal(run.status, 2);
@@ -376,10 +398,10 @@ describe("frozen premise enforcement", () => {
 
     it("refuses recovery on a changed premise before any judge spawn", () => {
         // Arrange
-        const { root, bin } = fixture();
+        const { root, bin, source } = fixture();
         const counter = join(root, "counter.txt");
         try {
-            assert.equal(freeze(root, bin).status, 0);
+            assert.equal(freeze(root, bin, source).status, 0);
             write(
                 join(
                     root,
@@ -389,7 +411,7 @@ describe("frozen premise enforcement", () => {
             );
 
             // Act
-            const rejudge = rejudgeCampaign(root, bin, counter);
+            const rejudge = rejudgeCampaign(root, bin, source, counter);
 
             // Assert
             assert.equal(rejudge.status, 2);
