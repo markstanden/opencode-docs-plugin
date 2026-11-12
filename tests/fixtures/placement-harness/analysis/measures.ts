@@ -20,8 +20,8 @@ export const MEASURES_SCHEMA_VERSION = 1;
 export interface RetrievalDeclaration {
     /** The lake-relative path of the seeded note. */
     note: string;
-    /** The lake the note belongs to, when declared; identity is not optional for credit. */
-    lake: string | null;
+    /** The lake the note belongs to; identity is not optional for credit. */
+    lake: string;
     /** The preservation facts the note's correction must keep, when any. */
     facts: string[];
 }
@@ -261,11 +261,13 @@ function retrievalDeclaration(
     }
     const facts = factIds(entry, id, problems);
     if (facts === undefined) return undefined;
-    const lake =
-        typeof retrieval.lake === "string" && retrieval.lake.trim() !== ""
-            ? retrieval.lake.trim()
-            : null;
-    return { note: retrieval.note, lake, facts };
+    if (typeof retrieval.lake !== "string" || retrieval.lake.trim() === "") {
+        problems.push(
+            `scenarios.${id}.retrieval.lake must be nonblank; a lake-less retrieval declaration cannot be attributed`,
+        );
+        return undefined;
+    }
+    return { note: retrieval.note, lake: retrieval.lake.trim(), facts };
 }
 
 /**
@@ -416,10 +418,7 @@ export function operationMatchesNotePath(
     declaration: RetrievalDeclaration,
 ): boolean {
     const expected = declaration.note;
-    const qualified =
-        declaration.lake === null
-            ? expected
-            : `${declaration.lake}/${expected}`;
+    const qualified = `${declaration.lake}/${expected}`;
     // The returned identity is authoritative. A request target that contradicts
     // it is contradictory evidence and cannot earn credit.
     if (
@@ -446,7 +445,7 @@ export function operationMatchesNoteLake(
     operation: DocsOperation,
     declaration: RetrievalDeclaration,
 ): boolean {
-    return declaration.lake === null || operation.lake === declaration.lake;
+    return operation.lake === declaration.lake;
 }
 
 /** The shared, evidence-only facts one trial's measures read. */
@@ -461,6 +460,7 @@ interface MeasureContext {
     notRun: boolean;
     recordingEligible: boolean;
     retrievalDeclaration: RetrievalDeclaration | undefined;
+    writes: { state: string; text: string };
 }
 
 /** Build the context once so each measure stays small. */
@@ -494,7 +494,85 @@ function contextOf(
             record.identity.scenario,
         ),
         retrievalDeclaration: declarations.retrieval[record.identity.scenario],
+        writes: {
+            state: record.artefacts.writesText.state,
+            text:
+                record.artefacts.writesText.state === "available"
+                    ? record.artefacts.writesText.value
+                    : "",
+        },
     };
+}
+
+/** One lake document the trial's writes report names. */
+export interface ChangedLakeDocument {
+    /** The lake the change landed in. */
+    lake: string;
+    /** The lake-relative path. */
+    path: string;
+    /** The change kind, when the report names one. */
+    kind: "added" | "modified" | "removed" | "unknown";
+}
+
+/**
+ * Read the changed lake documents from a trial's writes report.
+ *
+ * Only `lakes/<lake>/<path>` entries are documents; a work-file change never
+ * makes a documentation write verified. An unreadable report is a problem, not
+ * an empty change set.
+ * @param writes The recorded writes report.
+ * @returns The changed documents and any parse problem.
+ */
+export function changedLakeDocuments(writes: {
+    state: string;
+    text: string;
+}): { documents: ChangedLakeDocument[]; problem: string | null } {
+    if (writes.state !== "available") {
+        return {
+            documents: [],
+            problem: `the writes report is ${writes.state}; the changed document cannot be identified`,
+        };
+    }
+    const documents: ChangedLakeDocument[] = [];
+    for (const raw of writes.text.split("\n")) {
+        const line = raw.trim();
+        if (line === "" || line === "none") continue;
+        const kindWord = (/^([a-z]+):?\s/.exec(line)?.[1] ??
+            "unknown") as string;
+        const kind =
+            kindWord === "added" ||
+            kindWord === "modified" ||
+            kindWord === "removed"
+                ? kindWord
+                : "unknown";
+        const path = line
+            .replace(/^[a-z]+:?\s*/, "")
+            .replace(/ \((file|dir|symlink|mode)\)$/, "");
+        const match = /^lakes\/([^/]+)\/(.+)$/.exec(path);
+        if (match === null) continue;
+        documents.push({
+            lake: match[1] as string,
+            path: match[2] as string,
+            kind,
+        });
+    }
+    return { documents, problem: null };
+}
+
+/**
+ * Whether a completed plugin write targets exactly one changed document.
+ * @param operation The completed add operation.
+ * @param document The evidenced changed document.
+ * @returns True when lake and relative path agree.
+ */
+export function operationMatchesChangedDocument(
+    operation: DocsOperation,
+    document: ChangedLakeDocument,
+): boolean {
+    const identity = operation.path ?? operation.target;
+    if (identity === null) return false;
+    if (barePath(identity) !== document.path) return false;
+    return operation.lake === null || operation.lake === document.lake;
 }
 
 /** The verified journal lines, or why they are unusable. */
@@ -576,7 +654,7 @@ function dispositionOf(
     const early = earlyDisposition(context);
     if (early !== null) return early;
     if (completedAdds.length > 0) {
-        return completedWrite(context);
+        return completedWrite(context, completedAdds);
     }
     if (failedAdds.length > 0) {
         return context.journalProblem === null
@@ -624,18 +702,36 @@ function dispositionOf(
 }
 
 /** The disposition when at least one completed plugin write exists. */
-function completedWrite(context: MeasureContext): {
+function completedWrite(
+    context: MeasureContext,
+    completedAdds: readonly DocsOperation[],
+): {
     disposition: RecordingMeasure["disposition"];
     evidence: string[];
 } {
     if (
-        context.outcome === "useful-create" ||
-        context.outcome === "useful-update"
+        context.outcome !== "useful-create" &&
+        context.outcome !== "useful-update"
     ) {
-        if (context.gate === "pass")
-            return { disposition: "verified-write", evidence: [] };
-        if (context.gate === "blocked")
-            return { disposition: "gate-blocked", evidence: [] };
+        if (context.outcome === null) {
+            return {
+                disposition: "unknown",
+                evidence: [
+                    "a completed plugin write exists but no judgement was recorded",
+                ],
+            };
+        }
+        return {
+            disposition: "no-write",
+            evidence: [
+                `judgement recorded ${context.outcome} for a completed plugin write`,
+            ],
+        };
+    }
+    if (context.gate === "blocked") {
+        return { disposition: "gate-blocked", evidence: [] };
+    }
+    if (context.gate !== "pass") {
         return {
             disposition: "unknown",
             evidence: [
@@ -643,18 +739,64 @@ function completedWrite(context: MeasureContext): {
             ],
         };
     }
-    if (context.outcome === null) {
+    const changed = changedLakeDocuments(context.writes);
+    if (changed.problem !== null) {
+        return { disposition: "unknown", evidence: [changed.problem] };
+    }
+    const expectedKind =
+        context.outcome === "useful-create" ? "added" : "modified";
+    const candidates = changed.documents.filter(
+        (document) =>
+            document.kind === expectedKind || document.kind === "unknown",
+    );
+    if (candidates.length === 0) {
+        return {
+            disposition: "filesystem-only",
+            evidence: [
+                `the judgement recorded ${context.outcome} but no lake document change of that kind was reported`,
+            ],
+        };
+    }
+    if (candidates.length > 1) {
         return {
             disposition: "unknown",
             evidence: [
-                "a completed plugin write exists but no judgement was recorded",
+                `the trial changed ${String(candidates.length)} lake documents (${candidates
+                    .map((document) => `${document.lake}/${document.path}`)
+                    .join(", ")}); the plugin write cannot be tied to the useful one`,
+            ],
+        };
+    }
+    const document = candidates[0] as ChangedLakeDocument;
+    const matching = completedAdds.filter((operation) =>
+        operationMatchesChangedDocument(operation, document),
+    );
+    if (matching.length === 0) {
+        return {
+            disposition: "filesystem-only",
+            evidence: [
+                `the useful document ${document.lake}/${document.path} changed, but no completed plugin add targeted it`,
+            ],
+        };
+    }
+    if (
+        matching.some(
+            (operation) =>
+                operation.lake === null && document.lake !== null,
+        ) &&
+        candidates.length > 1
+    ) {
+        return {
+            disposition: "unknown",
+            evidence: [
+                "the plugin write reports no lake and more than one lake document changed",
             ],
         };
     }
     return {
-        disposition: "no-write",
+        disposition: "verified-write",
         evidence: [
-            `judgement recorded ${context.outcome} for a completed plugin write`,
+            `plugin add of ${document.lake}/${document.path} matched the changed document`,
         ],
     };
 }
@@ -710,7 +852,7 @@ function retrievalOf(context: MeasureContext): {
         operationMatchesNoteLake(operation, declaration),
     );
     const lakeUnknown = matching.some(
-        (operation) => declaration.lake !== null && operation.lake === null,
+        (operation) => operation.lake === null,
     );
     const judge = judgeRetrieval(context.record);
     const base = {
@@ -740,7 +882,7 @@ function retrievalOf(context: MeasureContext): {
             ...base,
             state: "miss",
             evidence: [
-                `no completed read of ${declaration.lake === null ? declaration.note : `${declaration.lake}/${declaration.note}`} was attributed to the session`,
+                `no completed read of ${declaration.lake}/${declaration.note} was attributed to the session`,
             ],
         };
     }

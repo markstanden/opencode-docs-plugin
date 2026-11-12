@@ -80,6 +80,7 @@ type Overrides = {
     journalState?: "available" | "missing";
     retrieval?: { state: string; quote: string } | null;
     scenario?: string;
+    writes?: string;
 };
 
 const record = (overrides: Overrides = {}): TrialRecord => ({
@@ -122,7 +123,11 @@ const record = (overrides: Overrides = {}): TrialRecord => ({
     tokens: { state: "missing", source: "stdout.jsonl" },
     artefacts: {
         finalAnswer: { state: "available", value: "answer", source: "final" },
-        writesText: { state: "available", value: "", source: "writes" },
+        writesText: {
+            state: "available",
+            value: overrides.writes ?? "added lakes/docs/ops/note.md\n",
+            source: "writes",
+        },
         docsOperations:
             overrides.journalState === "missing"
                 ? { state: "missing", source: "docs" }
@@ -181,7 +186,10 @@ describe("measure declarations", () => {
             retrievalOpportunities: ["S02"],
             scenarios: {
                 S02: {
-                    retrieval: { note: "ops/staging-deploy.md" },
+                    retrieval: {
+                        note: "ops/staging-deploy.md",
+                        lake: "docs",
+                    },
                     preservation: { facts: [{ id: "snapshot" }] },
                 },
             },
@@ -192,7 +200,7 @@ describe("measure declarations", () => {
         assert.deepEqual(parsed.declarations?.recording, ["R01"]);
         assert.deepEqual(parsed.declarations?.retrieval.S02, {
             note: "ops/staging-deploy.md",
-            lake: null,
+            lake: "docs",
             facts: ["snapshot"],
         });
     });
@@ -440,12 +448,59 @@ describe("recording measure", () => {
             ...overrides,
         });
 
-    it("counts a verified plugin-mediated write to a shared lake", () => {
+    it("counts a verified plugin write bound to the changed document", () => {
         // Act
         const measured = measureTrial(create(), recordingDeclarations, "A");
 
         // Assert
         assert.equal(measured.recording.success, true);
+        assert.equal(measured.recording.disposition, "verified-write");
+    });
+
+    it("does not credit an unrelated successful add beside a useful edit", () => {
+        // Act
+        const measured = measureTrial(
+            create({
+                outcome: "useful-update",
+                writes: "modified lakes/shared/other.md\n",
+            }),
+            recordingDeclarations,
+            "A",
+        );
+
+        // Assert
+        assert.equal(measured.recording.disposition, "filesystem-only");
+        assert.match(measured.recording.evidence[0] ?? "", /no completed plugin add targeted it/);
+    });
+
+    it("stays unknown when two lake documents changed", () => {
+        // Act
+        const measured = measureTrial(
+            create({
+                outcome: "useful-update",
+                writes: "modified lakes/docs/ops/note.md\nmodified lakes/shared/other.md\n",
+            }),
+            recordingDeclarations,
+            "A",
+        );
+
+        // Assert
+        assert.equal(measured.recording.disposition, "unknown");
+        assert.match(measured.recording.evidence[0] ?? "", /2 lake documents/);
+    });
+
+    it("credits an update bound to the modified document", () => {
+        // Act
+        const measured = measureTrial(
+            create({
+                outcome: "useful-update",
+                writes: "modified lakes/docs/ops/note.md\n",
+            }),
+            recordingDeclarations,
+            "A",
+        );
+
+        // Assert
         assert.equal(measured.recording.disposition, "verified-write");
     });
 
@@ -673,5 +728,37 @@ describe("personal-trial screen", () => {
         // Assert
         assert.equal(unknown.recommendation, "inconclusive");
         assert.match(unknown.reasons.join("; "), /unknown/);
+    });
+});
+
+describe("retrieval declaration preflight", () => {
+    it("refuses a new retrieval declaration with no lake", () => {
+        // Act
+        const parsed = parseMeasureDeclarations({
+            recordingOpportunities: [],
+            retrievalOpportunities: ["S02"],
+            scenarios: { S02: { retrieval: { note: "ops/x.md" } } },
+        });
+
+        // Assert
+        assert.equal(parsed.declarations, undefined);
+        assert.match(parsed.problems[0] ?? "", /retrieval\.lake must be nonblank/);
+    });
+
+    it("accepts a declaration whose lake is declared", () => {
+        // Act
+        const parsed = parseMeasureDeclarations({
+            recordingOpportunities: [],
+            retrievalOpportunities: ["S02"],
+            scenarios: {
+                S02: { retrieval: { note: "ops/x.md", lake: "docs" } },
+            },
+        });
+
+        // Assert
+        assert.equal(
+            parsed.declarations?.retrieval.S02?.lake,
+            "docs",
+        );
     });
 });
