@@ -325,7 +325,7 @@ describe("manifest", () => {
             [
                 join(
                     import.meta.dirname,
-                    "fixtures/placement-harness/ac/run.mjs",
+                    "fixtures/placement-harness/ac/run.mts",
                 ),
                 "manifest",
                 "--root",

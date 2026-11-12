@@ -12,7 +12,7 @@ const SHARED_BITS = 0o077;
  * @param root The campaign root.
  * @returns The source description, or null when no key is available.
  */
-export function loadJudgeKey(root) {
+export function loadJudgeKey(root: string): string | null {
     if (process.env.ZAI_API_KEY) return "environment";
     const named = process.env.ZAI_API_KEY_FILE;
     if (named !== undefined && existsSync(named)) {
@@ -46,7 +46,7 @@ export function loadJudgeKey(root) {
  * @param root The campaign root.
  * @returns A problem naming the file and its mode, or null.
  */
-export function credentialFileProblem(root) {
+export function credentialFileProblem(root: string): string | null {
     const candidates = [join(root, ".env")];
     const named = process.env.ZAI_API_KEY_FILE;
     if (named !== undefined) candidates.push(named);

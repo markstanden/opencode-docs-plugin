@@ -30,14 +30,52 @@ const updateSnapshot = args.includes("--snapshot");
 const target = args.find((arg) => !arg.startsWith("--"));
 if (!target) {
     console.error(
-        "usage: materialise.mjs <campaign-root> [--historical] [--snapshot]",
+        "usage: materialise.mts <campaign-root> [--historical] [--snapshot]",
     );
     process.exit(2);
 }
 
-const sha256 = (body) => createHash("sha256").update(body).digest("hex");
-const filesUnder = (dir) => {
-    const found = [];
+const sha256 = (body: Uint8Array | string): string =>
+    createHash("sha256").update(body).digest("hex");
+
+/** A JSON object of string values, or a refusal. */
+function recordOf(value: unknown, label: string): Record<string, string> {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        console.error(`${label} must be a JSON object`);
+        process.exit(1);
+    }
+    const record: Record<string, string> = {};
+    for (const [key, entry] of Object.entries(value)) {
+        if (typeof entry !== "string") {
+            console.error(`${label}.${key} must be a string`);
+            process.exit(1);
+        }
+        record[key] = entry;
+    }
+    return record;
+}
+
+/** The frozen script snapshot, or a refusal. */
+function scriptSnapshotOf(value: unknown): {
+    files: Record<string, string>;
+    hashes: Record<string, string>;
+} {
+    if (typeof value !== "object" || value === null) {
+        console.error("scripts.json must be a JSON object");
+        process.exit(1);
+    }
+    const { files, hashes } = value as {
+        files?: unknown;
+        hashes?: unknown;
+    };
+    return {
+        files: recordOf(files, "scripts.json.files"),
+        hashes: recordOf(hashes, "scripts.json.hashes"),
+    };
+}
+
+const filesUnder = (dir: string): string[] => {
+    const found: string[] = [];
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
         const path = join(dir, entry.name);
         if (entry.isDirectory()) found.push(...filesUnder(path));
@@ -47,9 +85,9 @@ const filesUnder = (dir) => {
 };
 
 /** Every fresh source file, keyed by its campaign-relative name. */
-function activeSources() {
+function activeSources(): Record<string, Buffer> {
     const root = join(here, "active");
-    const sources = {};
+    const sources: Record<string, Buffer> = {};
     for (const path of filesUnder(root)) {
         const name = relative(root, path).split("\\").join("/");
         if (name === "snapshot.json") continue;
@@ -59,7 +97,9 @@ function activeSources() {
 }
 
 /** Verify or regenerate the checked source snapshot. */
-function snapshotOf(sources) {
+function snapshotOf(
+    sources: Record<string, Uint8Array | string>,
+): Record<string, string> {
     return Object.fromEntries(
         Object.entries(sources).map(([name, body]) => [name, sha256(body)]),
     );
@@ -77,25 +117,34 @@ if (updateSnapshot) {
         "utf8",
     );
     const runnerPath = join(here, "runner.json");
-    const runner = JSON.parse(readFileSync(runnerPath, "utf8"));
-    for (const name of Object.keys(runner.files)) {
-        runner.files[name] = sha256(
+    const runner = JSON.parse(readFileSync(runnerPath, "utf8")) as unknown;
+    if (typeof runner !== "object" || runner === null) {
+        console.error("runner.json must be a JSON object");
+        process.exit(1);
+    }
+    const files = recordOf(
+        (runner as { files?: unknown }).files,
+        "runner.json.files",
+    );
+    for (const name of Object.keys(files)) {
+        files[name] = sha256(
             readFileSync(join(here, "..", "..", "analysis", name)),
         );
     }
-    writeFileSync(runnerPath, `${JSON.stringify(runner, null, 4)}\n`, "utf8");
+    const next = { ...(runner as Record<string, unknown>), files };
+    writeFileSync(runnerPath, `${JSON.stringify(next, null, 4)}\n`, "utf8");
     console.log(
-        `wrote active/snapshot.json (${Object.keys(active).length} files) and runner.json (${Object.keys(runner.files).length} modules)`,
+        `wrote active/snapshot.json (${Object.keys(active).length} files) and runner.json (${Object.keys(files).length} modules)`,
     );
     process.exit(0);
 }
 
 /** The frozen script snapshot used for historical replay. */
-function historicalSources() {
-    const snapshot = JSON.parse(
-        readFileSync(join(here, "scripts.json"), "utf8"),
+function historicalSources(): Record<string, Buffer> {
+    const snapshot = scriptSnapshotOf(
+        JSON.parse(readFileSync(join(here, "scripts.json"), "utf8")),
     );
-    const sources = {};
+    const sources: Record<string, Buffer> = {};
     for (const [name, body] of Object.entries(snapshot.files)) {
         const hash = sha256(body);
         if (hash !== snapshot.hashes[name]) {
@@ -108,8 +157,9 @@ function historicalSources() {
 }
 
 if (active !== null) {
-    const expected = JSON.parse(
-        readFileSync(join(here, "active/snapshot.json"), "utf8"),
+    const expected = recordOf(
+        JSON.parse(readFileSync(join(here, "active/snapshot.json"), "utf8")),
+        "active/snapshot.json",
     );
     const actual = snapshotOf(active);
     const names = new Set([...Object.keys(expected), ...Object.keys(actual)]);
@@ -146,8 +196,20 @@ for (const dir of [prepareDir, runnerDir]) {
     }
 }
 
-const runner = JSON.parse(readFileSync(join(here, "runner.json"), "utf8"));
-const runnerSources = {};
+const runnerRecord = JSON.parse(
+    readFileSync(join(here, "runner.json"), "utf8"),
+) as unknown;
+if (typeof runnerRecord !== "object" || runnerRecord === null) {
+    console.error("runner.json must be a JSON object");
+    process.exit(1);
+}
+const runner = {
+    files: recordOf(
+        (runnerRecord as { files?: unknown }).files,
+        "runner.json.files",
+    ),
+};
+const runnerSources: Record<string, Buffer> = {};
 for (const [name, expected] of Object.entries(runner.files)) {
     const body = readFileSync(join(here, "..", "..", "analysis", name), "utf8");
     if (sha256(body) !== expected) {

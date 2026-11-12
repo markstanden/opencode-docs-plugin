@@ -53,7 +53,7 @@ function filesUnder(dir: string, root: string): string[] {
 /** Materialise a fresh campaign root with the minimum schedule and identity. */
 function campaign(): { root: string; counter: string; bin: string } {
     const root = mkdtempSync(join(tmpdir(), "pd-materialised-"));
-    execFileSync(process.execPath, [join(fixture, "materialise.mjs"), root], {
+    execFileSync(process.execPath, [join(fixture, "materialise.mts"), root], {
         encoding: "utf8",
     });
     const counter = join(root, "counter.txt");
@@ -215,7 +215,7 @@ describe("materialised launch boundary", () => {
 
         try {
             // Act
-            const result = run(root, counter, bin, "run.mjs", [
+            const result = run(root, counter, bin, "run.mts", [
                 "--pair-from",
                 "1",
                 "--pair-to",
@@ -242,7 +242,7 @@ describe("materialised launch boundary", () => {
 
         try {
             // Act
-            const result = run(root, counter, bin, "run.mjs", [
+            const result = run(root, counter, bin, "run.mts", [
                 "--pair-from",
                 "1",
                 "--pair-to",
@@ -267,7 +267,7 @@ describe("materialised launch boundary", () => {
 
         try {
             // Act
-            const result = run(root, counter, bin, "run.mjs", [
+            const result = run(root, counter, bin, "run.mts", [
                 "--pair-from",
                 "1",
                 "--pair-to",
@@ -294,6 +294,57 @@ describe("materialised launch boundary", () => {
         }
     });
 
+    it("refuses an unreadable ledger before any launch", () => {
+        // Arrange: a directory at the ledger path fails with EISDIR for every
+        // user, including root.
+        const { root, counter, bin } = campaign();
+        const ledger = join(root, "evidence/ATTEMPTS.jsonl");
+        rmSync(ledger, { force: true });
+        mkdirSync(ledger);
+
+        try {
+            // Act
+            const result = run(root, counter, bin, "run.mts", [
+                "--pair-from",
+                "1",
+                "--pair-to",
+                "1",
+                "--trial-command",
+                join(root, "trial-stub.sh"),
+            ]);
+
+            // Assert
+            assert.equal(result.status, 2);
+            assert.match(String(result.stderr), /ledger is unreadable/);
+            assert.equal(counted(counter), "");
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("refuses an unreadable ledger before any recovery judgement", () => {
+        // Arrange
+        const { root, counter, bin } = campaign();
+        const ledger = join(root, "evidence/ATTEMPTS.jsonl");
+        rmSync(ledger, { force: true });
+        mkdirSync(ledger);
+
+        try {
+            // Act
+            const result = run(root, counter, bin, "rejudge.mts", []);
+
+            // Assert
+            assert.equal(result.status, 2);
+            assert.match(String(result.stderr), /ledger is unreadable/);
+            assert.equal(
+                claimUsage(join(root, "evidence"), "judge").claimed,
+                0,
+            );
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     it("does not burn an allowance when the judge wrapper refuses", () => {
         // Arrange
         const { root, counter, bin } = campaign();
@@ -304,12 +355,12 @@ describe("materialised launch boundary", () => {
         );
         const stub = join(
             root,
-            "measurement/tests/fixtures/placement-harness/ac/run.mjs",
+            "measurement/tests/fixtures/placement-harness/ac/run.mts",
         );
         write(stub, `process.exit(2);\n`);
         try {
             // Act
-            const result = run(root, counter, bin, "rejudge.mjs", []);
+            const result = run(root, counter, bin, "rejudge.mts", []);
 
             // Assert
             assert.equal(result.status, 2);
@@ -350,7 +401,7 @@ describe("materialised launch boundary", () => {
         );
         const stub = join(
             root,
-            "measurement/tests/fixtures/placement-harness/ac/run.mjs",
+            "measurement/tests/fixtures/placement-harness/ac/run.mts",
         );
         write(
             stub,
@@ -366,7 +417,7 @@ writeFileSync(join(attemptDir, "judgement.json"), JSON.stringify({ status: "judg
         );
         try {
             // Act
-            const result = run(root, counter, bin, "rejudge.mjs", []);
+            const result = run(root, counter, bin, "rejudge.mts", []);
 
             // Assert
             assert.equal(result.status, 0, String(result.stderr));
@@ -404,7 +455,7 @@ node -e 'const fs=require("fs");fs.writeFileSync(process.env.ENV_FILE,JSON.strin
                 root,
                 counter,
                 bin,
-                "run.mjs",
+                "run.mts",
                 ["--pair-from", "1", "--pair-to", "1", "--trial-command", stub],
                 { ENV_FILE: envFile },
             );
@@ -428,7 +479,7 @@ node -e 'const fs=require("fs");fs.writeFileSync(process.env.ENV_FILE,JSON.strin
 
         try {
             // Act
-            const result = run(root, counter, bin, "run.mjs", [
+            const result = run(root, counter, bin, "run.mts", [
                 "--pair-from",
                 "1",
                 "--pair-to",
@@ -452,7 +503,7 @@ node -e 'const fs=require("fs");fs.writeFileSync(process.env.ENV_FILE,JSON.strin
 
         try {
             // Act
-            const result = run(root, counter, bin, "run.mjs", [
+            const result = run(root, counter, bin, "run.mts", [
                 "--pair-from",
                 "2",
                 "--pair-to",
@@ -481,7 +532,7 @@ node -e 'const fs=require("fs");fs.writeFileSync(process.env.ENV_FILE,JSON.strin
 
         try {
             // Act
-            const result = run(root, counter, bin, "run.mjs", [
+            const result = run(root, counter, bin, "run.mts", [
                 "--pair-from",
                 "1",
                 "--pair-to",

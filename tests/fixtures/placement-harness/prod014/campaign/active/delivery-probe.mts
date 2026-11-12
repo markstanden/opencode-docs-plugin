@@ -8,6 +8,17 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const [capturePath, armDir, model, prompt, portArg] = process.argv.slice(2);
+if (
+    capturePath === undefined ||
+    armDir === undefined ||
+    model === undefined ||
+    prompt === undefined
+) {
+    console.error(
+        "usage: delivery-probe.mts <capture> <arm> <model> <prompt> [port]",
+    );
+    process.exit(2);
+}
 const port = Number(portArg ?? 8799);
 let captured = 0;
 
@@ -23,14 +34,22 @@ const server = createServer((request, response) => {
             raw,
             "utf8",
         );
-        let body = {};
+        let body: Record<string, unknown> = {};
         try {
-            body = JSON.parse(raw);
+            const parsed: unknown = JSON.parse(raw);
+            if (
+                typeof parsed === "object" &&
+                parsed !== null &&
+                !Array.isArray(parsed)
+            ) {
+                body = parsed as Record<string, unknown>;
+            }
         } catch {
             /* keep the raw capture */
         }
+        const servedModel = typeof body.model === "string" ? body.model : model;
         const text = "Hello.";
-        if (body.stream === true || body.stream_options) {
+        if (body.stream === true || body.stream_options !== undefined) {
             response.writeHead(200, {
                 "content-type": "text/event-stream",
                 "cache-control": "no-cache",
@@ -40,7 +59,7 @@ const server = createServer((request, response) => {
                 id: "chatcmpl-probe",
                 object: "chat.completion.chunk",
                 created: Math.floor(Date.now() / 1000),
-                model: body.model ?? model,
+                model: servedModel,
                 choices: [
                     {
                         index: 0,
@@ -64,7 +83,7 @@ const server = createServer((request, response) => {
             id: "chatcmpl-probe",
             object: "chat.completion",
             created: Math.floor(Date.now() / 1000),
-            model: body.model ?? model,
+            model: servedModel,
             choices: [
                 {
                     index: 0,
@@ -151,18 +170,18 @@ server.listen(port, "127.0.0.1", async () => {
             "json",
             prompt,
         ],
-        { stdio: ["ignore", "pipe", "pipe"] },
+        { stdio: ["ignore", "pipe", "pipe"] as const },
     );
     let stdout = "";
     let stderr = "";
-    child.stdout.on("data", (chunk) => {
+    child.stdout.on("data", (chunk: Buffer) => {
         stdout += chunk;
     });
-    child.stderr.on("data", (chunk) => {
+    child.stderr.on("data", (chunk: Buffer) => {
         stderr += chunk;
     });
     const timer = setTimeout(() => child.kill("SIGKILL"), 180000);
-    const status = await new Promise((resolve) => {
+    const status = await new Promise<number | null>((resolve) => {
         child.on("exit", (code) => resolve(code));
         child.on("error", () => resolve(null));
     });

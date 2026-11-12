@@ -24,9 +24,9 @@ import { labelLeaks } from "./fixtures/placement-harness/ac/campaign.mts";
 
 const HERE = import.meta.dirname;
 const HARNESS = join(HERE, "fixtures", "placement-harness");
-const RUN = join(HARNESS, "ac", "run.mjs");
+const RUN = join(HARNESS, "ac", "run.mts");
 const LAUNCHER = join(HARNESS, "ac", "judge-launcher.sh");
-const MATERIALISE = join(HARNESS, "prod014", "campaign", "materialise.mjs");
+const MATERIALISE = join(HARNESS, "prod014", "campaign", "materialise.mts");
 const MODEL = "opencode-go/deepseek-v4.1-flash";
 const STAMP = "pd-A-r0-R01";
 const CASE = "R01";
@@ -409,7 +409,7 @@ describe("judge path exposure", () => {
         // The materialised measurement tree: the decision files the judge
         // wrapper imports, at the documented layout.
         for (const path of [
-            "ac/run.mjs",
+            "ac/run.mts",
             "ac/campaign.mts",
             "ac/evidence-guard.mts",
             "ac/judge-launcher.sh",
@@ -511,7 +511,7 @@ writeFileSync(
             const result = spawnSync(
                 process.execPath,
                 [
-                    join(root, "prepare/run.mjs"),
+                    join(root, "prepare/run.mts"),
                     "--pair-from",
                     "1",
                     "--pair-to",

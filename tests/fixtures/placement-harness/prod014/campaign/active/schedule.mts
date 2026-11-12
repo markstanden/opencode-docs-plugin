@@ -61,7 +61,11 @@ for (let index = 0; index < slots.length; index += 2) {
         problems.push(`pair ${first.pairId} repeats arm ${first.arm}`);
     if (first.scenario !== second.scenario)
         problems.push(`pair ${first.pairId} mixes scenarios`);
-    const expected = PAIRS[Number(first.pairId.slice(1)) - 1].order;
+    const expected = PAIRS[Number(first.pairId.slice(1)) - 1]?.order;
+    if (expected === undefined) {
+        problems.push(`pair ${first.pairId} has no declared order`);
+        continue;
+    }
     if (first.arm !== expected[0] || second.arm !== expected[1])
         problems.push(
             `pair ${first.pairId} order ${first.arm}/${second.arm}, expected ${expected.join("/")}`,

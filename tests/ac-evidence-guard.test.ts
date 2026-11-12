@@ -19,7 +19,7 @@ import {
 } from "./fixtures/placement-harness/ac/evidence-guard.mts";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const runner = join(here, "fixtures", "placement-harness", "ac", "run.mjs");
+const runner = join(here, "fixtures", "placement-harness", "ac", "run.mts");
 const temp = () => mkdtempSync(join(tmpdir(), "evidence-guard-"));
 
 test("clearing a reservation removes only the lock marker", () => {

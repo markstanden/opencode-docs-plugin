@@ -24,7 +24,7 @@ import { buildAcPrompt } from "./fixtures/placement-harness/ac-scoring.mts";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const HARNESS = join(HERE, "fixtures/placement-harness");
 const CORPUS = join(HARNESS, "prod014/cases.json");
-const RUNNER = join(HARNESS, "ac/run.mjs");
+const RUNNER = join(HARNESS, "ac/run.mts");
 const sha256 = (text: string): string =>
     createHash("sha256").update(text, "utf8").digest("hex");
 
@@ -138,8 +138,9 @@ describe("trial isolation", () => {
         assert.deepEqual(runtimeFiles.sort(), [
             "analysis/journal.ts",
             "harness.mts",
-            "primary-checks/R01.mjs",
+            "primary-checks/R01.mts",
             "primary-checks/_replication-shared.mjs",
+            "primary-checks/_replication-shared.mts",
             "scenario-names.mts",
         ]);
         const corpusMount = sources.find((source) =>

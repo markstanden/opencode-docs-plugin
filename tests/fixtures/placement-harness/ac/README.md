@@ -34,32 +34,32 @@ All state lives outside the repository; `--root` points at the campaign root.
 
 ```sh
 # Regenerate the frozen schedule from the seed.
-node tests/fixtures/placement-harness/ac/run.mjs schedule --out schedule.json
+node tests/fixtures/placement-harness/ac/run.mts schedule --out schedule.json
 
 # Record the harness's deterministic gate verdict (no model call).
-node tests/fixtures/placement-harness/ac/run.mjs gate \
+node tests/fixtures/placement-harness/ac/run.mts gate \
   --repo "$ROOT/arms/b" --base "$ROOT/gen/b" \
   --cases "$ROOT/arms/b/tests/fixtures/trial-cases.json" \
   --stamps fr-B-s1-NOTE-01
 
 # One first-attempt structured judgement.
-node tests/fixtures/placement-harness/ac/run.mjs judge \
+node tests/fixtures/placement-harness/ac/run.mts judge \
   --base "$ROOT/gen/b" --stamp fr-B-s1-NOTE-01 --case NOTE-01 \
   --truth tests/fixtures/held-out-truth.json \
   --launcher tests/fixtures/placement-harness/ac/judge-launcher.sh \
   --model opencode-go/glm-5.3-flash --workdir "$ROOT/evidence/ac-runs"
 
 # Deterministic re-parse of answers whose only defect was trailing prose.
-node tests/fixtures/placement-harness/ac/run.mjs resolve --base "$ROOT/gen/b"
+node tests/fixtures/placement-harness/ac/run.mts resolve --base "$ROOT/gen/b"
 
 # Aggregate one stage (schedule and finalist selection are campaign inputs).
-node tests/fixtures/placement-harness/ac/run.mjs report \
+node tests/fixtures/placement-harness/ac/run.mts report \
   --root "$ROOT" --stage screening --schedule schedule.json \
   --finalist "$ROOT/evidence/finalist.json" --out-dir "$ROOT/evidence"
 
 # Hash or verify the evidence tree (signing keys are never hashed).
-node tests/fixtures/placement-harness/ac/run.mjs manifest --root "$ROOT" --write
-node tests/fixtures/placement-harness/ac/run.mjs manifest --root "$ROOT" --verify
+node tests/fixtures/placement-harness/ac/run.mts manifest --root "$ROOT" --write
+node tests/fixtures/placement-harness/ac/run.mts manifest --root "$ROOT" --verify
 ```
 
 `judge` and `gate` take a stage base directory: `gen/<arm>` for screening and

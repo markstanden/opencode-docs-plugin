@@ -199,7 +199,7 @@ describe("materialised campaign runner", () => {
             // Act
             execFileSync(
                 process.execPath,
-                [join(fixtureDir, "campaign", "materialise.mjs"), target],
+                [join(fixtureDir, "campaign", "materialise.mts"), target],
                 { encoding: "utf8" },
             );
             const modes = ["prepare/generate.sh", "prepare/shim/podman"].map(
@@ -223,13 +223,13 @@ describe("fresh and historical materialisation", () => {
             // Act
             execFileSync(
                 process.execPath,
-                [join(fixtureDir, "campaign", "materialise.mjs"), fresh],
+                [join(fixtureDir, "campaign", "materialise.mts"), fresh],
                 { encoding: "utf8" },
             );
             execFileSync(
                 process.execPath,
                 [
-                    join(fixtureDir, "campaign", "materialise.mjs"),
+                    join(fixtureDir, "campaign", "materialise.mts"),
                     historical,
                     "--historical",
                 ],
@@ -257,14 +257,14 @@ describe("fresh and historical materialisation", () => {
         try {
             execFileSync(
                 process.execPath,
-                [join(fixtureDir, "campaign", "materialise.mjs"), target],
+                [join(fixtureDir, "campaign", "materialise.mts"), target],
                 { encoding: "utf8" },
             );
 
             // Act
             const second = spawnSync(
                 process.execPath,
-                [join(fixtureDir, "campaign", "materialise.mjs"), target],
+                [join(fixtureDir, "campaign", "materialise.mts"), target],
                 { encoding: "utf8" },
             );
 
@@ -280,7 +280,7 @@ describe("fresh and historical materialisation", () => {
                 // Act
                 const refused = spawnSync(
                     process.execPath,
-                    [join(fixtureDir, "campaign", "materialise.mjs"), frozen],
+                    [join(fixtureDir, "campaign", "materialise.mts"), frozen],
                     { encoding: "utf8" },
                 );
                 // Assert
