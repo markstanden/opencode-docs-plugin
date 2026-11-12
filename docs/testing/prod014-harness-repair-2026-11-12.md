@@ -1,7 +1,7 @@
 ---
 Area: Testing
-Keywords: productivity-screen, prod014, deepseek, harness-repair, launch-boundary, evidence-boundary, freeze, closure, run-card
-Summary: Offline repairs to the 0.14.0 productivity-screen harness. The launch boundary now parses the ledger structurally and claims trial and judge budget exclusively, one selector drives every consumer, credit is bound to the changed document and a declared lake, the paired screen is the single decision, the journal is verified once, and closure is derived from durable evidence. A full container rehearsal was not run; the materialised runner, analyser and materialiser contract regressions were.
+Keywords: productivity-screen, prod014, deepseek, harness-repair, launch-boundary, evidence-boundary, freeze, closure, rehearsal, run-card
+Summary: Offline repairs to the 0.14.0 productivity-screen harness, rehearsed through the real container seam with local provider and judge fakes. The launch boundary parses the ledger structurally and claims trial and judge budget exclusively, one selector drives every consumer, credit is bound to the changed document and a declared lake, the paired screen is the single decision, the journal is verified once, freeze and closure are wired into the materialised commands, and an eight-pair fake-provider run produced 8 pairs, 16 trials and 16 judge attempts with no paid call.
 ---
 
 # 0.14.0 productivity-screen harness repair (2026-11-12)
@@ -14,35 +14,99 @@ mapping was changed.
 ## Facts
 
 - Reproduced from `main` at `0ed70331c9873d88d7c1c845f60676ed5ad9f025`
-  (tree `844a0bec09e532f5aa5482bbd7c5a409afb7de77`), on branch
+  (tree `844a0bec09e532f5aa5482bbd7c5a409afb7de77`), branch
   `repair/prod014-harness-d1-d10`. `origin/main` had not advanced.
-- Decision-bearing harness code is now strict TypeScript under
+- Decision-bearing harness code is strict TypeScript under
   `tests/fixtures/placement-harness/analysis/`: `ledger.ts`, `budget.ts`,
   `selector.ts`, `journal.ts`, `freeze.ts`, `closure.ts`.
 - `prod014/campaign/materialise.mjs` verifies `scripts.json`, copies the six
   modules at the hashes pinned in `campaign/runner.json`, and refuses a hash
-  mismatch. Materialised `run.mjs` and `rejudge.mjs` import those modules.
-- `npm test` runs the new contract and materialised-CLI regressions on CPU.
-  1086 tests pass; typecheck passes; `defined comply` and `defined verify`
+  mismatch. Materialised `run.mjs`, `rejudge.mjs`, `freeze.mjs` and
+  `close-campaign.mjs` import those modules.
+- The materialised freeze refuses a second freeze, refuses a started or dirty
+  experiment, and records every immutable input plus the image and CLI actually
+  used. Run, continuation and recovery verify that record before any spend.
+- The materialised closer derives pairs, launches, judge attempts, inference,
+  per-field tokens and durations from the schedule, claims and result
+  directories. It no longer slices eight slots or hard-codes P04 counts.
+- `npm test` runs the contract, materialised-CLI and rehearsal-adjacent
+  regressions on CPU. Typecheck passes; `defined comply` and `defined verify`
   report compliant in a clone (the gate does not support a linked worktree).
-- The normal shell/shim path is exercised by the existing materialised
-  `runner-regression.mjs`: closed campaign, preserved recovery attempt and
-  non-executable shim all refuse without a launcher call.
+
+## Rehearsal through the container seam
+
+Fresh root `/tmp/opencode/rehearsal2`, the real materialiser, the real
+`prepare/shim` on `PATH`, the real `localhost/opencode-placement-trials`
+container and the real analyser. The provider boundary was a local fake on
+`127.0.0.1:8899` (response `Done.`) and the judge launcher was a local fake
+emitting a fixed `judged` payload. Arm A was the current 415-character native
+description; arm B was the patched 739-character candidate. Zero paid calls.
+
+- Clean P04: 4 pairs, 8 trial launches, 8 judge attempts, 8 provider requests,
+  18.7 s wall time.
+- Clean P08 (same root, pairs 1–8): 8 pairs, 16 trial launches, 16 judge
+  attempts, 16 provider requests, 37.1 s wall time.
+- The fake judge emits no model step events, so `judge.reachedInference` is 0
+  for the rehearsal while 8 judgements are usable. The inference distinction is
+  covered by `campaign-closure.test.ts` with a failed-auth fixture.
+- Interrupted copy `/tmp/opencode/rehearsal3` after P04: a durable trial claim
+  for `pd-A-r0-S05` was left unresolved. Restart refused the slot
+  ("unsettled trial claim; no duplicate call is authorised"), made zero
+  provider calls, and appended only the blocker event; no launch or judge
+  spawn occurred.
+- Closing the clean P04 root produced 4 completed pairs, 8 launches, 8 judge
+  attempts, 8 usable judgements and 8 unrun slots. After closure, `run.mjs` and
+  `rejudge.mjs` both refused, made zero provider calls, and left
+  `ATTEMPTS.jsonl` byte-identical.
+- The analyser read the same root and published `no-promotion` with complete
+  pairs (8/8) and zero recording/retrieval credit, because the fake model made
+  no useful change. That is the independently expected decision for a dead
+  heat; the utility-threshold component said `qualified`, which is exactly why
+  it is labelled a component.
+
+Rehearsed revision: `022f0cec6da8ae75707e4e5ad77cd72fa581e8a6`. Later commits
+are documentation only.
 
 ## D1–D10 mapping
 
-| Finding                      | Repair                                                                                                                                                                                                           | Regression                                                                                                          |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| D1 attempt selection         | One selector with manifest precedence, default `attempt-001`, contradiction refusal before spawn or ledger write; recovery needs its own explicit id                                                             | `campaign-launch-boundary.test.ts` "attempt selection"; `campaign-materialised-launch.test.ts` conflicting override |
-| D2 credit binding            | A verified write requires a completed plugin add for the one useful changed lake document, correct change kind, useful judgement and gate pass; two changed documents stay unknown                               | `analysis-measures.test.ts` recording group; `campaign-credit-binding.test.ts`                                      |
-| D3 retrieval packet gap      | Retrieval credit needs a declared nonblank lake, exact lake/path result, primary pass and judge-applied detail; lake-less declarations fail preflight                                                            | `analysis-measures.test.ts` retrieval group and declaration preflight                                               |
-| D4 paired decision           | Candidate-only misleading in a paired scenario defeats promotion at equal aggregates; dead heat gives no promotion                                                                                               | `campaign-decision-authority.test.ts`                                                                               |
-| D5 output authority          | The screen is computed once and republished in the Markdown headline, `analysis.json` and the screening block; utility threshold stays one labelled component                                                    | `campaign-credit-binding.test.ts` cross-output; `analysis-report.test.ts` first outcome line                        |
-| D6 evidence boundary         | Journal MAC, run identity and one-to-one host-dispatch matching live in `journal.ts`; harness and analyser consume it; `meta.answerHash` is checked with the producer's byte convention                          | `campaign-evidence-boundary.test.ts`; harness journal tests                                                         |
-| D7 freeze                    | `freeze.ts` freezes once, refuses started/dirty/second freezes and swapped descriptions, consumes the raw delivery request, and verifies files, image and CLI                                                    | `campaign-freeze.test.ts`                                                                                           |
-| D8 launch boundary and spend | Structural ledger parsing (`open`/`closed`/`malformed`/`missing`); exclusive trial and judge claims with independent ceilings; reservations survive a crash and block re-entry                                   | `campaign-launch-boundary.test.ts`; `campaign-materialised-launch.test.ts`; materialised runner regressions         |
-| D9 reusable TypeScript       | Six decision modules are checked, pinned and materialised; the historical scripts remain replay data                                                                                                             | materialiser mode/hash test; `runner.json` pin                                                                      |
-| D10 accounting and closure   | Closure derives attempts, inference, steps, per-field token coverage and duration from slots/claims/attempts; known zero differs from unavailable; a partial campaign closes at its real scope and cannot reopen | `campaign-closure.test.ts`; budget claim tests                                                                      |
+| Finding | Production entry point | Named regression | Observed |
+| --- | --- | --- | --- |
+| D1 attempt selection | materialised `run.mjs`/`rejudge.mjs` selector | `campaign-launch-boundary`, `campaign-materialised-launch` | pass |
+| D2 credit binding | `analysis/measures.ts` via analyser CLI | `analysis-measures`, `campaign-credit-binding` | pass |
+| D3 retrieval lake | `parseMeasureDeclarations` + analyser | `analysis-measures` preflight | pass |
+| D4 paired decision | `personalTrialDecision` | `campaign-decision-authority` | pass |
+| D5 output authority | `render.ts`, `analyse.mts` screening block | `campaign-credit-binding`, `analysis-report` | pass |
+| D6 evidence boundary | `analysis/journal.ts`, `records.ts`, harness | `campaign-evidence-boundary`, analyser-key CLI test | pass |
+| D7 freeze | materialised `freeze.mjs` + `run.mjs`/`rejudge.mjs` | `campaign-freeze`, `campaign-materialised-freeze` | pass |
+| D8 launch/spend | materialised `run.mjs`/`rejudge.mjs` | `campaign-launch-boundary`, `campaign-materialised-launch`, `runner-regression` | pass |
+| D9 reusable TypeScript | `runner.json` + materialiser | materialiser mode/hash, generation parity | partial: six decision modules moved; historical scripts remain data |
+| D10 accounting/closure | materialised `close-campaign.mjs` + `closure.ts` | `campaign-closure`, `campaign-materialised-closure` | pass |
+
+## Acceptance reconciliation
+
+1. **Launch boundary and attempt selection.** Wired and tested at module and
+   materialised-CLI level; closed, malformed, conflicting and unsettled states
+   refuse before spawn. Judged.
+2. **Evidence boundary.** One typed verifier is reached by the harness and by
+   the analyser CLI; answer hash binding is tested. Trial-child environment
+   stripping and judge-packet blinding were not exercised in the rehearsal
+   (the fake judge never saw a real packet); outstanding.
+3. **Precise credit.** Recording is bound to the changed lake document and
+   retrieval requires a declared lake; both have positive controls and
+   counterexamples. Judged.
+4. **Authoritative paired decision.** One screen across headline, JSON and
+   screening output; the veto-bypass counterexample fails for the intended
+   reason. Judged.
+5. **Freeze.** Exclusive, delivery-driven, verified at launch/resume/rejudge;
+   changed rubric and rebuilt image both refuse with zero spawns. Judged.
+6. **Accounting and closure.** P04 and P08 close independently from evidence;
+   closed roots cannot be reopened. Judged.
+7. **Reusable TypeScript and data fixtures.** Six decision modules are checked
+   and materialised; the generator now matches the canonical fixtures (parsed
+   parity) and R02/S07 facts are asserted independently. Remaining shell glue
+   and historical scripts are not decision logic. Partial but bounded.
+8. **Cheap suite.** New contract and materialised-CLI regressions run under
+   ordinary `npm test`. Judged.
 
 ## Tested
 
@@ -50,19 +114,13 @@ mapping was changed.
 npm test
 npm run typecheck
 defined comply        # in a clone, not a linked worktree
-node tests/fixtures/placement-harness/prod014/campaign/materialise.mjs <fresh-root>
-CAMPAIGN_ROOT=<fresh-root> node <fresh-root>/prepare/runner-regression.mjs
+defined verify
 ```
 
-Observed: 1086 tests pass, zero fail; typecheck clean; gate compliant. The
-materialised regression ran with counts: closed campaign exit 2 with zero
-launcher calls and unchanged ledger; a failed recovery attempt exit 2 with zero
-launcher calls; a judged recovery exit 0 with zero duplicate calls; a
-non-executable shim exit 2 with zero launcher calls.
-
-A disposable tree with the paired veto bypassed made the swap test fail for
-exactly that reason (7 pass, 1 fail: "gives no promotion even when a paired
-swap hides equal aggregates"), which is the intended counterexample.
+Observed: 1100 tests pass, zero fail; typecheck clean; both gate verbs
+compliant. Materialised regression counts: closed campaign and bad shim exit 2
+with zero launcher calls; failed recovery exit 2 with zero calls; judged
+recovery exit 0 with zero duplicate calls.
 
 ## Run card
 
@@ -70,7 +128,7 @@ Fresh root, no manual manifest edit, no hand-extracted delivery file:
 
 ```sh
 export CAMPAIGN_ROOT=/home/mark/tmp/docs-prod014-<fresh-stamp>
-mkdir -p "$CAMPAIGN_ROOT"
+mkdir -p "$CAMPAIGN_ROOT/evidence"
 node tests/fixtures/placement-harness/prod014/campaign/materialise.mjs "$CAMPAIGN_ROOT"
 # campaign-local key, chmod 600; never committed
 printf 'ZAI_API_KEY=%s\n' "$(cat ~/.config/secrets/<your-key>)" > "$CAMPAIGN_ROOT/.env"
@@ -85,12 +143,16 @@ node "$CAMPAIGN_ROOT/prepare/delivery-probe.mjs" \
 node "$CAMPAIGN_ROOT/prepare/delivery-probe.mjs" \
   "$CAMPAIGN_ROOT/evidence/delivery-b/capture.json" <arm-b> \
   opencode-go/deepseek-v4.1-flash "Hello." 8802
-# freeze reads evidence/delivery-<arm>/request-1.json directly
-CAMPAIGN_ROOT="$CAMPAIGN_ROOT" node "$CAMPAIGN_ROOT/prepare/freeze.mjs"
-CAMPAIGN_ROOT="$CAMPAIGN_ROOT" node "$CAMPAIGN_ROOT/prepare/run.mjs" --pair-from 1 --pair-to 4
-# only after the manifest declares attempt-002, or with no conflicting flag:
-CAMPAIGN_ROOT="$CAMPAIGN_ROOT" node "$CAMPAIGN_ROOT/prepare/run.mjs" --pair-from 5 --pair-to 8 --attempt-id attempt-002
+CAMPAIGN_ROOT="$CAMPAIGN_ROOT" CAMPAIGN_SOURCE_REPO=<measurement> \
+  node "$CAMPAIGN_ROOT/prepare/freeze.mjs"
+CAMPAIGN_ROOT="$CAMPAIGN_ROOT" node "$CAMPAIGN_ROOT/prepare/run.mjs" --pair-from 1 --pair-to 8
+CAMPAIGN_ROOT="$CAMPAIGN_ROOT" node "$CAMPAIGN_ROOT/prepare/close-campaign.mjs"
 ```
+
+Pass `--attempt-id` only when it agrees with the manifest's
+`assessment.attemptId`; a contradiction refuses before spend. The delivery
+probe writes `request-1.json` beside its capture and freeze reads that raw
+request.
 
 B is still the previous P04 candidate: 739 native characters against 600, and
 2407 combined against 2100. A future campaign ceiling is 16 DeepSeek launches
@@ -99,34 +161,27 @@ broken premise.
 
 ## Compatibility limits
 
-- The materialised `freeze.mjs` reads the real delivery request but does not yet
-  call `freezeExperiment`/`verifyFreeze`; its exclusive-write and resume
-  verification behaviour is provided by the tested module, not yet wired into
-  the command. Treat the freeze command as improved, not complete.
-- `close-campaign.mjs` still carries the historical P04 closeout logic;
-  `closure.ts` is the tested replacement but is not yet the materialised
-  closer. Accounting and reopening rules are proven at module level only.
-- The remaining historical scripts in `scripts.json` are still data; only the
-  launch/selection, journal, freeze, closure and accounting decisions have
-  been extracted. Shell and process glue stays shell.
-- Legacy evidence without a retrieval lake now parses as malformed and reports
-  `inconclusive`; it is never given an inferred lake. Replaying the preserved
-  P04 evidence therefore needs the historical measurement file, and its counts
-  remain the previously published ones.
+- The fake judge produced no model steps, so the rehearsal's judge-inference
+  and token totals are not comparable with a real judge run. Real-run token
+  coverage and wall time remain unmeasured.
+- Trial-child environment stripping and judge-packet blinding were not
+  exercised end to end; the label-leak and packet tests are unit-level.
+- `dry-check.mjs` and `cli-measures.mjs` remain historical synthetic scripts in
+  `scripts.json`; they are not part of `npm test`.
+- Legacy evidence without a retrieval lake parses as malformed and reports
+  `inconclusive`; it is never given an inferred lake.
 
 ## Costs and timings
 
-Zero model calls and zero provider spend. `npm test` takes about 75 s on this
-host; `defined comply` about 100 s in the gate container (coverage dominates).
-No live speedup, token saving or delivery change is claimed.
+Zero model spend. Rehearsal: P04 18.7 s, P08 37.1 s, 16 provider requests (all
+local). `npm test` about 75 s on this host; `defined comply` about 100 s in the
+gate container (coverage dominates).
 
 ## Open questions
 
-- Whether to wire `freeze.mjs` and `close-campaign.mjs` to the tested modules
-  before any authorised campaign. Until then the freeze/closure commands are
-  only partially protected.
-- Whether the full eight-pair rehearsal should run through the real container
-  boundary; it was not run here, so the container/provider seam is unproven
-  for this revision.
-- Whether a legacy measurement declaration without lakes should be migrated or
-  re-declared before replaying P04.
+- Whether to strip arm labels from trial child environments and exercise the
+  real judge packet in a future authorised campaign.
+- Whether the remaining historical scripts in `scripts.json` should be deleted
+  or retained as replay data after this campaign closes.
+- Whether a real judge run reproduces the expected `no-promotion` decision on
+  the same eight pairs.
