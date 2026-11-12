@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadJudgeKey } from "./env.mjs";
+import { credentialFileProblem, loadJudgeKey } from "./env.mjs";
 import { parseCampaignLedger } from "../runner/ledger.ts";
 import { advanceClaim, claimBudget } from "../runner/budget.ts";
 import { resolveRecoverySelection } from "../runner/selector.ts";
@@ -119,6 +119,12 @@ if (refusal !== null) {
 const premise = premiseProblems();
 if (premise.length > 0) {
     console.error(`BLOCKER: frozen premise changed: ${premise.join("; ")}`);
+    process.exit(2);
+}
+
+const keyProblem = credentialFileProblem(ROOT);
+if (keyProblem !== null) {
+    console.error(`BLOCKER: ${keyProblem}`);
     process.exit(2);
 }
 

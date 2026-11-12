@@ -89,13 +89,16 @@ prepare_image() {
     fi
     FIXTURE_HASH="$(sha256sum "$CASES" | awk '{print $1}')"
 
+    # The overlay travels by name: its value must not be a container argument
+    # (or a shim log line).
+    export OPENCODE_CONFIG_CONTENT="$overlay"
     CONTAINER_ENV=(
         --rm
         --network host
         --userns=keep-id
         --read-only
         --tmpfs "/tmp:rw,nosuid,size=768m"
-        -e "OPENCODE_CONFIG_CONTENT=$overlay"
+        -e OPENCODE_CONFIG_CONTENT
         -e "PLACEMENT_IMAGE=$IMAGE"
         -e "PLACEMENT_IMAGE_ID=$IMAGE_ID"
         -e "PLACEMENT_FIXTURE_HASH=$FIXTURE_HASH"

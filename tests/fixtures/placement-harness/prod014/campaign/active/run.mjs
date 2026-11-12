@@ -23,7 +23,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { loadJudgeKey } from "./env.mjs";
+import { credentialFileProblem, loadJudgeKey } from "./env.mjs";
 import { parseCampaignLedger } from "../runner/ledger.ts";
 import {
     advanceClaim,
@@ -56,12 +56,16 @@ const dryRun = argv.includes("--dry-run");
 const trialCommand = flag("--trial-command");
 const pairFrom = Number(flag("--pair-from") ?? 1);
 const pairTo = Number(flag("--pair-to") ?? 8);
-const judgeKeySource = loadJudgeKey(ROOT);
 
 const fail = (message) => {
     console.error(`BLOCKER: ${message}`);
     process.exit(2);
 };
+
+// Refuse an unsafe credential file before its value is loaded.
+const keyProblem = credentialFileProblem(ROOT);
+if (keyProblem !== null) fail(keyProblem);
+const judgeKeySource = loadJudgeKey(ROOT);
 
 const readJson = (path) =>
     existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
