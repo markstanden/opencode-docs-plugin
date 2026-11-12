@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Log the container subcommand for evidence, then run the real podman.
+if [ -n "${CONTAINER_LOG:-}" ]; then
+    printf 'podman %s\n' "$*" >>"$CONTAINER_LOG"
+fi
+exec /usr/bin/podman "$@"

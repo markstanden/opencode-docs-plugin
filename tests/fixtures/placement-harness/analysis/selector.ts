@@ -112,8 +112,9 @@ function selectionProblems(
 }
 /**
  * The selection a recovery run may use. Recovery is a separate authorised
- * budget and a separately identified analysis selection; it must not rewrite
- * the original freeze.
+ * budget and a separately identified analysis selection; it must never reuse
+ * the normal selection's attempt directory, and it must not rewrite the
+ * original freeze.
  * @param input The manifest declaration and any recovery override.
  * @param input.manifestAttemptId The frozen manifest selection, or null.
  * @param input.recoveryAttemptId The explicit recovery selection.
@@ -139,11 +140,11 @@ export function resolveRecoverySelection(input: {
             ],
         };
     }
-    if (manifest !== null && manifest !== recovery) {
+    if (manifest !== null && ordinal(recovery) <= ordinal(manifest)) {
         return {
             ok: false,
             problems: [
-                `recovery selection ${recovery} contradicts the frozen manifest selection ${manifest}`,
+                `recovery selection ${recovery} must be a later attempt than the frozen manifest selection ${manifest}`,
             ],
         };
     }
@@ -151,4 +152,13 @@ export function resolveRecoverySelection(input: {
         ok: true,
         selection: { attemptId: recovery, source: "override" },
     };
+}
+
+/**
+ * The numeric ordinal of an attempt id.
+ * @param attemptId An id of the accepted shape.
+ * @returns The parsed number.
+ */
+function ordinal(attemptId: string): number {
+    return Number(attemptId.slice("attempt-".length));
 }

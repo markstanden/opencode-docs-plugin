@@ -201,22 +201,27 @@ describe("attempt selection", () => {
         );
     });
 
-    it("requires recovery to name its own selection", () => {
+    it("requires recovery to name its own, later selection", () => {
         // Act
         const absent = resolveRecoverySelection({});
-        const conflicting = resolveRecoverySelection({
-            manifestAttemptId: "attempt-001",
+        const same = resolveRecoverySelection({
+            manifestAttemptId: "attempt-002",
             recoveryAttemptId: "attempt-002",
         });
-        const agreed = resolveRecoverySelection({
-            manifestAttemptId: "attempt-002",
+        const earlier = resolveRecoverySelection({
+            manifestAttemptId: "attempt-003",
+            recoveryAttemptId: "attempt-002",
+        });
+        const later = resolveRecoverySelection({
+            manifestAttemptId: "attempt-001",
             recoveryAttemptId: "attempt-002",
         });
 
         // Assert
         assert.equal(absent.ok, false);
-        assert.equal(conflicting.ok, false);
-        assert.equal(agreed.ok, true);
+        assert.equal(same.ok, false);
+        assert.equal(earlier.ok, false);
+        assert.equal(later.ok, true);
     });
 });
 
