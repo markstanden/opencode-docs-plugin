@@ -87,7 +87,8 @@ review head.
 ## Review-repair rehearsal (2026-11-12, second pass)
 
 Working tree at `cdb525b5fa1c` (review head `72950accf2239cf856c0c12898677d6dd702b9e7`
-plus the review repairs). Fresh root `/tmp/opencode/rehearsal-final`, real
+plus the review repairs); later commits are mechanical snapshot and gate
+formatting, leaving the rehearsed behaviour unchanged at `1aa1b6af19c7`. Fresh root `/tmp/opencode/rehearsal-final`, real
 materialiser, real `container-run.sh` and `ac/judge-launcher.sh`, real image
 `58505eac2fe9`, arms A (415 native chars) and B (739), and a local provider fake
 on `127.0.0.1:8899` that returns a no-op trial answer and a valid `none`
@@ -175,8 +176,9 @@ defined comply        # in a clone, not a linked worktree
 defined verify
 ```
 
-Observed: 1107 tests pass, zero fail; typecheck clean; both gate verbs
-compliant. Materialised regression counts: closed campaign and bad shim exit 2
+Observed at the review-repair head: 1152 tests pass, zero fail; typecheck
+clean; `defined comply` compliant, including node coverage. The author's
+original 1107-pass run remains valid for its own revision. Materialised regression counts: closed campaign and bad shim exit 2
 with zero launcher calls; failed recovery exit 2 with zero calls; judged
 recovery exit 0 with zero duplicate calls.
 
