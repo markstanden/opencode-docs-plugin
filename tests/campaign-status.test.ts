@@ -13,8 +13,6 @@ import {
     mkdtempSync,
     readFileSync,
     readdirSync,
-    rmSync,
-    statSync,
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -647,7 +645,7 @@ describe("status campaign mode: roots and preparation", () => {
         const root = materialisedRoot("pd-status-badjson");
         write(
             join(root, "evidence/FROZEN.json"),
-            `{"freeze": "sk-canary-1234567890 not json`,
+            `{"freeze": "canary-0 not json`,
         );
 
         // Act
@@ -655,7 +653,7 @@ describe("status campaign mode: roots and preparation", () => {
 
         // Assert
         assert.equal(run.status, 2);
-        assert.equal(run.stdout.includes("sk-canary"), false);
+        assert.equal(run.stdout.includes("canary-0"), false);
         const payload = JSON.parse(run.stdout) as { status: string };
         assert.equal(payload.status, "error");
     });
@@ -811,7 +809,7 @@ describe("status campaign mode: credentials", () => {
         const root = materialisedRoot("pd-status-credmode");
         completePreparation(root);
         writeFrozen(root);
-        write(join(root, ".env"), "ZAI_API_KEY=sk-canary-1234567890\n");
+        write(join(root, ".env"), "ZAI_API_KEY=canary-0\n");
         chmodSync(join(root, ".env"), 0o644);
 
         // Act
@@ -822,8 +820,8 @@ describe("status campaign mode: credentials", () => {
 
         // Assert
         assert.equal(result.result.phase, "blocked-credential-mode");
-        assert.equal(run.stdout.includes("sk-canary"), false);
-        assert.equal(run.stderr.includes("sk-canary"), false);
+        assert.equal(run.stdout.includes("canary-0"), false);
+        assert.equal(run.stderr.includes("canary-0"), false);
         assert.match(run.stdout, /mode 644/);
     });
 
@@ -832,7 +830,7 @@ describe("status campaign mode: credentials", () => {
         const root = materialisedRoot("pd-status-credok");
         completePreparation(root);
         writeFrozen(root);
-        write(join(root, ".env"), "ZAI_API_KEY=sk-canary-1234567890\n");
+        write(join(root, ".env"), "ZAI_API_KEY=canary-0\n");
         chmodSync(join(root, ".env"), 0o600);
 
         // Act
@@ -840,7 +838,7 @@ describe("status campaign mode: credentials", () => {
 
         // Assert
         assert.equal(run.status, 0);
-        assert.equal(run.stdout.includes("sk-canary"), false);
+        assert.equal(run.stdout.includes("canary-0"), false);
         assert.match(run.stdout, /credentials: configured \(campaign \.env\)/);
         assert.match(run.stdout, /\.env mode 600/);
     });
@@ -1328,9 +1326,9 @@ describe("status projections and safety", () => {
 
     it("redacts credential material from diagnostics", () => {
         // Act / Assert
-        assert.equal(redact("leak sk-canary123456 here"), "leak [redacted] here");
+        assert.equal(redact("leak sk-abcdef123456 here"), "leak [redacted] here");
         assert.equal(
-            redact("ZAI_API_KEY=supersecret"),
+            redact("ZAI_API_KEY=plain-value"),
             "ZAI_API_KEY=[redacted]",
         );
         assert.equal(
