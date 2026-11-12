@@ -328,7 +328,17 @@ function spawnJudge({ launcher, model, stamp, prompt, runDir, timeout }) {
         encoding: "utf8",
         timeout,
         maxBuffer: 32 * 1024 * 1024,
-        env: { ...process.env, AC_RUN_DIR: runDir, AC_MODEL: model },
+        env: {
+            ...process.env,
+            AC_RUN_DIR: runDir,
+            AC_MODEL: model,
+            // The judge-visible context travels by name so the launcher uses
+            // exactly the values this wrapper scanned before dispatch.
+            AC_CONTAINER_RUN_DIR: JUDGE_CHILD.runDir,
+            AC_CONTAINER_HOME: JUDGE_CHILD.home,
+            AC_CONTAINER_DATA_HOME: JUDGE_CHILD.dataHome,
+            AC_CONTAINER_CACHE_HOME: JUDGE_CHILD.cacheHome,
+        },
     });
 }
 
@@ -487,6 +497,57 @@ function neutralRunDir(args, stamp, caseId) {
 }
 
 /**
+ * The judge child's complete visible context.
+ *
+ * Every value is a container path or a neutral agent home. The host evidence
+ * path is deliberately absent: an operator root under /home is mounted at
+ * `runDir` but is never a working directory, PWD, config path or environment
+ * value the child can observe.
+ */
+const JUDGE_CHILD = {
+    runDir: "/judge",
+    home: "/tmp/agent-home",
+    dataHome: "/tmp/agent-home/.local/share",
+    cacheHome: "/tmp/agent-home/.cache",
+};
+
+/** The child's working directory, derived from the one mount destination. */
+const judgeWorkDir = () => `${JUDGE_CHILD.runDir}/work`;
+
+/** The child's config home, derived from the one mount destination. */
+const judgeConfigHome = () => `${JUDGE_CHILD.runDir}/config-home`;
+
+/**
+ * Every judge-visible context value, in child-argument order.
+ * @returns The container paths and neutral homes the child receives.
+ */
+const judgeChildSurfaces = () => [
+    JUDGE_CHILD.runDir,
+    judgeWorkDir(),
+    judgeConfigHome(),
+    JUDGE_CHILD.home,
+    JUDGE_CHILD.dataHome,
+    JUDGE_CHILD.cacheHome,
+];
+
+/**
+ * Why a judge-visible context value cannot be a container path, or null.
+ * These are constants, so a failure means the wrapper itself is inconsistent.
+ * @returns The refusal, or null.
+ */
+function judgeContextProblem() {
+    const bad = judgeChildSurfaces().filter(
+        (value) =>
+            !value.startsWith("/") ||
+            value.includes(":") ||
+            value.includes("\n"),
+    );
+    return bad.length === 0
+        ? null
+        : `judge context is not a neutral container path: ${bad.join(", ")}`;
+}
+
+/**
  * Why the recorded answer cannot be judged, or null.
  * @param caseDir The trial's result directory.
  * @param allowLegacy Whether absent identity evidence is tolerated.
@@ -509,17 +570,19 @@ function answerProblemOf(caseDir, allowLegacy) {
 
 /**
  * Why the judge request must not dispatch, or null.
+ *
+ * The scan covers the assembled packet, the model and every value the child
+ * actually receives. Host evidence paths are not scanned: they are mounted as
+ * a source and are not judge-visible.
  * @param args The parsed flags.
  * @param prompt The assembled packet.
- * @param runDir The neutral run directory.
  * @returns The refusal, or null.
  */
-function leakProblemOf(args, prompt, runDir) {
+function leakProblemOf(args, prompt) {
     const leaks = labelLeaks(
         prompt,
-        need(args, "--workdir"),
         need(args, "--model"),
-        runDir,
+        ...judgeChildSurfaces(),
     );
     return leaks.length === 0
         ? null
@@ -597,7 +660,11 @@ function judgePackage(args, base, stamp, caseId, truth, allowLegacy) {
         operations.lines ?? [],
     );
     const runDir = neutralRunDir(args, stamp, caseId);
-    const leak = leakProblemOf(args, prompt, runDir);
+    const contextProblem = judgeContextProblem();
+    if (contextProblem !== null) {
+        return { code: 3, error: contextProblem };
+    }
+    const leak = leakProblemOf(args, prompt);
     if (leak !== null) {
         return { code: 3, error: leak };
     }
