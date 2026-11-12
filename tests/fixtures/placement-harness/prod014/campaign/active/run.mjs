@@ -29,6 +29,7 @@ import {
     advanceClaim,
     claimBudget,
     readClaims,
+    releaseClaim,
     restartDisposition,
 } from "../runner/budget.ts";
 import { resolveAttemptSelection } from "../runner/selector.ts";
@@ -83,6 +84,9 @@ const spendRefusal = () => {
     }
     if (parsed.state === "closed") {
         return "campaign is closed; no launch event or child process is permitted";
+    }
+    if (existsSync(join(EVIDENCE, "CLOSING.lock"))) {
+        return "a campaign close is in progress; no dispatch may start";
     }
     return null;
 };
@@ -556,6 +560,7 @@ const runJudge = (slot) => {
     const claim = claimBudget(EVIDENCE, "judge", ceilings.judge, {
         stamp: slot.stamp,
         attemptId,
+        key: `${slot.stamp}|${attemptId}`,
     });
     if (!claim.ok) {
         ledger({
@@ -569,16 +574,20 @@ const runJudge = (slot) => {
         console.error(`BLOCKER: ${claim.reason}`);
         return false;
     }
-    ledger({
-        event: "judge-launch",
-        slot: slot.slot,
-        pairId: slot.pairId,
-        stamp: slot.stamp,
-        arm: slot.arm,
-        scenario: slot.scenario,
-        attemptDir,
-    });
-    advanceClaim(claim.claim, "spawned");
+    const closedAfterClaim = spendRefusal();
+    if (closedAfterClaim !== null) {
+        releaseClaim(claim.claim);
+        ledger({
+            event: "slot-blocked",
+            slot: slot.slot,
+            pairId: slot.pairId,
+            stamp: slot.stamp,
+            arm: slot.arm,
+            reason: closedAfterClaim,
+        });
+        console.error(`BLOCKER: ${closedAfterClaim}`);
+        return false;
+    }
     const result = spawnSync(
         process.execPath,
         [
@@ -611,6 +620,35 @@ const runJudge = (slot) => {
         ],
         { env: envFor(slot), encoding: "utf8", timeout: 120000 },
     );
+    const dispatched = existsSync(join(attemptDir, "dispatch.json"));
+    if (!dispatched) {
+        releaseClaim(claim.claim);
+        ledger({
+            event: "judge-refused",
+            slot: slot.slot,
+            pairId: slot.pairId,
+            stamp: slot.stamp,
+            arm: slot.arm,
+            scenario: slot.scenario,
+            exit: result.status,
+            reason: String(result.stderr ?? "").trim().split("\n").at(-1) ?? "",
+            attemptDir,
+        });
+        console.error(
+            `BLOCKER: ${slot.stamp} judge wrapper refused before dispatch: ${String(result.stderr ?? "").trim()}`,
+        );
+        return false;
+    }
+    ledger({
+        event: "judge-launch",
+        slot: slot.slot,
+        pairId: slot.pairId,
+        stamp: slot.stamp,
+        arm: slot.arm,
+        scenario: slot.scenario,
+        attemptDir,
+    });
+    advanceClaim(claim.claim, "spawned");
     advanceClaim(claim.claim, "closed");
     const judgement = readJson(join(attemptDir, "judgement.json"));
     const resolution = readJson(join(attemptDir, "resolution.json"));
@@ -738,6 +776,7 @@ const processSlot = (slot) => {
     const claim = claimBudget(EVIDENCE, "trial", ceilings.trial, {
         stamp: slot.stamp,
         attemptId: "attempt-001",
+        key: slot.stamp,
     });
     if (!claim.ok) {
         ledger({
@@ -750,19 +789,33 @@ const processSlot = (slot) => {
         console.error(`BLOCKER: ${claim.reason}`);
         return "blocked";
     }
+    const closedAfterClaim = spendRefusal();
+    if (closedAfterClaim !== null) {
+        releaseClaim(claim.claim);
+        ledger({
+            event: "slot-blocked",
+            slot: slot.slot,
+            stamp: slot.stamp,
+            arm: slot.arm,
+            reason: closedAfterClaim,
+        });
+        console.error(`BLOCKER: ${closedAfterClaim}`);
+        return "blocked";
+    }
     const attempt = newAttempt(slot, "launching");
-    advanceClaim(claim.claim, "spawned");
-    const status = launchRun(slot, attempt);
-    advanceClaim(claim.claim, "closed");
-    return status;
+    return launchRun(slot, attempt, claim.claim);
 };
 
-const launchRun = (slot, attempt) => {
+const launchRun = (slot, attempt, claim) => {
     const outcome = runTrial(slot, attempt);
-    if (outcome.meta !== null) {
-        return finishRecordedSlot(slot, outcome.meta);
-    }
-    if (!outcome.containerRun && !existsSync(resultDir(slot))) {
+    const dispatched =
+        outcome.meta !== null ||
+        outcome.containerRun ||
+        existsSync(resultDir(slot));
+    if (!dispatched) {
+        // A known pre-model failure dispatched nothing: its reservation is
+        // returned so a refusal cannot burn an allowance.
+        releaseClaim(claim);
         ledger({
             event: "slot-pre-model-failure",
             slot: slot.slot,
@@ -776,6 +829,11 @@ const launchRun = (slot, attempt) => {
             `BLOCKER: ${slot.stamp} stopped before the container run; preserve and report`,
         );
         return "blocked";
+    }
+    advanceClaim(claim, "spawned");
+    advanceClaim(claim, "closed");
+    if (outcome.meta !== null) {
+        return finishRecordedSlot(slot, outcome.meta);
     }
     ledger({
         event: "slot-attempted-unknown",
@@ -803,6 +861,25 @@ if (refusal !== null) {
     process.exit(2);
 }
 
+/**
+ * Why an earlier blocked slot forbids this range, or null.
+ * @param firstIndex The index of the first slot in the requested range.
+ * @returns The refusal, or null when every earlier slot completed.
+ */
+const earlierSlotRefusal = (firstIndex) => {
+    const completed = new Set(
+        ledgerParse()
+            .events.filter((event) => event.event === "slot-complete")
+            .map((event) => event.stamp),
+    );
+    for (const slot of slots.slice(0, firstIndex)) {
+        if (!completed.has(slot.stamp)) {
+            return `${slot.stamp} is not complete; a later range cannot skip it`;
+        }
+    }
+    return null;
+};
+
 const premise = premiseProblems();
 if (premise.length > 0) {
     console.error(`BLOCKER: frozen premise changed: ${premise.join("; ")}`);
@@ -820,6 +897,16 @@ if (judgeKeySource === null) {
     console.error(
         "BLOCKER: no ZAI_API_KEY (environment, ZAI_API_KEY_FILE or campaign .env)",
     );
+    process.exit(2);
+}
+
+const firstIndex = slots.findIndex((slot) => {
+    const pairNumber = Number(slot.pairId.slice(1));
+    return pairNumber >= pairFrom && pairNumber <= pairTo;
+});
+const earlier = earlierSlotRefusal(firstIndex < 0 ? slots.length : firstIndex);
+if (earlier !== null) {
+    console.error(`BLOCKER: ${earlier}`);
     process.exit(2);
 }
 

@@ -15,6 +15,7 @@ import {
     claimBudget,
     claimUsage,
     readClaims,
+    releaseClaim,
     restartDisposition,
 } from "./fixtures/placement-harness/analysis/budget.ts";
 import {
@@ -387,6 +388,149 @@ process.stdout.write(JSON.stringify(result));`;
                 readFileSync(claims[0]!.path, "utf8").includes('"reserved"'),
                 true,
             );
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("logical attempt ownership", () => {
+    it("refuses a second reservation for the same logical attempt", () => {
+        // Arrange
+        const root = temp("logical");
+        try {
+            // Act
+            const first = claimBudget(root, "judge", 4, {
+                stamp: "pd-A-r0-X",
+                attemptId: "attempt-002",
+                key: "pd-A-r0-X|attempt-002",
+            });
+            const second = claimBudget(root, "judge", 4, {
+                stamp: "pd-A-r0-X",
+                attemptId: "attempt-002",
+                key: "pd-A-r0-X|attempt-002",
+            });
+
+            // Assert
+            assert.equal(first.ok, true);
+            assert.equal(second.ok, false);
+            assert.match(
+                (second as { reason: string }).reason,
+                /already owns a reservation/,
+            );
+            assert.equal(readClaims(root, "judge").length, 1);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("lets exactly one of two logical attempts take the last allowance", () => {
+        // Arrange
+        const root = temp("last");
+        try {
+            // Act
+            const first = claimBudget(root, "trial", 1, {
+                stamp: "pd-A-r0-X",
+                key: "pd-A-r0-X",
+            });
+            const second = claimBudget(root, "trial", 1, {
+                stamp: "pd-B-r0-X",
+                key: "pd-B-r0-X",
+            });
+
+            // Assert
+            assert.equal(first.ok, true);
+            assert.equal(second.ok, false);
+            assert.equal(readClaims(root, "trial").length, 1);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("releases only a reservation that dispatched nothing", () => {
+        // Arrange
+        const root = temp("release");
+        try {
+            const reserved = claimBudget(root, "trial", 2, {
+                stamp: "pd-A-r0-X",
+                key: "pd-A-r0-X",
+            });
+            const spawned = claimBudget(root, "trial", 2, {
+                stamp: "pd-B-r0-X",
+                key: "pd-B-r0-X",
+            });
+            assert.equal(reserved.ok, true);
+            assert.equal(spawned.ok, true);
+            assert.equal(spawned.ok, true);
+            const spawnedClaim = advanceClaim(
+                (spawned as { ok: true; claim: Parameters<typeof advanceClaim>[0] })
+                    .claim,
+                "spawned",
+            );
+
+            // Act
+            const releasedReserved = releaseClaim(
+                (reserved as { ok: true; claim: Parameters<typeof releaseClaim>[0] })
+                    .claim,
+            );
+            const releasedSpawned = releaseClaim(spawnedClaim);
+
+            // Assert
+            assert.equal(releasedReserved, true);
+            assert.equal(releasedSpawned, false);
+            assert.equal(readClaims(root, "trial").length, 1);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("arbitrates one logical attempt across two processes", async () => {
+        // Arrange
+        const root = temp("barrier");
+        const barrier = join(root, "barrier");
+        const worker = `import { existsSync, writeFileSync } from "node:fs";
+import { claimBudget } from ${JSON.stringify(budgetModule)};
+while (!existsSync(process.env.BARRIER)) {
+    // Deterministic barrier: both workers are spinning before the claim.
+}
+const result = claimBudget(process.env.ROOT, "judge", 4, {
+    stamp: "pd-A-r0-X",
+    attemptId: "attempt-002",
+    key: "pd-A-r0-X|attempt-002",
+});
+writeFileSync(process.env.RESULT, JSON.stringify(result));`;
+        const spawnWorker = (name: string) =>
+            new Promise<{ ok: boolean }>((resolve, reject) => {
+                const child = spawn(process.execPath, ["--input-type=module", "-e", worker], {
+                    env: {
+                        ...process.env,
+                        ROOT: root,
+                        BARRIER: barrier,
+                        RESULT: join(root, `${name}.json`),
+                    },
+                    stdio: "ignore",
+                });
+                child.on("error", reject);
+                child.on("exit", () => {
+                    resolve(
+                        JSON.parse(
+                            readFileSync(join(root, `${name}.json`), "utf8"),
+                        ),
+                    );
+                });
+            });
+
+        try {
+            const pending = [spawnWorker("one"), spawnWorker("two")];
+            // Wait until both worker files exist only after claims are done;
+            // the barrier is released once both processes are running.
+            await new Promise((resolve) => setTimeout(resolve, 250));
+            writeFileSync(barrier, "go\n", "utf8");
+            const results = await Promise.all(pending);
+
+            // Assert
+            assert.equal(results.filter((result) => result.ok).length, 1);
+            assert.equal(readClaims(root, "judge").length, 1);
         } finally {
             rmSync(root, { recursive: true, force: true });
         }

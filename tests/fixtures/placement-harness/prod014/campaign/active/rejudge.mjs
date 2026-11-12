@@ -11,7 +11,11 @@ import {
 import { join } from "node:path";
 import { credentialFileProblem, loadJudgeKey } from "./env.mjs";
 import { parseCampaignLedger } from "../runner/ledger.ts";
-import { advanceClaim, claimBudget } from "../runner/budget.ts";
+import {
+    advanceClaim,
+    claimBudget,
+    releaseClaim,
+} from "../runner/budget.ts";
 import { resolveRecoverySelection } from "../runner/selector.ts";
 import { spendFreezeProblem, verifyFreeze } from "../runner/freeze.ts";
 
@@ -203,6 +207,7 @@ for (const slot of slots) {
     const claim = claimBudget(EVIDENCE, "judge", judgeCeiling, {
         stamp: slot.stamp,
         attemptId,
+        key: `${slot.stamp}|${attemptId}`,
     });
     if (!claim.ok) {
         ledger({
@@ -217,17 +222,20 @@ for (const slot of slots) {
         console.error(`BLOCKER: ${claim.reason}`);
         process.exit(2);
     }
-    ledger({
-        event: "judge-launch",
-        slot: slot.slot,
-        pairId: slot.pairId,
-        stamp: slot.stamp,
-        arm: slot.arm,
-        scenario: slot.scenario,
-        attemptId,
-        recovery: true,
-    });
-    advanceClaim(claim.claim, "spawned");
+    const closedAfterClaim = spendRefusal();
+    if (closedAfterClaim !== null) {
+        releaseClaim(claim.claim);
+        ledger({
+            event: "slot-blocked",
+            slot: slot.slot,
+            stamp: slot.stamp,
+            arm: slot.arm,
+            attemptId,
+            reason: closedAfterClaim,
+        });
+        console.error(`BLOCKER: ${closedAfterClaim}`);
+        process.exit(2);
+    }
     const result = spawnSync(
         process.execPath,
         [
@@ -260,6 +268,34 @@ for (const slot of slots) {
             },
         },
     );
+    if (!existsSync(join(attemptDir, "dispatch.json"))) {
+        releaseClaim(claim.claim);
+        ledger({
+            event: "judge-refused",
+            slot: slot.slot,
+            stamp: slot.stamp,
+            arm: slot.arm,
+            attemptId,
+            recovery: true,
+            exit: result.status,
+            reason: String(result.stderr ?? "").trim().split("\n").at(-1) ?? "",
+        });
+        console.error(
+            `BLOCKER: ${slot.stamp} recovery wrapper refused before dispatch`,
+        );
+        process.exit(2);
+    }
+    ledger({
+        event: "judge-launch",
+        slot: slot.slot,
+        pairId: slot.pairId,
+        stamp: slot.stamp,
+        arm: slot.arm,
+        scenario: slot.scenario,
+        attemptId,
+        recovery: true,
+    });
+    advanceClaim(claim.claim, "spawned");
     advanceClaim(claim.claim, "closed");
     const judgement = readJson(join(attemptDir, "judgement.json"));
     loggerExit(slot, result, judgement);

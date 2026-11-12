@@ -11,8 +11,15 @@
  * exceed the authorised number of calls.
  */
 
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import {
+    mkdirSync,
+    readFileSync,
+    readdirSync,
+    unlinkSync,
+    writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
 
 /** The spend kinds with independent ceilings. */
 export type BudgetKind = "trial" | "judge";
@@ -38,6 +45,8 @@ export interface BudgetClaim {
     attemptId: string | null;
     /** A free-form note written by the caller. */
     note: string | null;
+    /** The logical attempt this claim owns, when one was named. */
+    key: string | null;
 }
 
 /** The outcome of claiming one budget slot. */
@@ -53,6 +62,8 @@ export interface ClaimIdentity {
     attemptId?: string;
     /** A free-form note. */
     note?: string;
+    /** The logical attempt this claim owns; duplicate keys are refused. */
+    key?: string;
     /** The creation timestamp, injected for determinism in tests. */
     at?: string;
 }
@@ -65,6 +76,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** The claim filename for one index. */
 export function claimFileName(kind: BudgetKind, index: number): string {
     return `${kind}-${String(index).padStart(4, "0")}.claim`;
+}
+
+/** The key lock filename for one logical attempt. */
+export function keyLockName(kind: BudgetKind, key: string): string {
+    return `${kind}-key-${createHash("sha256").update(key, "utf8").digest("hex").slice(0, 16)}.lock`;
 }
 
 /** The directory holding one kind's claims. */
@@ -99,6 +115,7 @@ function claimOf(
         stamp: typeof value.stamp === "string" ? value.stamp : null,
         attemptId: typeof value.attemptId === "string" ? value.attemptId : null,
         note: typeof value.note === "string" ? value.note : null,
+        key: typeof value.key === "string" ? value.key : null,
     };
 }
 
@@ -136,6 +153,7 @@ export function readClaims(root: string, kind: BudgetKind): BudgetClaim[] {
                 stamp: null,
                 attemptId: null,
                 note: "unreadable claim treated as reserved",
+                key: null,
             },
         );
     }
@@ -169,10 +187,20 @@ export function claimBudget(
     }
     const dir = claimDir(root, kind);
     mkdirSync(dir, { recursive: true });
+    const key = identity.key ?? null;
+    if (key !== null && !acquireKeyLock(dir, kind, key)) {
+        return {
+            ok: false,
+            reason: `${kind} logical attempt ${key} already owns a reservation`,
+            used: readClaims(root, kind).length,
+            ceiling,
+        };
+    }
     for (let index = 1; index <= ceiling; index += 1) {
         const claim = createClaim(dir, kind, index, identity);
         if (claim !== undefined) return { ok: true, claim };
     }
+    if (key !== null) releaseKeyLock(dir, kind, key);
     return {
         ok: false,
         reason: `${kind} ceiling reached: ${String(ceiling)} authorised call(s)`,
@@ -205,6 +233,7 @@ function createClaim(
         stamp: identity.stamp ?? null,
         attemptId: identity.attemptId ?? null,
         note: identity.note ?? null,
+        key: identity.key ?? null,
     };
     try {
         writeFileSync(path, claimBytes(claim, new Date().toISOString()), {
@@ -234,10 +263,65 @@ function claimBytes(claim: BudgetClaim, at: string): string {
             stamp: claim.stamp,
             attemptId: claim.attemptId,
             note: claim.note,
+            key: claim.key,
         },
         null,
         2,
     )}\n`;
+}
+
+/**
+ * Acquire the exclusive lock for one logical attempt.
+ * @param dir The kind's claim directory.
+ * @param kind The spend kind.
+ * @param key The logical attempt key.
+ * @returns True when this caller now owns the reservation.
+ */
+function acquireKeyLock(
+    dir: string,
+    kind: BudgetKind,
+    key: string,
+): boolean {
+    try {
+        writeFileSync(join(dir, keyLockName(kind, key)), `${key}\n`, {
+            encoding: "utf8",
+            flag: "wx",
+        });
+        return true;
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+        throw error;
+    }
+}
+
+/** Remove one logical attempt's lock. */
+function releaseKeyLock(dir: string, kind: BudgetKind, key: string): void {
+    try {
+        unlinkSync(join(dir, keyLockName(kind, key)));
+    } catch {
+        /* already released */
+    }
+}
+
+/**
+ * Release a reservation that provably dispatched nothing.
+ *
+ * Only a `reserved` claim may be released: a spawned claim's call may have
+ * begun and must keep consuming the ceiling.
+ * @param claim The claim to release.
+ * @returns Whether the claim and its logical lock were removed.
+ */
+export function releaseClaim(claim: BudgetClaim): boolean {
+    if (claim.state !== "reserved") return false;
+    try {
+        unlinkSync(claim.path);
+    } catch {
+        return false;
+    }
+    if (claim.key !== null) {
+        releaseKeyLock(dirname(claim.path), claim.kind, claim.key);
+    }
+    return true;
 }
 
 /**

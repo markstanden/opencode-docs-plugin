@@ -589,6 +589,14 @@ function judge(args) {
         startedAt: new Date().toISOString(),
         state,
     });
+    // The wrapper records its own dispatch immediately before spawning, so a
+    // caller can distinguish a started wrapper from an actual judge call.
+    writeJson(join(attemptDir, "dispatch.json"), {
+        at: new Date().toISOString(),
+        launcher: need(args, "--launcher"),
+        model,
+        pid: process.pid,
+    });
     const result = spawnJudge({
         launcher: need(args, "--launcher"),
         model,
