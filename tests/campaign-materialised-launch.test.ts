@@ -110,8 +110,19 @@ exit 0
 `,
     );
     chmodSync(join(bin, "podman"), 0o755);
+    // A source repo independent of the test checkout, so the read-only gate
+    // scope needs no .git metadata.
+    const sourceDir = join(root, "source");
+    write(join(sourceDir, "README.md"), "source\n");
+    execFileSync("git", ["init", "-q"], { cwd: sourceDir });
+    execFileSync("git", ["add", "-A"], { cwd: sourceDir });
+    execFileSync(
+        "git",
+        ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "s"],
+        { cwd: sourceDir },
+    );
     const source = execFileSync("git", ["rev-parse", "HEAD"], {
-        cwd: join(here, ".."),
+        cwd: sourceDir,
         encoding: "utf8",
     }).trim();
     write(
@@ -167,6 +178,7 @@ function run(
     bin: string,
     script: string,
     args: readonly string[],
+    extraEnv: Readonly<Record<string, string>> = {},
 ): ReturnType<typeof spawnSync> {
     return spawnSync(
         process.execPath,
@@ -175,9 +187,11 @@ function run(
             env: {
                 ...process.env,
                 CAMPAIGN_ROOT: root,
+                CAMPAIGN_SOURCE_REPO: join(root, "source"),
                 STUB_COUNTER: counter,
                 ZAI_API_KEY: "stub",
                 PATH: `${bin}:${process.env.PATH ?? ""}`,
+                ...extraEnv,
             },
             encoding: "utf8",
             timeout: 60000,
@@ -386,29 +400,13 @@ node -e 'const fs=require("fs");fs.writeFileSync(process.env.ENV_FILE,JSON.strin
 
         try {
             // Act
-            spawnSync(
-                process.execPath,
-                [
-                    join(root, "prepare/run.mjs"),
-                    "--pair-from",
-                    "1",
-                    "--pair-to",
-                    "1",
-                    "--trial-command",
-                    stub,
-                ],
-                {
-                    env: {
-                        ...process.env,
-                        CAMPAIGN_ROOT: root,
-                        ZAI_API_KEY: "stub",
-                        STUB_COUNTER: counter,
-                        ENV_FILE: envFile,
-                        PATH: `${bin}:${process.env.PATH ?? ""}`,
-                    },
-                    encoding: "utf8",
-                    timeout: 60000,
-                },
+            run(
+                root,
+                counter,
+                bin,
+                "run.mjs",
+                ["--pair-from", "1", "--pair-to", "1", "--trial-command", stub],
+                { ENV_FILE: envFile },
             );
             const env = JSON.parse(readFileSync(envFile, "utf8")) as {
                 image: string | null;
