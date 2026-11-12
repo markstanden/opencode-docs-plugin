@@ -21,6 +21,13 @@ preparation, then makes paid calls only at the delivery probe, P04 and the
 continuation.
 
 ```sh
+# Before setup, during a block, or after an interruption, observe one campaign
+# (read-only; also supports --base <rev> for checkout mode and --json):
+node tests/fixtures/placement-harness/prod014/campaign/status.mts \
+  --root "$CAMPAIGN_ROOT" --report-root "$REPORT_ROOT"
+```
+
+```sh
 # 0. Pin the revision that will execute. Materialise from the checked-out
 #    commit; freeze records it, and every dispatch rechecks it.
 cd /path/to/opencode-docs-plugin
