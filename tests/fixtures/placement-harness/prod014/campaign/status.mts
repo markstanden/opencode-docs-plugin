@@ -795,29 +795,46 @@ function freezeArmsOf(record: Record<string, unknown>): FreezeRecord["arms"] | n
 
 /** One frozen arm, or null when a field is malformed. */
 function frozenArmOf(entry: Record<string, unknown>): FreezeRecord["arms"][number] | null {
-    const strings = ["commit", "tree", "descriptionHash", "deliveredHash", "annotationHash"].map(
-        (key) => str(entry, key),
-    );
-    const numbers = ["descriptionChars", "deliveredChars", "annotationChars"].map(
-        (key) => num(entry, key),
-    );
     const id = str(entry, "id");
-    if (strings.some((value) => value === undefined) || numbers.some((value) => value === undefined)) {
-        return null;
-    }
-    if (id === undefined) return null;
+    const strings = frozenArmStrings(entry);
+    const numbers = frozenArmNumbers(entry);
+    if (id === undefined || strings === null || numbers === null) return null;
     return {
         id,
-        commit: strings[0] ?? "",
-        tree: strings[1] ?? "",
+        commit: strings[0],
+        tree: strings[1],
         clean: entry.clean === true,
-        descriptionChars: numbers[0] ?? 0,
-        descriptionHash: strings[2] ?? "",
-        deliveredChars: numbers[1] ?? 0,
-        deliveredHash: strings[3] ?? "",
-        annotationChars: numbers[2] ?? 0,
-        annotationHash: strings[4] ?? "",
+        descriptionChars: numbers[0],
+        descriptionHash: strings[2],
+        deliveredChars: numbers[1],
+        deliveredHash: strings[3],
+        annotationChars: numbers[2],
+        annotationHash: strings[4],
     };
+}
+
+/** The five string fields of a frozen arm, or null when any is malformed. */
+function frozenArmStrings(entry: Record<string, unknown>): string[] | null {
+    const keys = ["commit", "tree", "descriptionHash", "deliveredHash", "annotationHash"];
+    const values: string[] = [];
+    for (const key of keys) {
+        const value = str(entry, key);
+        if (value === undefined) return null;
+        values.push(value);
+    }
+    return values;
+}
+
+/** The three numeric fields of a frozen arm, or null when any is malformed. */
+function frozenArmNumbers(entry: Record<string, unknown>): number[] | null {
+    const keys = ["descriptionChars", "deliveredChars", "annotationChars"];
+    const values: number[] = [];
+    for (const key of keys) {
+        const value = num(entry, key);
+        if (value === undefined) return null;
+        values.push(value);
+    }
+    return values;
 }
 
 /** The frozen single-file inputs, or null when the array is malformed. */
