@@ -102,6 +102,50 @@ const verify = (
         ...overrides,
     });
 
+/** The observed native add shape, with campaign paths and values sanitised. */
+const ADD_STRUCT = {
+    mode: "replace",
+    path: "db/pool.md",
+    expectedRevision: "rev-1",
+    metadata: { Area: "DB", Keywords: ["pool"], Summary: "cap" },
+    body: "# Pool cap\n\n### Facts\n\n- the cap is 10\n",
+};
+
+/** One signed native add record for the same run. */
+const nativeAddRecord = (input: unknown = { add: ADD_STRUCT }): string =>
+    signed({
+        surface: "native",
+        callID: "native_add",
+        input,
+        result: {
+            content: "replaced",
+            metadata: {
+                written: true,
+                lake: "docs",
+                path: "lakes/docs/db/pool.md",
+            },
+        },
+    });
+
+/** The host half of one native add dispatch. */
+const nativeAddOptions = (input: unknown) => ({
+    callIds: new Set(["native_add"]),
+    nativeCalls: [
+        {
+            tool: "docs",
+            status: "completed",
+            input,
+            callId: "native_add",
+        },
+    ],
+    dispatches: [],
+});
+
+const nativeAddVerify = (
+    hostInput: unknown,
+    signedInput: unknown = { add: ADD_STRUCT },
+) => verify([nativeAddRecord(signedInput)], nativeAddOptions(hostInput));
+
 describe("operations-journal verification", () => {
     it("credits a signed, attributed record with a matching host dispatch", () => {
         // Act
@@ -242,6 +286,179 @@ describe("operations-journal verification", () => {
         // Assert
         assert.equal(result.credited.length, 1);
         assert.deepEqual(result.rejected, []);
+    });
+
+    it("credits a native write whose host add is a JSON string", () => {
+        // Arrange: the observed 2026-11-12 shape — the host trail keeps the
+        // pre-decode string, the signed journal holds the decoded struct.
+        const result = nativeAddVerify({ add: JSON.stringify(ADD_STRUCT) });
+
+        // Assert
+        assert.equal(result.credited.length, 1);
+        assert.deepEqual(result.rejected, []);
+    });
+
+    it("keeps exact object-form native add matching as the first path", () => {
+        // Act
+        const result = nativeAddVerify({ add: ADD_STRUCT });
+
+        // Assert
+        assert.equal(result.credited.length, 1);
+        assert.deepEqual(result.rejected, []);
+    });
+
+    it("rejects a malformed native add string", () => {
+        // Act
+        const result = nativeAddVerify({ add: '{"mode":"replace",' });
+
+        // Assert
+        assert.deepEqual(result.rejected, [
+            { index: 0, reason: "no-host-dispatch" },
+        ]);
+    });
+
+    it("rejects a double-encoded native add string", () => {
+        // Act: one decode yields another string, not the signed object.
+        const result = nativeAddVerify({
+            add: JSON.stringify(JSON.stringify(ADD_STRUCT)),
+        });
+
+        // Assert
+        assert.deepEqual(result.rejected, [
+            { index: 0, reason: "no-host-dispatch" },
+        ]);
+    });
+
+    for (const [label, patch] of [
+        ["body", { body: "# A different note\n" }],
+        ["path", { path: "db/other.md" }],
+    ] as const) {
+        it(`rejects a string-form add with a changed ${label}`, () => {
+            // Act
+            const result = nativeAddVerify({
+                add: JSON.stringify({ ...ADD_STRUCT, ...patch }),
+            });
+
+            // Assert
+            assert.deepEqual(result.rejected, [
+                { index: 0, reason: "no-host-dispatch" },
+            ]);
+        });
+    }
+
+    it("credits a string-form add beside a matching sibling lake", () => {
+        // Arrange: the whole input must match, including the lake selector.
+        const result = verify(
+            [
+                signed({
+                    surface: "native",
+                    callID: "native_add",
+                    input: { lake: "docs", add: ADD_STRUCT },
+                }),
+            ],
+            {
+                callIds: new Set(["native_add"]),
+                nativeCalls: [
+                    {
+                        tool: "docs",
+                        status: "completed",
+                        input: {
+                            lake: "docs",
+                            add: JSON.stringify(ADD_STRUCT),
+                        },
+                        callId: "native_add",
+                    },
+                ],
+                dispatches: [],
+            },
+        );
+
+        // Assert
+        assert.equal(result.credited.length, 1);
+        assert.deepEqual(result.rejected, []);
+    });
+
+    it("rejects a string-form add beside a different sibling lake", () => {
+        // Arrange: the decoded add matches, but the lake selector does not.
+        const result = verify(
+            [
+                signed({
+                    surface: "native",
+                    callID: "native_add",
+                    input: { lake: "docs", add: ADD_STRUCT },
+                }),
+            ],
+            {
+                callIds: new Set(["native_add"]),
+                nativeCalls: [
+                    {
+                        tool: "docs",
+                        status: "completed",
+                        input: {
+                            lake: "shared",
+                            add: JSON.stringify(ADD_STRUCT),
+                        },
+                        callId: "native_add",
+                    },
+                ],
+                dispatches: [],
+            },
+        );
+
+        // Assert
+        assert.deepEqual(result.rejected, [
+            { index: 0, reason: "no-host-dispatch" },
+        ]);
+    });
+
+    it("never credits two string-form records for one host dispatch", () => {
+        // Act
+        const result = verify(
+            [nativeAddRecord(), nativeAddRecord()],
+            nativeAddOptions({ add: JSON.stringify(ADD_STRUCT) }),
+        );
+
+        // Assert
+        assert.equal(result.credited.length, 1);
+        assert.deepEqual(result.rejected, [
+            { index: 1, reason: "no-host-dispatch" },
+        ]);
+    });
+
+    it("does not admit a string add on the Code Mode twin surface", () => {
+        // Arrange: the exception is native-only; nested matching is unchanged.
+        const twin = signed({
+            callID: "call_add",
+            input: { add: ADD_STRUCT },
+        });
+        const result = verify([twin], {
+            dispatches: [
+                {
+                    tool: "docs",
+                    status: "completed",
+                    input: { add: JSON.stringify(ADD_STRUCT) },
+                    callId: "call_add",
+                },
+            ],
+        });
+
+        // Assert
+        assert.deepEqual(result.rejected, [
+            { index: 0, reason: "no-host-dispatch" },
+        ]);
+    });
+
+    it("does not match a host object against a signed string add", () => {
+        // Act: the exception is one-way; the signed bytes stay authoritative.
+        const result = nativeAddVerify(
+            { add: ADD_STRUCT },
+            { add: JSON.stringify(ADD_STRUCT) },
+        );
+
+        // Assert
+        assert.deepEqual(result.rejected, [
+            { index: 0, reason: "no-host-dispatch" },
+        ]);
     });
 });
 

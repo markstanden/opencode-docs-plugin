@@ -163,6 +163,41 @@ export function journalRecordAttributed(
 }
 
 /**
+ * Whether one host dispatch carries the signed input.
+ *
+ * Exact equality is the primary match. A native docs call can also carry
+ * `add` as a JSON string: the runtime decodes it into the signed struct before
+ * the plugin executes it, so only the raw string reaches the host trail.
+ * Decode that one field once and require the whole resulting input to be
+ * deeply equal to the signed input. A malformed, double-encoded, one-way or
+ * otherwise differing value still refuses. The signed record is never
+ * rewritten: its bytes are the MAC-covered evidence.
+ * @param record The signed journal record.
+ * @param dispatch The host-recorded dispatch.
+ * @returns True when the host input matches the signed input, exactly or
+ *   through one decoded native `add` string.
+ */
+function hostInputMatches(
+    record: Record<string, unknown>,
+    dispatch: JournalDispatch,
+): boolean {
+    if (isDeepStrictEqual(dispatch.input, record.input)) return true;
+    if (record.surface !== "native" || record.tool !== "docs") return false;
+    if (!isRecord(dispatch.input) || !isRecord(record.input)) return false;
+    const encoded = dispatch.input.add;
+    if (typeof encoded !== "string") return false;
+    if (!isRecord(record.input.add)) return false;
+    let decoded: unknown;
+    try {
+        decoded = JSON.parse(encoded);
+    } catch {
+        return false;
+    }
+    if (!isRecord(decoded)) return false;
+    return isDeepStrictEqual({ ...dispatch.input, add: decoded }, record.input);
+}
+
+/**
  * Consume one matching host dispatch, so two journal lines can never both
  * claim one dispatch.
  * @param host The remaining host calls and dispatches.
@@ -180,7 +215,7 @@ function consumeDispatch(
             dispatch.callId === record.callID &&
             dispatch.tool === record.tool &&
             dispatch.status === record.status &&
-            isDeepStrictEqual(dispatch.input, record.input),
+            hostInputMatches(record, dispatch),
     );
     if (match < 0) return false;
     candidates.splice(match, 1);
