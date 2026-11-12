@@ -71,6 +71,8 @@ export interface PreservationSpec {
 export interface RetrievalSpec {
     /** Lake-relative path of the seeded note. */
     note: string;
+    /** The declared lake holding the note, when the declaration names one. */
+    lake?: string;
     /** The actionable detail the task must apply. */
     detail: string;
 }
@@ -244,7 +246,7 @@ If any still-valid fact is lost, the documentation outcome must be "misleading".
           : "";
     const retrieval = input.retrievalSpec
         ? `
-RETRIEVAL ASSESSMENT (required for this scenario): the seeded note \`${input.retrievalSpec.note}\` carries the project-specific detail: ${input.retrievalSpec.detail}
+RETRIEVAL ASSESSMENT (required for this scenario): ${input.retrievalSpec.lake === undefined ? `the seeded note \`${input.retrievalSpec.note}\`` : `the seeded note \`${input.retrievalSpec.lake}/${input.retrievalSpec.note}\` in the declared lake "${input.retrievalSpec.lake}"`} carries the project-specific detail: ${input.retrievalSpec.detail}
 Decide whether the trial's work applied that detail, using the final answer and the observed docs operations above:
 - "applied": an attributable docs operation retrieved the note and the work uses its detail;
 - "read-not-applied": the note was retrieved but the work does not apply the detail;

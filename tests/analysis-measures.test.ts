@@ -12,6 +12,7 @@ import {
 } from "./fixtures/placement-harness/analysis/measures.ts";
 import type { AccountingCounts } from "./fixtures/placement-harness/analysis/accounting.ts";
 import type { TrialRecord } from "./fixtures/placement-harness/analysis/records.ts";
+import type { JournalVerification } from "./fixtures/placement-harness/analysis/journal.ts";
 
 const declarations: MeasureDeclarations = {
     recording: ["R01"],
@@ -26,13 +27,24 @@ const journal = {
         surface: "native",
         input: { read: "ops/staging-deploy.md" },
         result: {
-            metadata: { lake: "docs", path: "ops/staging-deploy.md" },
+            metadata: {
+                read: "docs:ops/staging-deploy.md",
+                lake: "docs",
+                path: "lakes/docs/ops/staging-deploy.md",
+            },
         },
     }),
     add: JSON.stringify({
         status: "completed",
         surface: "native",
         input: { add: { mode: "create", path: "ops/note.md" } },
+        result: {
+            metadata: {
+                written: true,
+                lake: "docs",
+                path: "lakes/docs/ops/note.md",
+            },
+        },
     }),
     failedAdd: JSON.stringify({
         status: "error",
@@ -46,6 +58,30 @@ const journal = {
     }),
 };
 
+/** Stand-in for a verified journal built from the fixture's own lines. */
+const verifiedJournal = (lines: string[]): JournalVerification => ({
+    state: "verified",
+    credited: lines.flatMap((line, index) => {
+        try {
+            const value: unknown = JSON.parse(line);
+            return typeof value === "object" && value !== null
+                ? [{ index, record: value as Record<string, unknown> }]
+                : [];
+        } catch {
+            return [];
+        }
+    }),
+    rejected: lines.flatMap((line, index) => {
+        try {
+            JSON.parse(line);
+            return [];
+        } catch {
+            return [{ index, reason: "not-json" as const }];
+        }
+    }),
+    problems: [],
+});
+
 type Overrides = {
     gate?: string;
     gateMissing?: boolean;
@@ -55,6 +91,7 @@ type Overrides = {
     journalState?: "available" | "missing";
     retrieval?: { state: string; quote: string } | null;
     scenario?: string;
+    writes?: string;
 };
 
 const record = (overrides: Overrides = {}): TrialRecord => ({
@@ -97,7 +134,11 @@ const record = (overrides: Overrides = {}): TrialRecord => ({
     tokens: { state: "missing", source: "stdout.jsonl" },
     artefacts: {
         finalAnswer: { state: "available", value: "answer", source: "final" },
-        writesText: { state: "available", value: "", source: "writes" },
+        writesText: {
+            state: "available",
+            value: overrides.writes ?? "added lakes/docs/ops/note.md\n",
+            source: "writes",
+        },
         docsOperations:
             overrides.journalState === "missing"
                 ? { state: "missing", source: "docs" }
@@ -108,6 +149,10 @@ const record = (overrides: Overrides = {}): TrialRecord => ({
                   },
         promptText: { state: "missing", source: "prompt" },
     },
+    journal:
+        overrides.journalState === "missing"
+            ? { state: "absent", credited: [], rejected: [], problems: [] }
+            : verifiedJournal(overrides.journal ?? []),
 });
 
 const counts = (overrides: Partial<AccountingCounts> = {}): AccountingCounts =>
@@ -152,7 +197,10 @@ describe("measure declarations", () => {
             retrievalOpportunities: ["S02"],
             scenarios: {
                 S02: {
-                    retrieval: { note: "ops/staging-deploy.md" },
+                    retrieval: {
+                        note: "ops/staging-deploy.md",
+                        lake: "docs",
+                    },
                     preservation: { facts: [{ id: "snapshot" }] },
                 },
             },
@@ -163,7 +211,7 @@ describe("measure declarations", () => {
         assert.deepEqual(parsed.declarations?.recording, ["R01"]);
         assert.deepEqual(parsed.declarations?.retrieval.S02, {
             note: "ops/staging-deploy.md",
-            lake: null,
+            lake: "docs",
             facts: ["snapshot"],
         });
     });
@@ -221,6 +269,7 @@ describe("docs-operation parsing", () => {
             target = path,
         ) => ({
             status: "completed",
+            success: true,
             surface: "native",
             verb: "read" as const,
             target,
@@ -411,12 +460,62 @@ describe("recording measure", () => {
             ...overrides,
         });
 
-    it("counts a verified plugin-mediated write to a shared lake", () => {
+    it("counts a verified plugin write bound to the changed document", () => {
         // Act
         const measured = measureTrial(create(), recordingDeclarations, "A");
 
         // Assert
         assert.equal(measured.recording.success, true);
+        assert.equal(measured.recording.disposition, "verified-write");
+    });
+
+    it("does not credit an unrelated successful add beside a useful edit", () => {
+        // Act
+        const measured = measureTrial(
+            create({
+                outcome: "useful-update",
+                writes: "modified lakes/shared/other.md\n",
+            }),
+            recordingDeclarations,
+            "A",
+        );
+
+        // Assert
+        assert.equal(measured.recording.disposition, "filesystem-only");
+        assert.match(
+            measured.recording.evidence[0] ?? "",
+            /no completed plugin add targeted it/,
+        );
+    });
+
+    it("stays unknown when two lake documents changed", () => {
+        // Act
+        const measured = measureTrial(
+            create({
+                outcome: "useful-update",
+                writes: "modified lakes/docs/ops/note.md\nmodified lakes/shared/other.md\n",
+            }),
+            recordingDeclarations,
+            "A",
+        );
+
+        // Assert
+        assert.equal(measured.recording.disposition, "unknown");
+        assert.match(measured.recording.evidence[0] ?? "", /2 lake documents/);
+    });
+
+    it("credits an update bound to the modified document", () => {
+        // Act
+        const measured = measureTrial(
+            create({
+                outcome: "useful-update",
+                writes: "modified lakes/docs/ops/note.md\n",
+            }),
+            recordingDeclarations,
+            "A",
+        );
+
+        // Assert
         assert.equal(measured.recording.disposition, "verified-write");
     });
 
@@ -644,5 +743,37 @@ describe("personal-trial screen", () => {
         // Assert
         assert.equal(unknown.recommendation, "inconclusive");
         assert.match(unknown.reasons.join("; "), /unknown/);
+    });
+});
+
+describe("retrieval declaration preflight", () => {
+    it("refuses a new retrieval declaration with no lake", () => {
+        // Act
+        const parsed = parseMeasureDeclarations({
+            recordingOpportunities: [],
+            retrievalOpportunities: ["S02"],
+            scenarios: { S02: { retrieval: { note: "ops/x.md" } } },
+        });
+
+        // Assert
+        assert.equal(parsed.declarations, undefined);
+        assert.match(
+            parsed.problems[0] ?? "",
+            /retrieval\.lake must be nonblank/,
+        );
+    });
+
+    it("accepts a declaration whose lake is declared", () => {
+        // Act
+        const parsed = parseMeasureDeclarations({
+            recordingOpportunities: [],
+            retrievalOpportunities: ["S02"],
+            scenarios: {
+                S02: { retrieval: { note: "ops/x.md", lake: "docs" } },
+            },
+        });
+
+        // Assert
+        assert.equal(parsed.declarations?.retrieval.S02?.lake, "docs");
     });
 });

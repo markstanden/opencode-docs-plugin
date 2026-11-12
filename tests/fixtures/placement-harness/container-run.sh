@@ -73,39 +73,45 @@ require_podman() {
 
 prepare_image() {
     require_podman
-    podman build -q \
-        --build-arg "HOST_UID=$(id -u)" \
-        --build-arg "HOST_GID=$(id -g)" \
-        --network host \
-        -t "$IMAGE" \
-        "$HERE" >&2
-
+    if [ -n "${PLACEMENT_TRIAL_IMAGE_ID:-}" ]; then
+        # Dispatch the frozen image by immutable id, never by a mutable tag.
+        podman image exists "$PLACEMENT_TRIAL_IMAGE_ID" >/dev/null 2>&1 || {
+            echo "frozen image $PLACEMENT_TRIAL_IMAGE_ID is not available" >&2
+            exit 1
+        }
+        IMAGE_ID="$PLACEMENT_TRIAL_IMAGE_ID"
+    else
+        podman build -q \
+            --build-arg "HOST_UID=$(id -u)" \
+            --build-arg "HOST_GID=$(id -g)" \
+            --network host \
+            -t "$IMAGE" \
+            "$HERE" >&2
+        IMAGE_ID="$(podman image inspect --format '{{.Id}}' "$IMAGE" 2>/dev/null || true)"
+    fi
     mkdir -p "$PROMPTS" "$FIXTURES" "$RUBRICS" "$RESULTS" "$RUN_FIXTURES"
 
-    IMAGE_ID="$(podman image inspect --format '{{.Id}}' "$IMAGE" 2>/dev/null || true)"
     TIMEOUT_ENV=()
     if [ -n "${TRIAL_TIMEOUT_MS:-}" ]; then
         TIMEOUT_ENV=(-e "TRIAL_TIMEOUT_MS=$TRIAL_TIMEOUT_MS")
     fi
-    PLUGIN_COMMIT="$(git -C "$REPO" rev-parse HEAD 2>/dev/null || true)"
-    PLUGIN_STATUS="$(git -C "$REPO" status --porcelain 2>/dev/null || true)"
-    PLUGIN_DIRTY=""
-    if [ -n "$PLUGIN_STATUS" ]; then
-        PLUGIN_DIRTY=1
+    FIXTURE_HASH=""
+    if [ -f "$CASES" ]; then
+        FIXTURE_HASH="$(sha256sum "$CASES" | awk '{print $1}')"
     fi
-    FIXTURE_HASH="$(sha256sum "$CASES" | awk '{print $1}')"
 
+    # The overlay travels by name: its value must not be a container argument
+    # (or a shim log line).
+    export OPENCODE_CONFIG_CONTENT="$overlay"
     CONTAINER_ENV=(
         --rm
         --network host
         --userns=keep-id
         --read-only
         --tmpfs "/tmp:rw,nosuid,size=768m"
-        -e "OPENCODE_CONFIG_CONTENT=$overlay"
+        -e OPENCODE_CONFIG_CONTENT
         -e "PLACEMENT_IMAGE=$IMAGE"
         -e "PLACEMENT_IMAGE_ID=$IMAGE_ID"
-        -e "PLACEMENT_PLUGIN_COMMIT=$PLUGIN_COMMIT"
-        -e "PLACEMENT_PLUGIN_DIRTY=$PLUGIN_DIRTY"
         -e "PLACEMENT_FIXTURE_HASH=$FIXTURE_HASH"
         "${TIMEOUT_ENV[@]}"
         -e "XDG_CONFIG_HOME=/tmp/agent-home/.config"
@@ -127,7 +133,7 @@ run_generate() {
         -v "$FIXTURES:/fixtures" \
         -v "$RUBRICS:/rubrics" \
         -v "$RESULTS:/results" \
-        "$IMAGE" \
+        "$IMAGE_ID" \
         node /repo/tests/fixtures/placement-harness/harness.mts \
         generate \
         --plugin /repo \
@@ -168,7 +174,7 @@ prepare_case_fixture() {
     printf '%s\n' "{
   \"kind\": \"placement-freeze-receipt\",
   \"schemaVersion\": 1,
-  \"stamp\": \"$STAMP\",
+  \"stamp\": \"slot\",
   \"caseId\": \"$id\",
   \"runJsonSha256\": \"$run_digest\",
   \"image\": \"$IMAGE\",
@@ -269,6 +275,72 @@ prepare_cases_run() {
     mv "$staging" "$CASES_RUN"
 }
 
+# The trial container gets only the runtime files the harness executes for its
+# own case. The full harness directory also holds truth, the whole corpus,
+# measurement assets, other cases' checks and campaign manifests, so it is
+# never mounted.
+prepare_harness_runtime() {
+    local id="$1"
+    local corpus="$RUN_FIXTURES/cases-selected-$id.json"
+    local script
+    script="$(
+        node -e '
+            const fs = require("node:fs");
+            const [path] = process.argv.slice(1);
+            const cases = JSON.parse(fs.readFileSync(path, "utf8"));
+            process.stdout.write(cases[0]?.primaryCheck?.script ?? "");
+        ' "$corpus"
+    )"
+    local sources=("harness.mts" "scenario-names.mts" "analysis/journal.ts")
+    local checks=()
+    if [ -n "$script" ] && [ -f "$HERE/primary-checks/$script" ]; then
+        checks+=("primary-checks/$script")
+        [ -f "$HERE/primary-checks/_replication-shared.mjs" ] &&
+            checks+=("primary-checks/_replication-shared.mjs")
+    fi
+    local hash identity runtime staging file
+    hash="$(
+        cd "$HERE" &&
+            sha256sum "${sources[@]}" ${checks[@]+"${checks[@]}"} |
+            sha256sum | awk '{print $1}'
+    )"
+    identity="${hash:0:16}"
+    runtime="$RUN_FIXTURES/harness-runtime-$identity-$id"
+    [ -d "$runtime" ] && {
+        HARNESS_RUNTIME="$runtime"
+        return 0
+    }
+    staging="$runtime.tmp-$$"
+    rm -rf "$staging"
+    mkdir -p "$staging/analysis"
+    for file in "${sources[@]}"; do
+        cp -a "$HERE/$file" "$staging/$file"
+    done
+    for file in ${checks[@]+"${checks[@]}"}; do
+        mkdir -p "$(dirname "$staging/$file")"
+        cp -a "$HERE/$file" "$staging/$file"
+    done
+    mv "$staging" "$runtime"
+    HARNESS_RUNTIME="$runtime"
+}
+
+# The run container sees only its own case: no other case's criteria, mutation
+# policy or generation metadata is reachable.
+case_corpus() {
+    local id="$1"
+    node -e '
+        const fs = require("node:fs");
+        const [corpusPath, caseId, outPath] = process.argv.slice(1);
+        const cases = JSON.parse(fs.readFileSync(corpusPath, "utf8"));
+        const selected = cases.filter((doc) => doc.id === caseId);
+        if (selected.length !== 1) {
+            console.error("case " + caseId + " is not in the redacted corpus");
+            process.exit(1);
+        }
+        fs.writeFileSync(outPath, JSON.stringify(selected, null, 2) + "\n");
+    ' "$CASES_RUN" "$id" "$RUN_FIXTURES/cases-selected-$id.json"
+}
+
 parse_run_args() {
     STAMP=""
     IDS=()
@@ -366,21 +438,23 @@ run_cases() {
             overall=1
             continue
         }
+        case_corpus "$id"
+        prepare_harness_runtime "$id"
         result_case="$RESULTS/$STAMP/$id"
         mkdir -p "$result_case"
         status=0
         podman run "${CONTAINER_ENV[@]}" \
             --tmpfs /fixtures \
             -v "$RUN_FIXTURES/$STAMP/$id:/fixtures/$id:ro" \
-            -v "$CASES_RUN:/fixtures/cases.json:ro" \
+            -v "$RUN_FIXTURES/cases-selected-$id.json:/fixtures/cases.json:ro" \
             -v "$PROMPTS/$id.md:/prompts/$id.md:ro" \
-            -v "$result_case:/results/$STAMP/$id" \
-            -v "$HERE:/harness:ro" \
+            -v "$result_case:/results/slot/$id" \
+            -v "$HARNESS_RUNTIME:/harness:ro" \
             -v "$REPO/package.json:/repo/package.json:ro" \
             -v "$REPO/src:/repo/src:ro" \
             -v "$REPO/node_modules:/repo/node_modules:ro" \
             -v "$REPO/CONVENTION.md:/repo/CONVENTION.md:ro" \
-            "$IMAGE" \
+            "$IMAGE_ID" \
             node /harness/harness.mts \
             run "$id" \
             --plugin /repo \
@@ -388,7 +462,7 @@ run_cases() {
             --prompts /prompts \
             --fixtures /fixtures \
             --results /results \
-            --stamp "$STAMP" \
+            --stamp slot \
             "${RUN_ARGS[@]}" || status=$?
         # Copy rubric/case only after the container exits. The run container
         # never sees this directory.
@@ -442,6 +516,10 @@ describe)
     ;;
 generate)
     run_generate "$@"
+    ;;
+build-image)
+    prepare_image
+    printf '%s\n' "$IMAGE_ID"
     ;;
 run)
     run_cases "$@"

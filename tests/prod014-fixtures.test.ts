@@ -1,13 +1,15 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
     existsSync,
+    mkdirSync,
     mkdtempSync,
     readFileSync,
     rmSync,
     statSync,
+    writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -206,6 +208,87 @@ describe("materialised campaign runner", () => {
 
             // Assert
             assert.deepEqual(modes, [0o755, 0o755]);
+        } finally {
+            rmSync(target, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("fresh and historical materialisation", () => {
+    it("selects attempt-001 fresh and keeps attempt-002 historical", () => {
+        // Arrange
+        const fresh = mkdtempSync(join(tmpdir(), "pd-fresh-"));
+        const historical = mkdtempSync(join(tmpdir(), "pd-hist-"));
+        try {
+            // Act
+            execFileSync(
+                process.execPath,
+                [join(fixtureDir, "campaign", "materialise.mjs"), fresh],
+                { encoding: "utf8" },
+            );
+            execFileSync(
+                process.execPath,
+                [
+                    join(fixtureDir, "campaign", "materialise.mjs"),
+                    historical,
+                    "--historical",
+                ],
+                { encoding: "utf8" },
+            );
+            const freshAttempt = JSON.parse(
+                readFileSync(join(fresh, "prepare/manifest.json"), "utf8"),
+            ).assessment.attemptId;
+            const historicalAttempt = JSON.parse(
+                readFileSync(join(historical, "prepare/manifest.json"), "utf8"),
+            ).assessment.attemptId;
+
+            // Assert
+            assert.equal(freshAttempt, "attempt-001");
+            assert.equal(historicalAttempt, "attempt-002");
+        } finally {
+            rmSync(fresh, { recursive: true, force: true });
+            rmSync(historical, { recursive: true, force: true });
+        }
+    });
+
+    it("refuses to overwrite a materialised or frozen campaign", () => {
+        // Arrange
+        const target = mkdtempSync(join(tmpdir(), "pd-refuse-"));
+        try {
+            execFileSync(
+                process.execPath,
+                [join(fixtureDir, "campaign", "materialise.mjs"), target],
+                { encoding: "utf8" },
+            );
+
+            // Act
+            const second = spawnSync(
+                process.execPath,
+                [join(fixtureDir, "campaign", "materialise.mjs"), target],
+                { encoding: "utf8" },
+            );
+
+            // Assert
+            assert.notEqual(second.status, 0);
+            assert.match(String(second.stderr), /refusing to overwrite/);
+
+            // Arrange a frozen marker and a fresh target.
+            const frozen = mkdtempSync(join(tmpdir(), "pd-frozen-"));
+            try {
+                mkdirSync(join(frozen, "evidence"), { recursive: true });
+                writeFileSync(join(frozen, "evidence/FROZEN.json"), "{}\n");
+                // Act
+                const refused = spawnSync(
+                    process.execPath,
+                    [join(fixtureDir, "campaign", "materialise.mjs"), frozen],
+                    { encoding: "utf8" },
+                );
+                // Assert
+                assert.notEqual(refused.status, 0);
+                assert.match(String(refused.stderr), /frozen campaign/);
+            } finally {
+                rmSync(frozen, { recursive: true, force: true });
+            }
         } finally {
             rmSync(target, { recursive: true, force: true });
         }

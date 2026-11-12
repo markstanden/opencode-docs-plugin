@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Record the container subcommand for evidence, then run the real podman.
+#
+# Only the verb is logged. Arguments can carry provider configuration, a judge
+# packet and credentials, so they must never reach a persisted campaign log.
+# PODMAN_BIN is the last external boundary: tests point it at a fake.
+if [ -n "${CONTAINER_LOG:-}" ]; then
+    printf 'podman %s\n' "${1:-unknown}" >>"$CONTAINER_LOG"
+fi
+exec "${PODMAN_BIN:-/usr/bin/podman}" "$@"

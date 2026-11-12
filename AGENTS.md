@@ -65,6 +65,22 @@ testable.
   (invented paths, summaries, identifiers); edit it directly when the ranking
   harness needs a new shape — never snapshot a real tree into it.
 
+## Trial harness
+
+- Decision-bearing campaign code is strict TypeScript under
+  `tests/fixtures/placement-harness/analysis/`; `npm test` runs its contract
+  and materialised-CLI regressions on CPU with no provider calls. Keep
+  filesystem, process, clock and provider effects in thin adapters.
+- `prod014/campaign/scripts.json` is frozen historical data for replay.
+  `materialise.mjs` verifies it, and also copies the pinned runner modules
+  listed in `prod014/campaign/runner.json` — regenerate that file whenever a
+  pinned module changes.
+- Parse external evidence as `unknown` at the boundary and keep missing,
+  malformed and unknown as distinct states. A journal line, ledger event or
+  answer earns credit only through the checked evidence boundary.
+- A heavier offline rehearsal (real container, fake provider, counting
+  launchers) is a separate documented step; it is not part of `npm test`.
+
 ## Verifying
 
 ```bash

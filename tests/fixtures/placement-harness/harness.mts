@@ -44,17 +44,11 @@ import {
     writeFileSync,
 } from "node:fs";
 import type { Dirent } from "node:fs";
-import {
-    createHash,
-    createHmac,
-    randomBytes,
-    timingSafeEqual,
-} from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { isDeepStrictEqual } from "node:util";
 import {
     NAMING_MAP_VERSION,
     conditionLabel,
@@ -62,6 +56,11 @@ import {
     scenarioDisplayFor,
 } from "./scenario-names.mts";
 import type { ScenarioDisplay } from "./scenario-names.mts";
+import {
+    isServedRecord,
+    verifyOperationsJournal,
+    type JournalDispatch,
+} from "./analysis/journal.ts";
 /* ------------------------------------------------------------------ *
  * Trial shapes: corpus entries, policies, criteria, artefact rules
  * ------------------------------------------------------------------ */
@@ -2807,10 +2806,7 @@ function journalContentText(content: unknown): string {
 
 /** Whether a journal record names a served Code Mode twin call. */
 function isServedTwinRecord(record: Record<string, unknown>): boolean {
-    if (record.schemaVersion !== 1) return false;
-    if (record.tool !== "docs" && record.tool !== "docs_search") return false;
-    if (record.surface !== "codemode-twin") return false;
-    return isRecord(record.input);
+    return isServedRecord(record) && record.surface === "codemode-twin";
 }
 
 /** A journal record's verdict and output, or null when it is unusable. */
@@ -2839,6 +2835,7 @@ interface NestedDispatch {
     tool: string;
     status: string;
     input: unknown;
+    callId: string | null;
 }
 
 /** The journal's registered tool name for one host dispatch name. */
@@ -2864,6 +2861,7 @@ function recordedDispatches(entry: ToolCall): NestedDispatch[] {
             tool,
             status: typeof call.status === "string" ? call.status : "unknown",
             input: call.input,
+            callId: typeof entry.id === "string" ? entry.id : null,
         });
     }
     return dispatches;
@@ -2878,16 +2876,6 @@ function recordedDispatches(entry: ToolCall): NestedDispatch[] {
  */
 function nestedDispatches(entries: ToolCall[]): NestedDispatch[] {
     return entries.flatMap(recordedDispatches);
-}
-
-/**
- * Whether two dispatch inputs are the same recorded arguments. Object member
- * order is irrelevant, including nested objects; array order, types, values,
- * membership and missing-versus-null remain significant. Nothing is parsed
- * or coerced.
- */
-function sameDispatchInput(left: unknown, right: unknown): boolean {
-    return isDeepStrictEqual(left, right);
 }
 
 /** The session/message identities observed in a saved stdout trail. */
@@ -2933,64 +2921,22 @@ function nestedOperationOf(
     };
 }
 
-/**
- * Whether a journal record carries this run's observed identity and names an
- * execute call present in its trail.
- */
-function journalRecordAttributed(
-    record: Record<string, unknown>,
-    identity: TrailIdentity,
-    executeIds: Set<string>,
-): boolean {
-    if (
-        typeof record.sessionID !== "string" ||
-        !identity.sessions.has(record.sessionID)
-    ) {
-        return false;
-    }
-    if (
-        typeof record.messageID !== "string" ||
-        !identity.messages.has(record.messageID)
-    ) {
-        return false;
-    }
-    return typeof record.callID === "string" && executeIds.has(record.callID);
-}
-
-/** Whether a journal record's MAC matches this run's saved key. */
-function journalMacValid(
-    record: Record<string, unknown>,
-    key: string,
-): boolean {
-    const mac = record.mac;
-    if (typeof mac !== "string") return false;
-    const body = Object.fromEntries(
-        Object.entries(record).filter(([field]) => field !== "mac"),
-    );
-    const expected = createHmac("sha256", key)
-        .update(JSON.stringify(body), "utf8")
-        .digest("hex");
-    const left = Buffer.from(expected, "hex");
-    const right = Buffer.from(mac, "hex");
-    return left.length === right.length && timingSafeEqual(left, right);
-}
-
 /** The saved journal lines and signing key, or null when unusable. */
 function journalEvidenceOf(
     resultDir: string,
-): { lines: string[]; key: string } | null {
+): { lines?: string[]; key: string | null } | null {
     const path = join(resultDir, OPERATION_JOURNAL_FILE);
     if (!existsSync(path)) return null;
-    let key: string;
+    let key: string | null = null;
     try {
-        key = readFileSync(
+        const text = readFileSync(
             join(resultDir, OPERATION_JOURNAL_KEY_FILE),
             "utf8",
         ).trim();
+        if (text !== "") key = text;
     } catch {
-        return null;
+        key = null;
     }
-    if (key === "") return null;
     try {
         return {
             lines: readFileSync(path, "utf8").split("\n").filter(Boolean),
@@ -2999,37 +2945,6 @@ function journalEvidenceOf(
     } catch {
         return null;
     }
-}
-
-/** A signed, attributed journal record, or null when it cannot be credited. */
-function creditedJournalRecord(
-    line: string,
-    key: string,
-    identity: TrailIdentity,
-    executeIds: Set<string>,
-): Record<string, unknown> | null {
-    const record = parseLine(line);
-    if (!isRecord(record) || !isServedTwinRecord(record)) return null;
-    if (!journalMacValid(record, key)) return null;
-    if (!journalRecordAttributed(record, identity, executeIds)) return null;
-    return record;
-}
-
-/** Consume one matching host dispatch; false when none matches. */
-function consumeDispatch(
-    dispatches: NestedDispatch[],
-    record: Record<string, unknown>,
-    status: string,
-): boolean {
-    const match = dispatches.findIndex(
-        (dispatch) =>
-            dispatch.tool === record.tool &&
-            dispatch.status === status &&
-            sameDispatchInput(dispatch.input, record.input),
-    );
-    if (match < 0) return false;
-    dispatches.splice(match, 1);
-    return true;
 }
 
 /**
@@ -3052,27 +2967,33 @@ function readOperationJournal(
     identity: TrailIdentity,
 ): ToolCall[] {
     const evidence = journalEvidenceOf(resultDir);
-    if (evidence === null) return [];
     const executeIds = new Set(
         entries
             .filter((entry) => entry.tool === "execute")
             .map((entry) => entry.id)
             .filter((id): id is string => typeof id === "string"),
     );
-    const dispatches = nestedDispatches(entries);
+    const verification = verifyOperationsJournal({
+        lines: evidence?.lines,
+        key: evidence?.key ?? null,
+        identity,
+        callIds: executeIds,
+        dispatches: nestedDispatches(entries).map(
+            (dispatch): JournalDispatch => ({
+                tool: dispatch.tool,
+                status: dispatch.status,
+                input: dispatch.input,
+                callId: dispatch.callId,
+            }),
+        ),
+    });
     const nested: ToolCall[] = [];
-    for (const [index, line] of evidence.lines.entries()) {
-        const record = creditedJournalRecord(
-            line,
-            evidence.key,
-            identity,
-            executeIds,
+    for (const credited of verification.credited) {
+        const entry = nestedOperationOf(
+            credited.record,
+            credited.index,
+            credited.record.callID as string,
         );
-        if (record === null) continue;
-        const result = nestedResultOf(record);
-        if (result === null) continue;
-        if (!consumeDispatch(dispatches, record, result.status)) continue;
-        const entry = nestedOperationOf(record, index, record.callID as string);
         if (entry !== null) nested.push(entry);
     }
     return nested;

@@ -51,6 +51,7 @@ import {
     type ArmMeasureSummary,
     type MeasureDeclarations,
     type MeasuresReport,
+    type PairedOutcome,
 } from "./measures.ts";
 import { evaluateDecision, type DecisionResult } from "./decision.ts";
 import { summariseGuardrails, type GuardrailArmSummary } from "./guardrails.ts";
@@ -60,7 +61,11 @@ import {
     type SelectionSpec,
     type SlotSpec,
 } from "./model.ts";
-import { pairObservations, pairedComparison } from "./pairing.ts";
+import {
+    pairObservations,
+    pairedComparison,
+    type PairingResult,
+} from "./pairing.ts";
 import {
     loadLaunchLedger,
     loadTrialRecord,
@@ -100,6 +105,8 @@ interface CliOptions {
     out: string;
     /** Whether to regenerate an existing analysis in place. */
     rerender: boolean;
+    /** Whether legacy answers without a recorded hash are accepted. */
+    allowLegacyUnbound: boolean;
 }
 
 /** The CLI outcome. */
@@ -255,10 +262,15 @@ function parseArgs(argv: readonly string[]): {
 } {
     const values = new Map<string, string>();
     let rerender = false;
+    let allowLegacyUnbound = false;
     for (let index = 0; index < argv.length; index += 1) {
         const flag = argv[index] ?? "";
         if (flag === "--rerender") {
             rerender = true;
+            continue;
+        }
+        if (flag === "--allow-legacy-unbound") {
+            allowLegacyUnbound = true;
             continue;
         }
         if (!["--campaign", "--evidence-root", "--out"].includes(flag)) {
@@ -275,7 +287,15 @@ function parseArgs(argv: readonly string[]): {
     if (campaign === undefined) return { error: "missing --campaign" };
     if (evidenceRoot === undefined) return { error: "missing --evidence-root" };
     if (out === undefined) return { error: "missing --out" };
-    return { options: { campaign, evidenceRoot, out, rerender } };
+    return {
+        options: {
+            campaign,
+            evidenceRoot,
+            out,
+            rerender,
+            allowLegacyUnbound,
+        },
+    };
 }
 
 /**
@@ -359,11 +379,13 @@ function readManifest(path: string): {
  * Load and score every scheduled slot.
  * @param manifest The validated manifest.
  * @param reader The evidence reader.
+ * @param allowLegacyUnbound Whether unhashed legacy answers are accepted.
  * @returns The loaded records and the scored trials.
  */
 function loadCampaign(
     manifest: CampaignManifest,
     reader: EvidenceReader,
+    allowLegacyUnbound: boolean,
 ): { records: TrialRecord[]; scored: TrialScored[] } {
     const scenarioById = new Map(
         manifest.scenarios.map((scenario) => [scenario.id, scenario]),
@@ -385,6 +407,7 @@ function loadCampaign(
                 scenario?.preservationInventory?.facts.map((fact) => fact.id) ??
                 [],
             selectionPolicy: manifest.assessment.selectionPolicy,
+            allowUnboundAnswer: allowLegacyUnbound,
         });
         records.push(record);
         scored.push(
@@ -933,11 +956,13 @@ function campaignIdentityOf(manifest: CampaignManifest): {
 function screeningReportOf(
     manifest: CampaignManifest,
     screen: ReturnType<typeof screenCampaign>,
+    personalTrial: AnalysisResult["measures"]["personalTrial"],
 ): AnalysisResult["screening"] {
     return {
         rulesVersion: manifest.policy.screening?.rulesVersion ?? "not-defined",
         findings: screen.findings,
         reconciliation: screen.reconciliation,
+        personalTrial,
     };
 }
 
@@ -1070,6 +1095,41 @@ function emptyMeasuresReport(
 }
 
 /**
+ * The paired documented outcomes used by the candidate-only misleading veto.
+ * Incomplete pairs contribute nothing: they are already a coverage failure, so
+ * they cannot also stand in for a paired loss.
+ * @param pairing The pairing result.
+ * @param selection The declared selection rule.
+ * @returns One entry per complete pair.
+ */
+function pairedOutcomesOf(
+    pairing: PairingResult,
+    selection: SelectionSpec,
+): PairedOutcome[] {
+    const pairs: PairedOutcome[] = [];
+    for (const pair of pairing.pairs) {
+        if (!pair.complete) continue;
+        const control = pair.arms[selection.controlArm];
+        const candidate = pair.arms[selection.candidateArm];
+        if (control === undefined || candidate === undefined) continue;
+        pairs.push({
+            pairId: pair.pairId,
+            control:
+                control.trial.outcome === null ||
+                control.trial.outcome === undefined
+                    ? []
+                    : [control.trial.outcome],
+            candidate:
+                candidate.trial.outcome === null ||
+                candidate.trial.outcome === undefined
+                    ? []
+                    : [candidate.trial.outcome],
+        });
+    }
+    return pairs;
+}
+
+/**
  * The personal-trial screen from the assembled counts.
  * @param manifest The validated manifest.
  * @param arms The per-arm opportunity summaries.
@@ -1084,6 +1144,7 @@ function screenOf(
     counts: Record<string, AccountingCounts>,
     guardrails: Record<string, GuardrailArmSummary[]>,
     decision: DecisionResult,
+    pairs: readonly PairedOutcome[],
 ): MeasuresReport["personalTrial"] {
     const selection = manifest.policy.selection;
     if (selection === undefined) {
@@ -1125,6 +1186,7 @@ function screenOf(
             lead: decision.threshold.lead,
             interval: decision.threshold.interval,
         },
+        pairs,
     );
 }
 
@@ -1147,6 +1209,7 @@ function completeMeasuresReport(
     counts: Record<string, AccountingCounts>,
     guardrails: Record<string, GuardrailArmSummary[]>,
     decision: DecisionResult,
+    pairs: readonly PairedOutcome[],
 ): MeasuresReport {
     const declarations = loaded.declarations;
     const trials = scored.map((trial) => {
@@ -1171,6 +1234,7 @@ function completeMeasuresReport(
             counts,
             guardrails,
             decision,
+            pairs,
         ),
     };
 }
@@ -1195,6 +1259,7 @@ function measuresOf(
     counts: Record<string, AccountingCounts>,
     guardrails: Record<string, GuardrailArmSummary[]>,
     decision: DecisionResult,
+    pairs: readonly PairedOutcome[],
 ): MeasuresReport {
     const loaded = declarationsOf(manifest, reader);
     if (loaded.declarations === undefined) {
@@ -1212,6 +1277,7 @@ function measuresOf(
         counts,
         guardrails,
         decision,
+        pairs,
     );
 }
 
@@ -1256,6 +1322,16 @@ function assemble(
     const usage = usageOf(records);
     const screen = screenCampaign(manifest, reader, records);
     const judgedBy = judgeModelsOf(records);
+    const measures = measuresOf(
+        manifest,
+        reader,
+        records,
+        scored,
+        counts,
+        guardrails,
+        decision,
+        selection === null ? [] : pairedOutcomesOf(pairing, selection),
+    );
     const totals = accountTrials(scored, slots.length);
     const limitations = limitationsOf(
         records,
@@ -1281,17 +1357,9 @@ function assemble(
         paired,
         bounds: { delta },
         decision,
-        measures: measuresOf(
-            manifest,
-            reader,
-            records,
-            scored,
-            counts,
-            guardrails,
-            decision,
-        ),
+        measures,
         sensitivity: sensitivityOf(manifest, records),
-        screening: screeningReportOf(manifest, screen),
+        screening: screeningReportOf(manifest, screen, measures.personalTrial),
         integrity: {
             sources: screen.sources,
             judgedBy,
@@ -1515,7 +1583,7 @@ export function runAnalysis(argv: readonly string[]): CliRun {
     }
     const consumed = new Map<string, ConsumedInput>();
     const reader = fsReader(options.evidenceRoot, consumed);
-    const loaded = loadCampaign(manifest, reader);
+    const loaded = loadCampaign(manifest, reader, options.allowLegacyUnbound);
     const manifestText = readFileSync(options.campaign, "utf8");
     const result = assemble(
         manifest,
@@ -1578,7 +1646,9 @@ export function runAnalysis(argv: readonly string[]): CliRun {
     return {
         status: 0,
         messages: [
-            `${manifest.campaign.id}: ${result.decision.overall}; written to ${options.out}`,
+            result.measures.status === "available"
+                ? `${manifest.campaign.id}: ${result.measures.personalTrial.recommendation}; written to ${options.out}`
+                : `${manifest.campaign.id}: ${result.decision.overall}; written to ${options.out}`,
         ],
     };
 }

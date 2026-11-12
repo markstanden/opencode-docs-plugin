@@ -883,6 +883,27 @@ const measurement = {
             },
         },
         R02: {
+            preservation: {
+                facts: [
+                    {
+                        id: "poolSize",
+                        label: "10-connection pool cap",
+                    },
+                    {
+                        id: "acquireTimeout",
+                        label: "5-second acquire timeout",
+                    },
+                    {
+                        id: "startupMigrations",
+                        label: "startup migrations",
+                    },
+                    {
+                        id: "obsoleteTlsClaim",
+                        label: "obsolete sslmode=disable claim",
+                        obsolete: true,
+                    },
+                ],
+            },
             retrieval: {
                 note: "db/pool.md",
                 lake: "docs",

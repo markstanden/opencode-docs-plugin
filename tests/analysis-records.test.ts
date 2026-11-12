@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
     loadLaunchLedger,
     loadTrialRecord,
@@ -53,6 +54,9 @@ const completeTrial = (stamp: string): Record<string, string> => ({
         timedOut: false,
         outputOverflow: false,
         answerValid: true,
+        answerHash: createHash("sha256")
+            .update("I created docs/note.md.", "utf8")
+            .digest("hex"),
         policyViolations: [],
     }),
     [`results/${stamp}/R01/gate.json`]: JSON.stringify({

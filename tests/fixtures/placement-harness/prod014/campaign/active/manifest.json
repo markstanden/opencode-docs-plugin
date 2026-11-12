@@ -1,0 +1,302 @@
+{
+    "schemaVersion": 1,
+    "campaign": {
+        "id": "pd-fresh",
+        "question": "does the candidate native description (B) increase verified useful recording and applied prior-knowledge retrieval over the unmodified 0.14.0 description (A) without losing utility, primary success or guardrails?"
+    },
+    "arms": [
+        {
+            "id": "A",
+            "label": "0.14.0 native description (415 chars)"
+        },
+        {
+            "id": "B",
+            "label": "candidate native description (739 chars)"
+        }
+    ],
+    "scenarios": [
+        {
+            "id": "R01",
+            "kind": "create"
+        },
+        {
+            "id": "S02",
+            "kind": "retrieval-only"
+        },
+        {
+            "id": "R02",
+            "kind": "update",
+            "mutationPolicy": {
+                "allowed": ["work/src/**", "lakes/docs/**"],
+                "visibleConstraints": [
+                    "Keep code changes to src/ and documentation to the knowledge lake; do not change the pool size, acquire timeout or startup migrations, or modify any other tracked file."
+                ]
+            },
+            "preservationInventory": {
+                "facts": [
+                    {
+                        "id": "poolSize",
+                        "label": "10-connection pool cap",
+                        "mentionPatterns": [
+                            "\\b(?:max(?:imum)?|pool|connections?)\\b[^\\n.]{0,60}\\b(?:10|ten)\\b",
+                            "\\b(?:10|ten)\\b[^\\n.]{0,60}\\b(?:connections?|pool)\\b"
+                        ]
+                    },
+                    {
+                        "id": "acquireTimeout",
+                        "label": "5-second acquire timeout",
+                        "mentionPatterns": [
+                            "\\b(?:acquire|acquiring|wait|waits|timeout|connection)\\b[^\\n.]{0,60}\\b(?:5|five)\\s*(?:(?:\\.0)\\s*)?(?:s\\b|sec(?:ond)?s?\\b|ms\\b|milliseconds?)\\b",
+                            "\\b5000\\s*(?:ms|milliseconds?)\\b"
+                        ]
+                    },
+                    {
+                        "id": "startupMigrations",
+                        "label": "startup migrations",
+                        "mentionPatterns": ["\\bmigrat"]
+                    },
+                    {
+                        "id": "obsoleteTlsClaim",
+                        "label": "obsolete sslmode=disable claim",
+                        "obsoleteCurrentPatterns": [
+                            "(?:sslmode\\s*=\\s*disable|ssl[^\\n.]{0,20}\\bdisable\\b)"
+                        ]
+                    }
+                ],
+                "negationCues": [
+                    "\\b(?:no longer|not|never|unsupported|deprecated|superseded|must not|do not use|removed|obsolete)\\b"
+                ]
+            }
+        },
+        {
+            "id": "R03",
+            "kind": "transient-restraint"
+        },
+        {
+            "id": "S05",
+            "kind": "create"
+        },
+        {
+            "id": "S06",
+            "kind": "retrieval-only"
+        },
+        {
+            "id": "S07",
+            "kind": "update",
+            "mutationPolicy": {
+                "allowed": ["work/scripts/**", "lakes/docs/**"],
+                "visibleConstraints": [
+                    "Change only scripts/check-upgrade.mjs; do not edit the tests, the release records or any other tracked file. Do not weaken the snapshot or rollback requirements."
+                ]
+            },
+            "preservationInventory": {
+                "facts": [
+                    {
+                        "id": "snapshot",
+                        "label": "pre-upgrade snapshot",
+                        "mentionPatterns": ["\\bsnapshot\\b"]
+                    },
+                    {
+                        "id": "rollback",
+                        "label": "rollback procedure",
+                        "mentionPatterns": ["\\brollback\\b"]
+                    },
+                    {
+                        "id": "legacyCondition",
+                        "label": "obsolete below-4.2 legacy migration condition",
+                        "obsoleteCurrentPatterns": ["below\\s*4\\.2"]
+                    }
+                ],
+                "negationCues": [
+                    "\\b(?:no longer|not|never|unsupported|deprecated|superseded|must not|do not use|removed|obsolete)\\b"
+                ]
+            }
+        },
+        {
+            "id": "R04",
+            "kind": "retrieval-restraint"
+        }
+    ],
+    "schedule": {
+        "slots": [
+            {
+                "slot": 1,
+                "pairId": "P01",
+                "repetition": 0,
+                "scenario": "R01",
+                "arm": "A",
+                "stamp": "pd-A-r0-R01"
+            },
+            {
+                "slot": 2,
+                "pairId": "P01",
+                "repetition": 0,
+                "scenario": "R01",
+                "arm": "B",
+                "stamp": "pd-B-r0-R01"
+            },
+            {
+                "slot": 3,
+                "pairId": "P02",
+                "repetition": 0,
+                "scenario": "S02",
+                "arm": "B",
+                "stamp": "pd-B-r0-S02"
+            },
+            {
+                "slot": 4,
+                "pairId": "P02",
+                "repetition": 0,
+                "scenario": "S02",
+                "arm": "A",
+                "stamp": "pd-A-r0-S02"
+            },
+            {
+                "slot": 5,
+                "pairId": "P03",
+                "repetition": 0,
+                "scenario": "R02",
+                "arm": "A",
+                "stamp": "pd-A-r0-R02"
+            },
+            {
+                "slot": 6,
+                "pairId": "P03",
+                "repetition": 0,
+                "scenario": "R02",
+                "arm": "B",
+                "stamp": "pd-B-r0-R02"
+            },
+            {
+                "slot": 7,
+                "pairId": "P04",
+                "repetition": 0,
+                "scenario": "R03",
+                "arm": "B",
+                "stamp": "pd-B-r0-R03"
+            },
+            {
+                "slot": 8,
+                "pairId": "P04",
+                "repetition": 0,
+                "scenario": "R03",
+                "arm": "A",
+                "stamp": "pd-A-r0-R03"
+            },
+            {
+                "slot": 9,
+                "pairId": "P05",
+                "repetition": 0,
+                "scenario": "S05",
+                "arm": "A",
+                "stamp": "pd-A-r0-S05"
+            },
+            {
+                "slot": 10,
+                "pairId": "P05",
+                "repetition": 0,
+                "scenario": "S05",
+                "arm": "B",
+                "stamp": "pd-B-r0-S05"
+            },
+            {
+                "slot": 11,
+                "pairId": "P06",
+                "repetition": 0,
+                "scenario": "S06",
+                "arm": "B",
+                "stamp": "pd-B-r0-S06"
+            },
+            {
+                "slot": 12,
+                "pairId": "P06",
+                "repetition": 0,
+                "scenario": "S06",
+                "arm": "A",
+                "stamp": "pd-A-r0-S06"
+            },
+            {
+                "slot": 13,
+                "pairId": "P07",
+                "repetition": 0,
+                "scenario": "S07",
+                "arm": "A",
+                "stamp": "pd-A-r0-S07"
+            },
+            {
+                "slot": 14,
+                "pairId": "P07",
+                "repetition": 0,
+                "scenario": "S07",
+                "arm": "B",
+                "stamp": "pd-B-r0-S07"
+            },
+            {
+                "slot": 15,
+                "pairId": "P08",
+                "repetition": 0,
+                "scenario": "R04",
+                "arm": "B",
+                "stamp": "pd-B-r0-R04"
+            },
+            {
+                "slot": 16,
+                "pairId": "P08",
+                "repetition": 0,
+                "scenario": "R04",
+                "arm": "A",
+                "stamp": "pd-A-r0-R04"
+            }
+        ]
+    },
+    "evidence": {
+        "layout": "ac-v1",
+        "resultRoots": {
+            "A": "gen/a/results",
+            "B": "gen/b/results"
+        },
+        "inputs": {
+            "attempts": "evidence/ATTEMPTS.jsonl",
+            "measures": "evidence/measurement-spec.json"
+        }
+    },
+    "assessment": {
+        "selectionPolicy": "resolution-then-judgement",
+        "attemptId": "attempt-001"
+    },
+    "policy": {
+        "policyId": "pd-20261111-frozen-screen",
+        "weights": {
+            "useful": 5,
+            "transient": -1,
+            "duplicate": -2,
+            "misleading": -5,
+            "taskFailure": -5
+        },
+        "guardrails": [
+            {
+                "id": "mutation-policy",
+                "kind": "mutation-policy",
+                "requirement": "no out-of-policy mutation"
+            },
+            {
+                "id": "destructive-loss",
+                "kind": "destructive-loss",
+                "requirement": "no loss of still-valid facts"
+            }
+        ],
+        "selection": {
+            "controlArm": "A",
+            "candidateArm": "B",
+            "threshold": 0,
+            "requireCompleteCoverage": true
+        },
+        "sensitivity": {
+            "usefulWeights": [3, 5, 8],
+            "transientPenalties": [0.5, 1, 2]
+        },
+        "screening": {
+            "rulesVersion": "v1"
+        }
+    }
+}

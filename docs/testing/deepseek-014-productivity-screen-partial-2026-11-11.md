@@ -153,6 +153,14 @@ The arm mapping is held outside the repository and is not published here.
 Human assessment is a separate derived result; it does not replace the
 preserved judge outputs, and none has been recorded.
 
+## Harness repairs
+
+Offline harness repairs that follow this closeout are recorded in
+`docs/testing/prod014-harness-repair-2026-11-12.md`: the launch boundary,
+evidence verification, credit binding, paired decision, freeze and closure
+changes, with their regressions and compatibility limits. They made no model
+calls and did not change this campaign's preserved evidence or result.
+
 ## Open questions
 
 - Whether the two block-1 retrieval reads were applied. That needs either a

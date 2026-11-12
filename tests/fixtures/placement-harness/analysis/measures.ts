@@ -20,8 +20,8 @@ export const MEASURES_SCHEMA_VERSION = 1;
 export interface RetrievalDeclaration {
     /** The lake-relative path of the seeded note. */
     note: string;
-    /** The lake the note belongs to, when declared; identity is not optional for credit. */
-    lake: string | null;
+    /** The lake the note belongs to; identity is not optional for credit. */
+    lake: string;
     /** The preservation facts the note's correction must keep, when any. */
     facts: string[];
 }
@@ -46,6 +46,8 @@ export interface MeasureDeclarationParse {
 export interface DocsOperation {
     /** The recorded completion status. */
     status: string;
+    /** Whether the served result says the operation succeeded. */
+    success: boolean | null;
     /** The delivery surface (native, twin, or Code Mode twin). */
     surface: string;
     /** The operation's verb. */
@@ -170,6 +172,16 @@ export interface PersonalTrialDecision {
     };
 }
 
+/** One paired scenario's control and candidate documented outcomes. */
+export interface PairedOutcome {
+    /** The declared pair id. */
+    pairId: string;
+    /** The control arm's outcomes in this pair. */
+    control: DocumentationOutcome[];
+    /** The candidate arm's outcomes in this pair. */
+    candidate: DocumentationOutcome[];
+}
+
 /** A criterion's decision. */
 interface Criterion {
     /** The criterion outcome. */
@@ -261,11 +273,13 @@ function retrievalDeclaration(
     }
     const facts = factIds(entry, id, problems);
     if (facts === undefined) return undefined;
-    const lake =
-        typeof retrieval.lake === "string" && retrieval.lake.trim() !== ""
-            ? retrieval.lake.trim()
-            : null;
-    return { note: retrieval.note, lake, facts };
+    if (typeof retrieval.lake !== "string" || retrieval.lake.trim() === "") {
+        problems.push(
+            `scenarios.${id}.retrieval.lake must be nonblank; a lake-less retrieval declaration cannot be attributed`,
+        );
+        return undefined;
+    }
+    return { note: retrieval.note, lake: retrieval.lake.trim(), facts };
 }
 
 /**
@@ -322,12 +336,14 @@ function operationOf(
     const input = value.input;
     const add = isRecord(input.add) ? input.add : undefined;
     const identity = reportedIdentityOf(value);
+    const verb = verbOf(input, add);
     return {
         operation: {
             status: typeof value.status === "string" ? value.status : "unknown",
+            success: servedSuccessOf(value, verb),
             surface:
                 typeof value.surface === "string" ? value.surface : "unknown",
-            verb: verbOf(input, add),
+            verb,
             target: targetOf(input, add),
             lake: identity.lake,
             path: identity.path,
@@ -354,6 +370,33 @@ function reportedIdentityOf(value: Record<string, unknown>): {
         lake: typeof metadata?.lake === "string" ? metadata.lake : null,
         path: typeof metadata?.path === "string" ? metadata.path : null,
     };
+}
+
+/**
+ * Whether the served result says the operation succeeded.
+ *
+ * The journal's top-level `status` is only "completed" or "error": the plugin
+ * returns refusals as completed results. Success is the result envelope's own
+ * fact — `written` for an add, a non-null `read` for a read — and null where
+ * the verb carries no success fact.
+ * @param value The journal entry.
+ * @param verb The parsed verb.
+ * @returns True, false, or null when the verb has no success fact.
+ */
+function servedSuccessOf(
+    value: Record<string, unknown>,
+    verb: DocsOperation["verb"],
+): boolean | null {
+    if (value.status !== "completed") return false;
+    const result = isRecord(value.result) ? value.result : undefined;
+    const metadata =
+        result !== undefined && isRecord(result.metadata)
+            ? result.metadata
+            : undefined;
+    if (metadata === undefined) return null;
+    if (verb === "add") return metadata.written === true;
+    if (verb === "read") return typeof metadata.read === "string";
+    return null;
 }
 
 /** The verb one journal input expresses. */
@@ -416,23 +459,21 @@ export function operationMatchesNotePath(
     declaration: RetrievalDeclaration,
 ): boolean {
     const expected = declaration.note;
-    const qualified =
-        declaration.lake === null
-            ? expected
-            : `${declaration.lake}/${expected}`;
+    const qualified = `${declaration.lake}/${expected}`;
+    const reported =
+        operation.path === null
+            ? null
+            : lakeRelative(operation.path, declaration.lake);
+    const target =
+        operation.target === null ? null : barePath(operation.target);
     // The returned identity is authoritative. A request target that contradicts
     // it is contradictory evidence and cannot earn credit.
-    if (
-        operation.path !== null &&
-        operation.target !== null &&
-        barePath(operation.path) !== barePath(operation.target)
-    ) {
+    if (reported !== null && target !== null && reported !== target) {
         return false;
     }
-    const identity = operation.path ?? operation.target;
+    const identity = reported ?? target;
     if (identity === null) return false;
-    const value = barePath(identity);
-    return value === expected || value === qualified;
+    return identity === expected || identity === qualified;
 }
 
 /**
@@ -446,7 +487,7 @@ export function operationMatchesNoteLake(
     operation: DocsOperation,
     declaration: RetrievalDeclaration,
 ): boolean {
-    return declaration.lake === null || operation.lake === declaration.lake;
+    return operation.lake === declaration.lake;
 }
 
 /** The shared, evidence-only facts one trial's measures read. */
@@ -461,6 +502,7 @@ interface MeasureContext {
     notRun: boolean;
     recordingEligible: boolean;
     retrievalDeclaration: RetrievalDeclaration | undefined;
+    writes: { state: string; text: string };
 }
 
 /** Build the context once so each measure stays small. */
@@ -468,17 +510,11 @@ function contextOf(
     record: TrialRecord,
     declarations: MeasureDeclarations,
 ): MeasureContext {
-    const journal = record.artefacts.docsOperations;
-    const parsed =
-        journal.state === "available"
-            ? parseOperations(journal.value)
-            : undefined;
-    const journalProblem =
-        journal.state !== "available"
-            ? `docs-operation journal is ${journal.state}`
-            : parsed !== undefined && parsed.problems.length > 0
-              ? `docs-operation journal has unreadable lines: ${parsed.problems.join("; ")}`
-              : null;
+    const journal = journalContextOf(record);
+    const parsed = journal.verified
+        ? parseOperations(journal.lines)
+        : undefined;
+    const journalProblem = journal.problem ?? parseProblemOf(parsed);
     return {
         record,
         operations: parsed?.operations ?? [],
@@ -495,6 +531,187 @@ function contextOf(
             record.identity.scenario,
         ),
         retrievalDeclaration: declarations.retrieval[record.identity.scenario],
+        writes: writesOf(record),
+    };
+}
+
+/**
+ * The operation journal's parse problems, or null when every line parsed.
+ * @param parsed The parsed journal, when it was verified.
+ * @returns One problem line, or null.
+ */
+function parseProblemOf(
+    parsed: ReturnType<typeof parseOperations> | undefined,
+): string | null {
+    return parsed !== undefined && parsed.problems.length > 0
+        ? `docs-operation journal has unreadable lines: ${parsed.problems.join("; ")}`
+        : null;
+}
+
+/**
+ * The trial's writes report as the measure reads it.
+ * @param record The trial record.
+ * @returns The report state and text.
+ */
+function writesOf(record: TrialRecord): { state: string; text: string } {
+    const writes = record.artefacts.writesText;
+    return {
+        state: writes.state,
+        text: writes.state === "available" ? writes.value : "",
+    };
+}
+
+/** One lake document the trial's writes report names. */
+export interface ChangedLakeDocument {
+    /** The lake the change landed in. */
+    lake: string;
+    /** The lake-relative path. */
+    path: string;
+    /** The change kind, when the report names one. */
+    kind: "added" | "modified" | "removed" | "unknown";
+}
+
+/**
+ * Read the changed lake documents from a trial's writes report.
+ *
+ * Only `lakes/<lake>/<path>` entries are documents; a work-file change never
+ * makes a documentation write verified. An unreadable report is a problem, not
+ * an empty change set.
+ * @param writes The recorded writes report.
+ * @param writes.state The report's explicit load state.
+ * @param writes.text The report's text.
+ * @returns The changed documents and any parse problem.
+ */
+export function changedLakeDocuments(writes: { state: string; text: string }): {
+    documents: ChangedLakeDocument[];
+    problem: string | null;
+} {
+    if (writes.state !== "available") {
+        return {
+            documents: [],
+            problem: `the writes report is ${writes.state}; the changed document cannot be identified`,
+        };
+    }
+    const documents = writes.text
+        .split("\n")
+        .map(changedDocument)
+        .filter(
+            (document): document is ChangedLakeDocument =>
+                document !== undefined,
+        );
+    return { documents, problem: null };
+}
+
+/**
+ * Read one writes-report line as a changed lake document.
+ * @param raw The raw line.
+ * @returns The document, or undefined for a blank line or a non-lake path.
+ */
+function changedDocument(raw: string): ChangedLakeDocument | undefined {
+    const line = raw.trim();
+    if (line === "" || line === "none") return undefined;
+    // A directory is not a document and cannot compete for the credit.
+    if (entryKindOf(line) === "dir") return undefined;
+    const match = /^lakes\/([^/]+)\/(.+)$/.exec(documentPathOf(line));
+    if (match === null) return undefined;
+    return {
+        lake: match[1] as string,
+        path: match[2] as string,
+        kind: documentKindOf(line),
+    };
+}
+
+/** The producer's parenthesised entry kind, when one is present. */
+function entryKindOf(line: string): string | undefined {
+    return / \(([a-z]+)\)$/.exec(line)?.[1];
+}
+
+/** The path one wins-report line names, without its change or entry labels. */
+function documentPathOf(line: string): string {
+    return line.replace(/^[a-z]+:?\s*/, "").replace(/ \([a-z]+\)$/, "");
+}
+
+/** The change kind one report line declares. */
+function documentKindOf(line: string): ChangedLakeDocument["kind"] {
+    const word = /^([a-z]+):?\s/.exec(line)?.[1];
+    if (word === "added" || word === "modified" || word === "removed") {
+        return word;
+    }
+    return "unknown";
+}
+
+/**
+ * Whether a completed plugin write targets exactly one changed document.
+ * @param operation The completed add operation.
+ * @param document The evidenced changed document.
+ * @returns True when lake and relative path agree.
+ */
+export function operationMatchesChangedDocument(
+    operation: DocsOperation,
+    document: ChangedLakeDocument,
+): boolean {
+    const identity = operation.path ?? operation.target;
+    if (identity === null) return false;
+    // A completed write reports its resolved lake. Without one the document
+    // cannot be tied to the write.
+    if (operation.lake === null || operation.lake !== document.lake) {
+        return false;
+    }
+    return lakeRelative(identity, document.lake) === document.path;
+}
+
+/** Strip an optional root-relative `lakes/<lake>/` prefix. */
+function lakeRelative(identity: string, lake: string): string {
+    const bare = barePath(identity);
+    const prefix = `lakes/${lake}/`;
+    return bare.startsWith(prefix) ? bare.slice(prefix.length) : bare;
+}
+
+/** The verified journal lines, or why they are unusable. */
+function journalContextOf(record: TrialRecord): {
+    verified: boolean;
+    lines: string[];
+    problem: string | null;
+} {
+    const verification = record.journal;
+    if (verification === undefined) {
+        return {
+            verified: false,
+            lines: [],
+            problem:
+                "the operation journal was not verified; no journal line can be credited",
+        };
+    }
+    if (verification.state === "absent") {
+        return {
+            verified: false,
+            lines: [],
+            problem:
+                "the docs-operation journal is absent (no plugin journal captured)",
+        };
+    }
+    if (verification.state === "unverifiable-key") {
+        return {
+            verified: false,
+            lines: [],
+            problem:
+                verification.problems[0] ??
+                "the docs-operation journal has no usable signing key",
+        };
+    }
+    const rejected = verification.rejected;
+    const problem =
+        rejected.length === 0
+            ? null
+            : `the docs-operation journal rejected ${String(rejected.length)} line(s): ${[
+                  ...new Set(rejected.map((entry) => entry.reason)),
+              ].join(", ")}`;
+    return {
+        verified: true,
+        lines: verification.credited.map((entry) =>
+            JSON.stringify(entry.record),
+        ),
+        problem,
     };
 }
 
@@ -530,7 +747,7 @@ function dispositionOf(
     const early = earlyDisposition(context);
     if (early !== null) return early;
     if (completedAdds.length > 0) {
-        return completedWrite(context);
+        return completedWrite(context, completedAdds);
     }
     if (failedAdds.length > 0) {
         return context.journalProblem === null
@@ -578,25 +795,27 @@ function dispositionOf(
 }
 
 /** The disposition when at least one completed plugin write exists. */
-function completedWrite(context: MeasureContext): {
+function completedWrite(
+    context: MeasureContext,
+    completedAdds: readonly DocsOperation[],
+): {
     disposition: RecordingMeasure["disposition"];
     evidence: string[];
 } {
-    if (
-        context.outcome === "useful-create" ||
-        context.outcome === "useful-update"
-    ) {
-        if (context.gate === "pass")
-            return { disposition: "verified-write", evidence: [] };
-        if (context.gate === "blocked")
-            return { disposition: "gate-blocked", evidence: [] };
-        return {
-            disposition: "unknown",
-            evidence: [
-                "a completed plugin write and a useful judgement exist but the gate result is missing",
-            ],
-        };
-    }
+    const blocker = writeBlocker(context);
+    if (blocker !== null) return blocker;
+    return boundWrite(context, completedAdds);
+}
+
+/**
+ * The outcome and gate checks that precede document binding.
+ * @param context The trial context.
+ * @returns A terminal disposition, or null when binding is still needed.
+ */
+function writeBlocker(context: MeasureContext): {
+    disposition: RecordingMeasure["disposition"];
+    evidence: string[];
+} | null {
     if (context.outcome === null) {
         return {
             disposition: "unknown",
@@ -605,10 +824,90 @@ function completedWrite(context: MeasureContext): {
             ],
         };
     }
+    if (
+        context.outcome !== "useful-create" &&
+        context.outcome !== "useful-update"
+    ) {
+        return {
+            disposition: "no-write",
+            evidence: [
+                `judgement recorded ${context.outcome} for a completed plugin write`,
+            ],
+        };
+    }
+    if (context.gate === "blocked") {
+        return { disposition: "gate-blocked", evidence: [] };
+    }
+    if (context.gate !== "pass") {
+        return {
+            disposition: "unknown",
+            evidence: [
+                "a completed plugin write and a useful judgement exist but the gate result is missing",
+            ],
+        };
+    }
+    return null;
+}
+
+/**
+ * Bind a useful plugin write to the one useful changed lake document.
+ * @param context The trial context.
+ * @param completedAdds The completed add operations.
+ * @returns The disposition and its evidence.
+ */
+function boundWrite(
+    context: MeasureContext,
+    completedAdds: readonly DocsOperation[],
+): {
+    disposition: RecordingMeasure["disposition"];
+    evidence: string[];
+} {
+    const changed = changedLakeDocuments(context.writes);
+    if (changed.problem !== null) {
+        return { disposition: "unknown", evidence: [changed.problem] };
+    }
+    const expectedKind =
+        context.outcome === "useful-create" ? "added" : "modified";
+    const candidates = changed.documents.filter(
+        (document) =>
+            document.kind === expectedKind || document.kind === "unknown",
+    );
+    if (candidates.length === 0) {
+        return {
+            disposition: "filesystem-only",
+            evidence: [
+                `the judgement recorded ${String(context.outcome)} but no lake document change of that kind was reported`,
+            ],
+        };
+    }
+    if (candidates.length > 1) {
+        return {
+            disposition: "unknown",
+            evidence: [
+                `the trial changed ${String(candidates.length)} lake documents (${candidates
+                    .map((document) => `${document.lake}/${document.path}`)
+                    .join(
+                        ", ",
+                    )}); the plugin write cannot be tied to the useful one`,
+            ],
+        };
+    }
+    const document = candidates[0] as ChangedLakeDocument;
+    const matching = completedAdds.filter((operation) =>
+        operationMatchesChangedDocument(operation, document),
+    );
+    if (matching.length === 0) {
+        return {
+            disposition: "filesystem-only",
+            evidence: [
+                `the useful document ${document.lake}/${document.path} changed, but no completed plugin add targeted it`,
+            ],
+        };
+    }
     return {
-        disposition: "no-write",
+        disposition: "verified-write",
         evidence: [
-            `judgement recorded ${context.outcome} for a completed plugin write`,
+            `plugin add of ${document.lake}/${document.path} matched the changed document`,
         ],
     };
 }
@@ -658,14 +957,13 @@ function retrievalOf(context: MeasureContext): {
         (operation) =>
             operation.verb === "read" &&
             operation.status === "completed" &&
+            operation.success !== false &&
             operationMatchesNotePath(operation, declaration),
     );
     const reads = matching.filter((operation) =>
         operationMatchesNoteLake(operation, declaration),
     );
-    const lakeUnknown = matching.some(
-        (operation) => declaration.lake !== null && operation.lake === null,
-    );
+    const lakeUnknown = matching.some((operation) => operation.lake === null);
     const judge = judgeRetrieval(context.record);
     const base = {
         read: reads.length > 0,
@@ -694,7 +992,7 @@ function retrievalOf(context: MeasureContext): {
             ...base,
             state: "miss",
             evidence: [
-                `no completed read of ${declaration.lake === null ? declaration.note : `${declaration.lake}/${declaration.note}`} was attributed to the session`,
+                `no completed read of ${declaration.lake}/${declaration.note} was attributed to the session`,
             ],
         };
     }
@@ -754,11 +1052,14 @@ export function measureTrial(
     const context = contextOf(record, declarations);
     const completedAdds = context.operations.filter(
         (operation) =>
-            operation.verb === "add" && operation.status === "completed",
+            operation.verb === "add" &&
+            operation.status === "completed" &&
+            operation.success === true,
     );
     const failedAdds = context.operations.filter(
         (operation) =>
-            operation.verb === "add" && operation.status !== "completed",
+            operation.verb === "add" &&
+            (operation.status !== "completed" || operation.success === false),
     );
     const write = dispositionOf(context, completedAdds, failedAdds);
     const retrieval = retrievalOf(context);
@@ -1036,6 +1337,48 @@ function qualityCriterion(
 }
 
 /**
+ * The paired scenario criterion: a misleading outcome that appears only on the
+ * candidate side of a pair defeats promotion, even when the aggregate counts
+ * are equal. A pair where the candidate is not misleading, or both sides are,
+ * is not candidate-specific.
+ * @param pairs The complete paired outcomes.
+ * @returns The criterion.
+ */
+export function pairedMisleadingCriterion(
+    pairs: readonly PairedOutcome[],
+): Criterion {
+    if (pairs.length === 0) {
+        return {
+            status: "pass",
+            reasons: ["no paired scenario comparison was supplied"],
+        };
+    }
+    const candidateOnly = pairs.filter(
+        (pair) =>
+            pair.candidate.includes("misleading") &&
+            !pair.control.includes("misleading"),
+    );
+    if (candidateOnly.length > 0) {
+        return {
+            status: "fail",
+            reasons: [
+                `candidate-only misleading outcome in ${candidateOnly
+                    .map((pair) => pair.pairId)
+                    .join(
+                        ", ",
+                    )}: a paired loss defeats promotion even at equal aggregate counts`,
+            ],
+        };
+    }
+    return {
+        status: "pass",
+        reasons: [
+            "no paired scenario records a misleading outcome only for the candidate",
+        ],
+    };
+}
+
+/**
  * The incomplete-input checks that make the screen inconclusive before any
  * opportunity or quality comparison.
  * @param control The control arm summary, when present.
@@ -1110,6 +1453,7 @@ function earlyInconclusive(
  * @param utilityThreshold.status The limb's status.
  * @param utilityThreshold.lead The assessed lead.
  * @param utilityThreshold.interval The full-population interval.
+ * @param pairs The complete paired scenario outcomes, when available.
  * @returns The recommendation and every criterion's reason.
  */
 export function personalTrialDecision(
@@ -1124,6 +1468,7 @@ export function personalTrialDecision(
         lead: number | null;
         interval: { low: number; high: number } | null;
     },
+    pairs: readonly PairedOutcome[] = [],
 ): PersonalTrialDecision {
     const threshold = thresholdComponent(utilityThreshold);
     const control = measures[controlArm];
@@ -1166,9 +1511,26 @@ export function personalTrialDecision(
             utilityThreshold: threshold,
         };
     }
+    const paired = pairedMisleadingCriterion(pairs);
+    if (paired.status !== "pass") {
+        return {
+            recommendation:
+                paired.status === "fail" ? "no-promotion" : "inconclusive",
+            reasons: [
+                ...opportunities.reasons,
+                ...quality.reasons,
+                ...paired.reasons,
+            ],
+            utilityThreshold: threshold,
+        };
+    }
     return {
         recommendation: "personal-trial",
-        reasons: [...opportunities.reasons, ...quality.reasons],
+        reasons: [
+            ...opportunities.reasons,
+            ...quality.reasons,
+            ...paired.reasons,
+        ],
         utilityThreshold: threshold,
     };
 }
