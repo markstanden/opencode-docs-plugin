@@ -17,9 +17,10 @@ import {
     rmSync,
     writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
+import { basename, dirname, join } from "node:path";
 import { describe, it } from "node:test";
+import { labelLeaks } from "./fixtures/placement-harness/ac/campaign.mts";
 
 const HERE = import.meta.dirname;
 const HARNESS = join(HERE, "fixtures", "placement-harness");
@@ -33,24 +34,28 @@ const CASE = "R01";
 const sha256 = (text: string): string =>
     createHash("sha256").update(text, "utf8").digest("hex");
 
-/**
- * A campaign root under `/home`, so the operator's name is in the host path.
- * @returns The fresh root.
- */
-function operatorRoot(): string {
-    const home = homedir();
-    assert.ok(
-        home.startsWith("/home/"),
-        `this regression needs an operator root under /home; homedir is ${home}`,
-    );
-    return mkdtempSync(join(home, "pd-judge-path-"));
+/** One canary campaign root and the operator name it carries. */
+interface CanaryRoot {
+    /** The campaign root: `<temp>/home/<canary>`. */
+    root: string;
+    /** The operator-name segment the judge child must never see. */
+    canary: string;
 }
 
-/** The operator name the host root must carry and the child must not see. */
-function operator(): string {
-    const name = homedir().split("/")[2];
-    assert.ok(name !== undefined && name !== "", "no operator name");
-    return name;
+/**
+ * A campaign root containing a literal `/home/<canary>/` segment beneath a
+ * writable temporary root. The path exercises the host-path leak detector
+ * without depending on the runner's real HOME.
+ * @returns The fresh root and its canary segment.
+ */
+function operatorRoot(): CanaryRoot {
+    const base = mkdtempSync(join(tmpdir(), "pd-judge-path-"));
+    const canary = `operator-${basename(base)}`;
+    const root = join(base, "home", canary);
+    mkdirSync(root, { recursive: true });
+    // Prove the constructed path is a real canary for the original detector.
+    assert.deepEqual(labelLeaks(root), ["/\\/home\\/[^/\\s]+/"]);
+    return { root, canary };
 }
 
 /**
@@ -218,7 +223,7 @@ function judge(root: string, bin: string, captures: string) {
 describe("judge path exposure", () => {
     it("reaches the offline judge with the operator name only in the host mount source", () => {
         // Arrange
-        const root = operatorRoot();
+        const { root, canary } = operatorRoot();
         const { bin, captures } = fakePodman(root);
         const attemptDir = join(
             root,
@@ -258,7 +263,7 @@ describe("judge path exposure", () => {
             assert.equal(view.workdir, "/judge/work");
             assert.equal(env.PWD, "/judge/work");
             assert.equal(env.XDG_CONFIG_HOME, "/judge/config-home");
-            assertBlind(view, operator());
+            assertBlind(view, canary);
 
             // Assert: the host path is still the mount SOURCE, proving the
             // canary was really present and neutralised, not merely absent.
@@ -268,7 +273,7 @@ describe("judge path exposure", () => {
             );
             assert.ok(neutralMount !== undefined, "no neutral judge mount");
             assert.ok(neutralMount.startsWith(hostRunDir(root)));
-            assert.ok(neutralMount.includes(operator()));
+            assert.ok(neutralMount.includes(canary));
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
@@ -276,7 +281,7 @@ describe("judge path exposure", () => {
 
     it("refuses a genuine packet leak before any provider request", () => {
         // Arrange
-        const root = operatorRoot();
+        const { root } = operatorRoot();
         const { bin, captures } = fakePodman(root);
         const attemptDir = join(
             root,
@@ -287,7 +292,7 @@ describe("judge path exposure", () => {
         );
         seedTrial(
             root,
-            `The note lives at /home/${operator()}/private/answer.md\n`,
+            `The note lives at ${join(root, "private/answer.md")}\n`,
         );
 
         try {
@@ -306,7 +311,7 @@ describe("judge path exposure", () => {
 
     it("keeps the materialised run-card layout judge-blind end to end", () => {
         // Arrange: a fresh materialised campaign under the operator's home.
-        const root = operatorRoot();
+        const { root, canary } = operatorRoot();
         const { bin, captures } = fakePodman(root);
         execFileSync(process.execPath, [MATERIALISE, root], {
             encoding: "utf8",
@@ -568,7 +573,7 @@ writeFileSync(
                 assert.equal(judgement.status, "judged");
             }
             // ...and every judge-visible value stayed neutral.
-            for (const view of received) assertBlind(view, operator());
+            for (const view of received) assertBlind(view, canary);
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
