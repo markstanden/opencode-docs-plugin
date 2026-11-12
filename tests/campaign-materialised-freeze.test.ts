@@ -2,7 +2,6 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
-    appendFileSync,
     chmodSync,
     existsSync,
     mkdirSync,
@@ -342,7 +341,7 @@ describe("frozen premise enforcement", () => {
             assert.equal(freeze(root, bin).status, 0);
 
             // Act
-            const run = runCampaign(root, bin, counter);
+            runCampaign(root, bin, counter);
 
             // Assert: the premise passed and the single trial stub ran.
             assert.match(
