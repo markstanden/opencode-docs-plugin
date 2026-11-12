@@ -87,12 +87,6 @@ prepare_image() {
     if [ -n "${TRIAL_TIMEOUT_MS:-}" ]; then
         TIMEOUT_ENV=(-e "TRIAL_TIMEOUT_MS=$TRIAL_TIMEOUT_MS")
     fi
-    PLUGIN_COMMIT="$(git -C "$REPO" rev-parse HEAD 2>/dev/null || true)"
-    PLUGIN_STATUS="$(git -C "$REPO" status --porcelain 2>/dev/null || true)"
-    PLUGIN_DIRTY=""
-    if [ -n "$PLUGIN_STATUS" ]; then
-        PLUGIN_DIRTY=1
-    fi
     FIXTURE_HASH="$(sha256sum "$CASES" | awk '{print $1}')"
 
     CONTAINER_ENV=(
