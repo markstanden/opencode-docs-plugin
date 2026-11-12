@@ -361,7 +361,7 @@ describe("frozen premise enforcement", () => {
             assert.equal(freeze(root, bin, source).status, 0);
 
             // Act
-            const run = runCampaign(root, bin, source, counter);
+            runCampaign(root, bin, source, counter);
 
             // Assert: the premise passed and the single trial stub ran.
             assert.match(
