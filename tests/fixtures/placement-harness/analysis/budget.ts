@@ -171,38 +171,8 @@ export function claimBudget(
     const dir = claimDir(root, kind);
     mkdirSync(dir, { recursive: true });
     for (let index = 1; index <= ceiling; index += 1) {
-        const path = join(dir, claimFileName(kind, index));
-        const body = `${JSON.stringify(
-            {
-                kind,
-                index,
-                state: "reserved",
-                at: identity.at ?? new Date().toISOString(),
-                stamp: identity.stamp ?? null,
-                attemptId: identity.attemptId ?? null,
-                note: identity.note ?? null,
-            },
-            null,
-            2,
-        )}\n`;
-        try {
-            writeFileSync(path, body, { encoding: "utf8", flag: "wx" });
-            return {
-                ok: true,
-                claim: {
-                    kind,
-                    index,
-                    path,
-                    state: "reserved",
-                    at: identity.at ?? null,
-                    stamp: identity.stamp ?? null,
-                    attemptId: identity.attemptId ?? null,
-                    note: identity.note ?? null,
-                },
-            };
-        } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        }
+        const claim = createClaim(dir, kind, index, identity);
+        if (claim !== undefined) return { ok: true, claim };
     }
     return {
         ok: false,
@@ -213,10 +183,72 @@ export function claimBudget(
 }
 
 /**
+ * Try to create one claim file exclusively.
+ * @param dir The kind's claim directory.
+ * @param kind The spend kind.
+ * @param index The claim index.
+ * @param identity The caller's identity fields.
+ * @returns The claim, or undefined when that slot is already taken.
+ */
+function createClaim(
+    dir: string,
+    kind: BudgetKind,
+    index: number,
+    identity: ClaimIdentity,
+): BudgetClaim | undefined {
+    const path = join(dir, claimFileName(kind, index));
+    const claim: BudgetClaim = {
+        kind,
+        index,
+        path,
+        state: "reserved",
+        at: identity.at ?? null,
+        stamp: identity.stamp ?? null,
+        attemptId: identity.attemptId ?? null,
+        note: identity.note ?? null,
+    };
+    try {
+        writeFileSync(path, claimBytes(claim, new Date().toISOString()), {
+            encoding: "utf8",
+            flag: "wx",
+        });
+        return { ...claim, at: identity.at ?? new Date().toISOString() };
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        return undefined;
+    }
+}
+
+/**
+ * Serialise one claim record.
+ * @param claim The claim.
+ * @param at The creation timestamp.
+ * @returns The JSON bytes with a trailing newline.
+ */
+function claimBytes(claim: BudgetClaim, at: string): string {
+    return `${JSON.stringify(
+        {
+            kind: claim.kind,
+            index: claim.index,
+            state: claim.state,
+            at: claim.at ?? at,
+            stamp: claim.stamp,
+            attemptId: claim.attemptId,
+            note: claim.note,
+        },
+        null,
+        2,
+    )}\n`;
+}
+
+/**
  * Advance one claim's durable state.
  * @param claim The claim to update.
  * @param state The new lifecycle state.
  * @param patch Extra identity fields to record.
+ * @param patch.note The new note.
+ * @param patch.stamp The stamp to record.
+ * @param patch.attemptId The attempt id to record.
  * @returns The updated claim.
  */
 export function advanceClaim(
@@ -231,23 +263,7 @@ export function advanceClaim(
         attemptId: patch.attemptId ?? claim.attemptId,
         note: patch.note ?? claim.note,
     };
-    writeFileSync(
-        claim.path,
-        `${JSON.stringify(
-            {
-                kind: updated.kind,
-                index: updated.index,
-                state: updated.state,
-                at: updated.at,
-                stamp: updated.stamp,
-                attemptId: updated.attemptId,
-                note: updated.note,
-            },
-            null,
-            2,
-        )}\n`,
-        "utf8",
-    );
+    writeFileSync(updated.path, claimBytes(updated, new Date().toISOString()), "utf8");
     return updated;
 }
 

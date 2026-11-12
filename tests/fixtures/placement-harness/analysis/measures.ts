@@ -479,15 +479,8 @@ function contextOf(
     declarations: MeasureDeclarations,
 ): MeasureContext {
     const journal = journalContextOf(record);
-    const parsed =
-        journal.verified === true
-            ? parseOperations(journal.lines)
-            : undefined;
-    const journalProblem = journal.problem ?? (
-        parsed !== undefined && parsed.problems.length > 0
-            ? `docs-operation journal has unreadable lines: ${parsed.problems.join("; ")}`
-            : null
-    );
+    const parsed = journal.verified ? parseOperations(journal.lines) : undefined;
+    const journalProblem = journal.problem ?? parseProblemOf(parsed);
     return {
         record,
         operations: parsed?.operations ?? [],
@@ -504,13 +497,33 @@ function contextOf(
             record.identity.scenario,
         ),
         retrievalDeclaration: declarations.retrieval[record.identity.scenario],
-        writes: {
-            state: record.artefacts.writesText.state,
-            text:
-                record.artefacts.writesText.state === "available"
-                    ? record.artefacts.writesText.value
-                    : "",
-        },
+        writes: writesOf(record),
+    };
+}
+
+/**
+ * The operation journal's parse problems, or null when every line parsed.
+ * @param parsed The parsed journal, when it was verified.
+ * @returns One problem line, or null.
+ */
+function parseProblemOf(
+    parsed: ReturnType<typeof parseOperations> | undefined,
+): string | null {
+    return parsed !== undefined && parsed.problems.length > 0
+        ? `docs-operation journal has unreadable lines: ${parsed.problems.join("; ")}`
+        : null;
+}
+
+/**
+ * The trial's writes report as the measure reads it.
+ * @param record The trial record.
+ * @returns The report state and text.
+ */
+function writesOf(record: TrialRecord): { state: string; text: string } {
+    const writes = record.artefacts.writesText;
+    return {
+        state: writes.state,
+        text: writes.state === "available" ? writes.value : "",
     };
 }
 
@@ -531,6 +544,8 @@ export interface ChangedLakeDocument {
  * makes a documentation write verified. An unreadable report is a problem, not
  * an empty change set.
  * @param writes The recorded writes report.
+ * @param writes.state The report's explicit load state.
+ * @param writes.text The report's text.
  * @returns The changed documents and any parse problem.
  */
 export function changedLakeDocuments(writes: {
@@ -543,30 +558,36 @@ export function changedLakeDocuments(writes: {
             problem: `the writes report is ${writes.state}; the changed document cannot be identified`,
         };
     }
-    const documents: ChangedLakeDocument[] = [];
-    for (const raw of writes.text.split("\n")) {
-        const line = raw.trim();
-        if (line === "" || line === "none") continue;
-        const kindWord = (/^([a-z]+):?\s/.exec(line)?.[1] ??
-            "unknown") as string;
-        const kind =
-            kindWord === "added" ||
-            kindWord === "modified" ||
-            kindWord === "removed"
-                ? kindWord
-                : "unknown";
-        const path = line
-            .replace(/^[a-z]+:?\s*/, "")
-            .replace(/ \((file|dir|symlink|mode)\)$/, "");
-        const match = /^lakes\/([^/]+)\/(.+)$/.exec(path);
-        if (match === null) continue;
-        documents.push({
-            lake: match[1] as string,
-            path: match[2] as string,
-            kind,
-        });
-    }
+    const documents = writes.text
+        .split("\n")
+        .map(changedDocument)
+        .filter((document): document is ChangedLakeDocument =>
+            document !== undefined,
+        );
     return { documents, problem: null };
+}
+
+/**
+ * Read one writes-report line as a changed lake document.
+ * @param raw The raw line.
+ * @returns The document, or undefined for a blank line or a non-lake path.
+ */
+function changedDocument(raw: string): ChangedLakeDocument | undefined {
+    const line = raw.trim();
+    if (line === "" || line === "none") return undefined;
+    const kindWord = /^([a-z]+):?\s/.exec(line)?.[1] ?? "unknown";
+    const kind =
+        kindWord === "added" ||
+        kindWord === "modified" ||
+        kindWord === "removed"
+            ? kindWord
+            : "unknown";
+    const path = line
+        .replace(/^[a-z]+:?\s*/, "")
+        .replace(/ \((file|dir|symlink|mode)\)$/, "");
+    const match = /^lakes\/([^/]+)\/(.+)$/.exec(path);
+    if (match === null) return undefined;
+    return { lake: match[1] as string, path: match[2] as string, kind };
 }
 
 /**
@@ -719,18 +740,32 @@ function completedWrite(
     disposition: RecordingMeasure["disposition"];
     evidence: string[];
 } {
+    const blocker = writeBlocker(context);
+    if (blocker !== null) return blocker;
+    return boundWrite(context, completedAdds);
+}
+
+/**
+ * The outcome and gate checks that precede document binding.
+ * @param context The trial context.
+ * @returns A terminal disposition, or null when binding is still needed.
+ */
+function writeBlocker(context: MeasureContext): {
+    disposition: RecordingMeasure["disposition"];
+    evidence: string[];
+} | null {
+    if (context.outcome === null) {
+        return {
+            disposition: "unknown",
+            evidence: [
+                "a completed plugin write exists but no judgement was recorded",
+            ],
+        };
+    }
     if (
         context.outcome !== "useful-create" &&
         context.outcome !== "useful-update"
     ) {
-        if (context.outcome === null) {
-            return {
-                disposition: "unknown",
-                evidence: [
-                    "a completed plugin write exists but no judgement was recorded",
-                ],
-            };
-        }
         return {
             disposition: "no-write",
             evidence: [
@@ -749,6 +784,22 @@ function completedWrite(
             ],
         };
     }
+    return null;
+}
+
+/**
+ * Bind a useful plugin write to the one useful changed lake document.
+ * @param context The trial context.
+ * @param completedAdds The completed add operations.
+ * @returns The disposition and its evidence.
+ */
+function boundWrite(
+    context: MeasureContext,
+    completedAdds: readonly DocsOperation[],
+): {
+    disposition: RecordingMeasure["disposition"];
+    evidence: string[];
+} {
     const changed = changedLakeDocuments(context.writes);
     if (changed.problem !== null) {
         return { disposition: "unknown", evidence: [changed.problem] };
@@ -763,7 +814,7 @@ function completedWrite(
         return {
             disposition: "filesystem-only",
             evidence: [
-                `the judgement recorded ${context.outcome} but no lake document change of that kind was reported`,
+                `the judgement recorded ${String(context.outcome)} but no lake document change of that kind was reported`,
             ],
         };
     }
@@ -786,20 +837,6 @@ function completedWrite(
             disposition: "filesystem-only",
             evidence: [
                 `the useful document ${document.lake}/${document.path} changed, but no completed plugin add targeted it`,
-            ],
-        };
-    }
-    if (
-        matching.some(
-            (operation) =>
-                operation.lake === null && document.lake !== null,
-        ) &&
-        candidates.length > 1
-    ) {
-        return {
-            disposition: "unknown",
-            evidence: [
-                "the plugin write reports no lake and more than one lake document changed",
             ],
         };
     }

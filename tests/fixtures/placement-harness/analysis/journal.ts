@@ -211,16 +211,13 @@ export function verifyOperationsJournal(input: {
         typeof input.key === "string" && input.key.trim() !== ""
             ? input.key.trim()
             : null;
-    const rejected: RejectedJournalRecord[] = [];
     if (key === null) {
-        for (const [index, line] of input.lines.entries()) {
-            if (line.trim() === "") continue;
-            rejected.push({ index, reason: "not-json" });
-        }
         return {
             state: "unverifiable-key",
             credited: [],
-            rejected,
+            rejected: input.lines.flatMap((line, index) =>
+                line.trim() === "" ? [] : [{ index, reason: "not-json" as const }],
+            ),
             problems: [
                 "a docs-operation journal exists without a usable signing key; no journal line is credited",
             ],
@@ -228,37 +225,55 @@ export function verifyOperationsJournal(input: {
     }
     const dispatches = [...input.dispatches];
     const credited: CreditedJournalRecord[] = [];
+    const rejected: RejectedJournalRecord[] = [];
     for (const [index, line] of input.lines.entries()) {
-        if (line.trim() === "") continue;
-        const record = parseLine(line);
-        if (record === undefined) {
-            rejected.push({ index, reason: "not-json" });
-            continue;
-        }
-        if (!isServedTwinRecord(record)) {
-            rejected.push({ index, reason: "not-served-twin" });
-            continue;
-        }
-        if (!journalMacValid(record, key)) {
-            rejected.push({ index, reason: "bad-mac" });
-            continue;
-        }
-        if (!journalRecordAttributed(record, input.identity, input.callIds)) {
-            rejected.push({ index, reason: "unattributed" });
-            continue;
-        }
-        if (!consumeDispatch(dispatches, record)) {
-            rejected.push({ index, reason: "no-host-dispatch" });
-            continue;
-        }
-        credited.push({ index, record });
+        const outcome = verifyLine(line, index, key, input, dispatches);
+        if (outcome.rejected !== undefined) rejected.push(outcome.rejected);
+        if (outcome.credited !== undefined) credited.push(outcome.credited);
     }
-    return {
-        state: "verified",
-        credited,
-        rejected,
-        problems: [],
-    };
+    return { state: "verified", credited, rejected, problems: [] };
+}
+
+/**
+ * Verify one journal line and consume its host dispatch when it is credited.
+ * @param line The raw line.
+ * @param index The zero-based line index.
+ * @param key The run's signing key.
+ * @param input The run's identity and call ids.
+ * @param input.lines The captured lines (unused per line).
+ * @param input.key The captured key (unused per line).
+ * @param input.identity The run's observed session/message ids.
+ * @param input.callIds The execute call ids in the trail.
+ * @param input.dispatches The host dispatches (unused per line).
+ * @param dispatches The mutable remaining dispatches.
+ * @returns The credited record or the rejection.
+ */
+function verifyLine(
+    line: string,
+    index: number,
+    key: string,
+    input: {
+        identity: JournalIdentity;
+        callIds: ReadonlySet<string>;
+    },
+    dispatches: JournalDispatch[],
+): { credited?: CreditedJournalRecord; rejected?: RejectedJournalRecord } {
+    if (line.trim() === "") return {};
+    const record = parseLine(line);
+    if (record === undefined) return { rejected: { index, reason: "not-json" } };
+    if (!isServedTwinRecord(record)) {
+        return { rejected: { index, reason: "not-served-twin" } };
+    }
+    if (!journalMacValid(record, key)) {
+        return { rejected: { index, reason: "bad-mac" } };
+    }
+    if (!journalRecordAttributed(record, input.identity, input.callIds)) {
+        return { rejected: { index, reason: "unattributed" } };
+    }
+    if (!consumeDispatch(dispatches, record)) {
+        return { rejected: { index, reason: "no-host-dispatch" } };
+    }
+    return { credited: { index, record } };
 }
 
 /**
@@ -279,23 +294,34 @@ export function journalIdentityFromTrail(stdoutText: string): JournalIdentity {
         } catch {
             continue;
         }
-        if (!isRecord(event)) continue;
-        if (typeof event.sessionID === "string") {
-            identity.sessions.add(event.sessionID);
-        }
-        if (typeof event.messageID === "string") {
-            identity.messages.add(event.messageID);
-        }
-        const part = isRecord(event.part) ? event.part : undefined;
-        if (part === undefined) continue;
-        if (typeof part.sessionID === "string") {
-            identity.sessions.add(part.sessionID);
-        }
-        if (typeof part.messageID === "string") {
-            identity.messages.add(part.messageID);
-        }
+        if (isRecord(event)) addEventIdentity(event, identity);
     }
     return identity;
+}
+
+/**
+ * Add one event's session and message ids, including a nested part's.
+ * @param event The parsed event.
+ * @param identity The accumulating identity sets.
+ */
+function addEventIdentity(
+    event: Record<string, unknown>,
+    identity: { sessions: Set<string>; messages: Set<string> },
+): void {
+    if (typeof event.sessionID === "string") {
+        identity.sessions.add(event.sessionID);
+    }
+    if (typeof event.messageID === "string") {
+        identity.messages.add(event.messageID);
+    }
+    const part = isRecord(event.part) ? event.part : undefined;
+    if (part === undefined) return;
+    if (typeof part.sessionID === "string") {
+        identity.sessions.add(part.sessionID);
+    }
+    if (typeof part.messageID === "string") {
+        identity.messages.add(part.messageID);
+    }
 }
 
 /** The host half of journal attribution, read from a saved tools trail. */
@@ -319,8 +345,10 @@ function dispatchTool(name: unknown): string | null {
  * @returns The host half of attribution; empty when the trail is unreadable.
  */
 export function hostDispatchesFromTrail(toolsText: string): HostDispatches {
-    const callIds = new Set<string>();
-    const dispatches: JournalDispatch[] = [];
+    const result: HostDispatches = {
+        callIds: new Set(),
+        dispatches: [],
+    };
     for (const line of toolsText.split("\n")) {
         if (line.trim() === "") continue;
         let entry: unknown;
@@ -329,32 +357,38 @@ export function hostDispatchesFromTrail(toolsText: string): HostDispatches {
         } catch {
             continue;
         }
-        if (!isRecord(entry)) continue;
-        if (typeof entry.id === "string" && entry.tool === "execute") {
-            callIds.add(entry.id);
-        }
-        if (entry.tool !== "execute" || !isRecord(entry.metadata)) continue;
-        const envelope = isRecord(entry.metadata.metadata)
-            ? entry.metadata.metadata
-            : entry.metadata;
-        const calls = Array.isArray(envelope.toolCalls)
-            ? envelope.toolCalls
-            : [];
-        for (const call of calls) {
-            if (!isRecord(call)) continue;
-            const tool = dispatchTool(call.tool);
-            if (tool === null) continue;
-            dispatches.push({
-                tool,
-                status:
-                    typeof call.status === "string"
-                        ? call.status
-                        : "unknown",
-                input: call.input,
-            });
-        }
+        if (isRecord(entry)) addHostDispatches(entry, result);
     }
-    return { callIds, dispatches };
+    return result;
+}
+
+/**
+ * Add one tool-trail entry's execute id and docs dispatches.
+ * @param entry The parsed trail entry.
+ * @param result The accumulating host result.
+ */
+function addHostDispatches(
+    entry: Record<string, unknown>,
+    result: HostDispatches,
+): void {
+    if (typeof entry.id === "string" && entry.tool === "execute") {
+        result.callIds.add(entry.id);
+    }
+    if (entry.tool !== "execute" || !isRecord(entry.metadata)) return;
+    const envelope = isRecord(entry.metadata.metadata)
+        ? entry.metadata.metadata
+        : entry.metadata;
+    const calls = Array.isArray(envelope.toolCalls) ? envelope.toolCalls : [];
+    for (const call of calls) {
+        if (!isRecord(call)) continue;
+        const tool = dispatchTool(call.tool);
+        if (tool === null) continue;
+        result.dispatches.push({
+            tool,
+            status: typeof call.status === "string" ? call.status : "unknown",
+            input: call.input,
+        });
+    }
 }
 
 /**

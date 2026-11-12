@@ -19,6 +19,7 @@ import {
 } from "../ac-scoring.mts";
 import type { LakeDocument } from "../ac/campaign.mts";
 import type { SelectionPolicy } from "./model.ts";
+import { parseCampaignLedger } from "./ledger.ts";
 import {
     answerIdentityProblem,
     hostDispatchesFromTrail,
@@ -1163,32 +1164,18 @@ export function loadLaunchLedger(
     reader: EvidenceReader,
     path: string,
 ): Loaded<LaunchRecord[]> {
-    const lines = loadLines(reader, path);
-    if (lines.state !== "available") return lines;
-    const records: LaunchRecord[] = [];
-    const problems: string[] = [];
-    for (const [index, line] of lines.value.entries()) {
-        let event: unknown;
-        try {
-            event = JSON.parse(line) as unknown;
-        } catch {
-            problems.push(
-                `unparsable ledger line ${index + 1}: ${line.slice(0, 80)}`,
-            );
-            continue;
-        }
-        if (!isRecord(event) || typeof event.event !== "string") {
-            problems.push(`ledger line ${index + 1} has no event name`);
-            continue;
-        }
-        records.push({
-            at: typeof event.at === "string" ? event.at : null,
+    const text = reader.readTextFile(path);
+    if (text.state !== "available") return text;
+    const parsed = parseCampaignLedger(text.value);
+    if (parsed.state === "malformed") {
+        return { state: "malformed", source: path, problems: parsed.problems };
+    }
+    return loaded(
+        parsed.events.map((event) => ({
+            at: event.at,
             event: event.event,
-            stamp: typeof event.stamp === "string" ? event.stamp : null,
-        });
-    }
-    if (problems.length > 0) {
-        return { state: "malformed", source: path, problems };
-    }
-    return loaded(records, path);
+            stamp: event.stamp,
+        })),
+        path,
+    );
 }

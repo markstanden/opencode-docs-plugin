@@ -58,28 +58,10 @@ export const DEFAULT_ATTEMPT_ID = "attempt-001";
  * @returns The selection, or every problem found.
  */
 export function resolveAttemptSelection(input: SelectionInput): SelectionResolution {
-    const problems: string[] = [];
     const manifest = input.manifestAttemptId ?? null;
     const override = input.overrideAttemptId ?? null;
-    if (manifest !== null && !isAttemptId(manifest)) {
-        problems.push(
-            `manifest attemptId ${JSON.stringify(manifest)} must match attempt-NNN`,
-        );
-    }
-    if (override !== null && !isAttemptId(override)) {
-        problems.push(
-            `override attemptId ${JSON.stringify(override)} must match attempt-NNN`,
-        );
-    }
+    const problems = selectionProblems(manifest, override);
     if (problems.length > 0) return { ok: false, problems };
-    if (manifest !== null && override !== null && manifest !== override) {
-        return {
-            ok: false,
-            problems: [
-                `conflicting attempt selections: manifest ${manifest} and override ${override}`,
-            ],
-        };
-    }
     if (manifest !== null) {
         return {
             ok: true,
@@ -99,10 +81,40 @@ export function resolveAttemptSelection(input: SelectionInput): SelectionResolut
 }
 
 /**
+ * Validate the declared ids and their agreement.
+ * @param manifest The manifest attempt id, or null.
+ * @param override The override attempt id, or null.
+ * @returns Problems; empty means the selection is unambiguous.
+ */
+function selectionProblems(
+    manifest: string | null,
+    override: string | null,
+): string[] {
+    const problems: string[] = [];
+    if (manifest !== null && !isAttemptId(manifest)) {
+        problems.push(
+            `manifest attemptId ${JSON.stringify(manifest)} must match attempt-NNN`,
+        );
+    }
+    if (override !== null && !isAttemptId(override)) {
+        problems.push(
+            `override attemptId ${JSON.stringify(override)} must match attempt-NNN`,
+        );
+    }
+    if (manifest !== null && override !== null && manifest !== override) {
+        problems.push(
+            `conflicting attempt selections: manifest ${manifest} and override ${override}`,
+        );
+    }
+    return problems;
+}
+/**
  * The selection a recovery run may use. Recovery is a separate authorised
  * budget and a separately identified analysis selection; it must not rewrite
  * the original freeze.
  * @param input The manifest declaration and any recovery override.
+ * @param input.manifestAttemptId The frozen manifest selection, or null.
+ * @param input.recoveryAttemptId The explicit recovery selection.
  * @returns The selection, or the refusal.
  */
 export function resolveRecoverySelection(input: {

@@ -142,26 +142,40 @@ export function deliveredToolDescription(
         return { problem: "delivery request body has no tools array" };
     }
     for (const entry of tools) {
-        if (typeof entry !== "object" || entry === null) continue;
-        const fn = (entry as { function?: unknown }).function;
-        if (typeof fn !== "object" || fn === null) continue;
-        const name = (fn as { name?: unknown }).name;
-        if (name !== toolName) continue;
-        const description = (fn as { description?: unknown }).description;
-        if (typeof description !== "string" || description.trim() === "") {
-            return {
-                problem: `served tool ${toolName} has no nonblank description`,
-            };
-        }
-        return {
-            delivered: {
-                description,
-                chars: [...description].length,
-                sha256: sha256Text(description),
-            },
-        };
+        const served = servedDescription(entry, toolName);
+        if (served !== undefined) return served;
     }
     return { problem: `delivery request body does not serve tool ${toolName}` };
+}
+
+/**
+ * Read one served tool's description.
+ * @param entry The request body's tool entry.
+ * @param toolName The registered tool name.
+ * @returns The served description, a problem for a malformed match, or
+ *   undefined when the entry is not the named tool.
+ */
+function servedDescription(
+    entry: unknown,
+    toolName: string,
+): { delivered?: ServedDescription; problem?: string } | undefined {
+    if (typeof entry !== "object" || entry === null) return undefined;
+    const fn = (entry as { function?: unknown }).function;
+    if (typeof fn !== "object" || fn === null) return undefined;
+    if ((fn as { name?: unknown }).name !== toolName) return undefined;
+    const description = (fn as { description?: unknown }).description;
+    if (typeof description !== "string" || description.trim() === "") {
+        return {
+            problem: `served tool ${toolName} has no nonblank description`,
+        };
+    }
+    return {
+        delivered: {
+            description,
+            chars: [...description].length,
+            sha256: sha256Text(description),
+        },
+    };
 }
 
 /**
@@ -196,61 +210,12 @@ function armProblems(arm: FrozenArm): string[] {
  * @returns The record, or every problem.
  */
 export function freezeExperiment(input: FreezeInput): FreezeOutcome {
-    const problems: string[] = [];
-    if (input.started) {
-        problems.push(
-            "refusing to freeze after a launch, judge attempt or recorded result exists",
-        );
-    }
-    if (input.frozen) {
-        problems.push("refusing to overwrite an existing freeze");
-    }
-    if (input.arms.length < 2) {
-        problems.push("a comparison needs at least two arms");
-    }
-    const ids = input.arms.map((arm) => arm.id).sort();
-    if (new Set(ids).size !== ids.length) {
-        problems.push("arm ids must be distinct");
-    }
-    for (const arm of input.arms) problems.push(...armProblems(arm));
-    if (input.arms.length >= 2) {
-        const [first, second] = [...input.arms].sort((left, right) =>
-            left.id.localeCompare(right.id),
-        );
-        if (
-            first !== undefined &&
-            second !== undefined &&
-            first.descriptionHash === second.descriptionHash
-        ) {
-            problems.push("the arms serve an identical description");
-        }
-    }
-    if (input.imageId === null || input.imageId.trim() === "") {
-        problems.push("no container image identity was observed");
-    }
-    if (input.containerCli === null || input.containerCli.trim() === "") {
-        problems.push("no container CLI identity was observed");
-    }
-    if (
-        input.measurementSha256 === null ||
-        input.measurementSha256.trim() === ""
-    ) {
-        problems.push("no measurement declaration was frozen");
-    }
-    if (input.ceilings === null || input.ceilings.trial < 1 || input.ceilings.judge < 1) {
-        problems.push("the trial and judge ceilings must both be positive");
-    }
-    if (input.stoppingRules.length === 0) {
-        problems.push("the stopping rules must be recorded");
-    }
-    if (input.files.length === 0) {
-        problems.push("no immutable inputs were hashed");
-    }
-    for (const file of input.files) {
-        if (file.path.trim() === "" || file.sha256.trim() === "") {
-            problems.push("every immutable input needs a path and a hash");
-        }
-    }
+    const problems = [
+        ...stateProblems(input),
+        ...armSetProblems(input.arms),
+        ...identityProblems(input),
+        ...inputFileProblems(input.files),
+    ];
     if (problems.length > 0) return { ok: false, problems };
     const byPath = new Map<string, FrozenFile>();
     for (const file of input.files) byPath.set(file.path, file);
@@ -275,6 +240,100 @@ export function freezeExperiment(input: FreezeInput): FreezeOutcome {
     };
 }
 
+/**
+ * The start/existing-freeze preconditions.
+ * @param input The freeze input.
+ * @returns Problems; empty means the experiment has not begun.
+ */
+function stateProblems(input: FreezeInput): string[] {
+    const problems: string[] = [];
+    if (input.started) {
+        problems.push(
+            "refusing to freeze after a launch, judge attempt or recorded result exists",
+        );
+    }
+    if (input.frozen) {
+        problems.push("refusing to overwrite an existing freeze");
+    }
+    return problems;
+}
+
+/**
+ * The arm-set preconditions: at least two distinct arms, clean, delivered as
+ * registered, and not serving identical descriptions.
+ * @param arms The arms.
+ * @returns Problems; empty means the arm set is coherent.
+ */
+function armSetProblems(arms: readonly FrozenArm[]): string[] {
+    const problems: string[] = [];
+    if (arms.length < 2) problems.push("a comparison needs at least two arms");
+    const ids = arms.map((arm) => arm.id).sort();
+    if (new Set(ids).size !== ids.length) {
+        problems.push("arm ids must be distinct");
+    }
+    for (const arm of arms) problems.push(...armProblems(arm));
+    const sorted = [...arms].sort((left, right) =>
+        left.id.localeCompare(right.id),
+    );
+    const first = sorted[0];
+    const second = sorted[1];
+    if (
+        first !== undefined &&
+        second !== undefined &&
+        first.descriptionHash === second.descriptionHash
+    ) {
+        problems.push("the arms serve an identical description");
+    }
+    return problems;
+}
+
+/**
+ * The run-identity preconditions.
+ * @param input The freeze input.
+ * @returns Problems; empty means identity and rules are recorded.
+ */
+function identityProblems(input: FreezeInput): string[] {
+    const problems: string[] = [];
+    if (input.imageId === null || input.imageId.trim() === "") {
+        problems.push("no container image identity was observed");
+    }
+    if (input.containerCli === null || input.containerCli.trim() === "") {
+        problems.push("no container CLI identity was observed");
+    }
+    if (
+        input.measurementSha256 === null ||
+        input.measurementSha256.trim() === ""
+    ) {
+        problems.push("no measurement declaration was frozen");
+    }
+    if (
+        input.ceilings === null ||
+        input.ceilings.trial < 1 ||
+        input.ceilings.judge < 1
+    ) {
+        problems.push("the trial and judge ceilings must both be positive");
+    }
+    if (input.stoppingRules.length === 0) {
+        problems.push("the stopping rules must be recorded");
+    }
+    return problems;
+}
+
+/**
+ * The immutable-input preconditions.
+ * @param files The hashed inputs.
+ * @returns Problems; empty means every input is identified.
+ */
+function inputFileProblems(files: readonly FrozenFile[]): string[] {
+    const problems: string[] = [];
+    if (files.length === 0) problems.push("no immutable inputs were hashed");
+    for (const file of files) {
+        if (file.path.trim() === "" || file.sha256.trim() === "") {
+            problems.push("every immutable input needs a path and a hash");
+        }
+    }
+    return problems;
+}
 /**
  * Write a verified freeze exclusively. An existing file refuses without
  * touching its bytes.
