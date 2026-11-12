@@ -627,9 +627,7 @@ function observePreparation(
             ? { step: label, state: "verified", detail: "node_modules installed" }
             : { step: label, state: "present", detail: "node_modules missing" };
     };
-    steps.push(checkoutStep("arms/a checkout", join(root, "arms/a")));
-    steps.push(checkoutStep("arms/b checkout", join(root, "arms/b")));
-    steps.push(checkoutStep("measurement checkout", join(root, "measurement")));
+    // Run-card order: materialise (step 0) before the arm checkouts (step 2).
     steps.push({
         step: "materialisation",
         state:
@@ -638,6 +636,9 @@ function observePreparation(
                 : "missing",
         detail: "materialise.mts stages prepare/ and pinned runner/ modules",
     });
+    steps.push(checkoutStep("arms/a checkout", join(root, "arms/a")));
+    steps.push(checkoutStep("arms/b checkout", join(root, "arms/b")));
+    steps.push(checkoutStep("measurement checkout", join(root, "measurement")));
 
     // B-only description change: surfaces recorded, and post-freeze matching.
     const surfaces: Record<string, Record<string, unknown> | null> = {};
@@ -653,7 +654,7 @@ function observePreparation(
         bChange.state = "present";
         const aHash = str(surfacesA, "nativeHash");
         const bHash = str(surfacesB, "nativeHash");
-        bChange.detail = `A ${str(surfacesA, "nativeChars") ?? "?"} chars, B ${str(surfacesB, "nativeChars") ?? "?"} chars`;
+        bChange.detail = `A ${num(surfacesA, "nativeChars") ?? "?"} chars, B ${num(surfacesB, "nativeChars") ?? "?"} chars`;
         if (record !== null) {
             const frozenA = record.arms.find((arm) => arm.id === "A");
             const frozenB = record.arms.find((arm) => arm.id === "B");
@@ -2178,7 +2179,11 @@ export function renderText(result: StatusResult, detail: boolean): string {
             identity.trialModel === undefined ? null : `trial ${identity.trialModel}`,
             identity.judgeModel === undefined ? null : `judge ${identity.judgeModel}`,
         ].filter((bit): bit is string => bit !== null);
-        lines.push(`  ${bits.join(" · ")}`);
+        lines.push(
+            bits.length > 0
+                ? `  ${bits.join(" · ")}`
+                : "  (no durable identity yet; no schedule.json and no FROZEN.json)",
+        );
         if (identity.arms !== undefined) {
             lines.push(
                 `  arms: ${identity.arms

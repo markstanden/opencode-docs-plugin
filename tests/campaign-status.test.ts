@@ -43,7 +43,10 @@ const repo = here.endsWith("/tests") ? dirname(here) : here;
 
 const IMAGE_ID = "sha256:fake-image-id-for-status-tests";
 const PODMAN_VERSION = "podman version 6.1.4-fake";
-const BASE = "d982e28bc1cb624cb21d9b32536cab3d73e63f2c";
+/** The worktree's actual HEAD: the tests' CAMPAIGN_SOURCE_REPO value. */
+const BASE = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], {
+    encoding: "utf8",
+}).trim();
 
 /** Write one file, creating parents. */
 function write(path: string, body: string): void {
@@ -698,8 +701,17 @@ describe("status campaign mode: roots and preparation", () => {
 
         // Assert
         assert.equal(result.phase, "frozen-ready");
-        const steps = result.preparation as { step: string; state: string }[];
+        const steps = result.preparation as {
+            step: string;
+            state: string;
+            detail?: string;
+        }[];
         assert.equal(steps.find((step) => step.step === "freeze")?.state, "verified");
+        assert.match(
+            steps.find((step) => step.step === "B-only description change")
+                ?.detail ?? "",
+            /A 47 chars, B 103 chars/,
+        );
         const next = result.nextAction as { kind: string; command: string };
         assert.equal(next.kind, "offline-check");
         assert.match(next.command, /--dry-run/);
