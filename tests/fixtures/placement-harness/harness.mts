@@ -57,6 +57,7 @@ import {
 } from "./scenario-names.mts";
 import type { ScenarioDisplay } from "./scenario-names.mts";
 import {
+    isServedRecord,
     verifyOperationsJournal,
     type JournalDispatch,
 } from "./analysis/journal.ts";
@@ -2805,10 +2806,7 @@ function journalContentText(content: unknown): string {
 
 /** Whether a journal record names a served Code Mode twin call. */
 function isServedTwinRecord(record: Record<string, unknown>): boolean {
-    if (record.schemaVersion !== 1) return false;
-    if (record.tool !== "docs" && record.tool !== "docs_search") return false;
-    if (record.surface !== "codemode-twin") return false;
-    return isRecord(record.input);
+    return isServedRecord(record) && record.surface === "codemode-twin";
 }
 
 /** A journal record's verdict and output, or null when it is unusable. */

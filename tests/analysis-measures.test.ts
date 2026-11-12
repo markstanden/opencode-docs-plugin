@@ -27,13 +27,24 @@ const journal = {
         surface: "native",
         input: { read: "ops/staging-deploy.md" },
         result: {
-            metadata: { lake: "docs", path: "ops/staging-deploy.md" },
+            metadata: {
+                read: "docs:ops/staging-deploy.md",
+                lake: "docs",
+                path: "lakes/docs/ops/staging-deploy.md",
+            },
         },
     }),
     add: JSON.stringify({
         status: "completed",
         surface: "native",
         input: { add: { mode: "create", path: "ops/note.md" } },
+        result: {
+            metadata: {
+                written: true,
+                lake: "docs",
+                path: "lakes/docs/ops/note.md",
+            },
+        },
     }),
     failedAdd: JSON.stringify({
         status: "error",

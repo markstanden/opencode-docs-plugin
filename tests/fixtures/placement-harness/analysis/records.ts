@@ -1055,7 +1055,7 @@ function loadJournalVerification(
     const host =
         tools.state === "available"
             ? hostDispatchesFromTrail(tools.value)
-            : { callIds: new Set<string>(), dispatches: [] };
+            : { callIds: new Set<string>(), nativeCalls: [], dispatches: [] };
     return verifyOperationsJournal({
         lines: journal.state === "available" ? journal.value.split("\n") : [],
         key: key.state === "available" ? key.value : null,
@@ -1064,6 +1064,7 @@ function loadJournalVerification(
                 ? journalIdentityFromTrail(stdout.value)
                 : { sessions: new Set(), messages: new Set() },
         callIds: host.callIds,
+        nativeCalls: host.nativeCalls,
         dispatches: host.dispatches,
     });
 }

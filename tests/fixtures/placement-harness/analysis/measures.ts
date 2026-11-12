@@ -46,6 +46,8 @@ export interface MeasureDeclarationParse {
 export interface DocsOperation {
     /** The recorded completion status. */
     status: string;
+    /** Whether the served result says the operation succeeded. */
+    success: boolean | null;
     /** The delivery surface (native, twin, or Code Mode twin). */
     surface: string;
     /** The operation's verb. */
@@ -334,12 +336,14 @@ function operationOf(
     const input = value.input;
     const add = isRecord(input.add) ? input.add : undefined;
     const identity = reportedIdentityOf(value);
+    const verb = verbOf(input, add);
     return {
         operation: {
             status: typeof value.status === "string" ? value.status : "unknown",
+            success: servedSuccessOf(value, verb),
             surface:
                 typeof value.surface === "string" ? value.surface : "unknown",
-            verb: verbOf(input, add),
+            verb,
             target: targetOf(input, add),
             lake: identity.lake,
             path: identity.path,
@@ -366,6 +370,33 @@ function reportedIdentityOf(value: Record<string, unknown>): {
         lake: typeof metadata?.lake === "string" ? metadata.lake : null,
         path: typeof metadata?.path === "string" ? metadata.path : null,
     };
+}
+
+/**
+ * Whether the served result says the operation succeeded.
+ *
+ * The journal's top-level `status` is only "completed" or "error": the plugin
+ * returns refusals as completed results. Success is the result envelope's own
+ * fact — `written` for an add, a non-null `read` for a read — and null where
+ * the verb carries no success fact.
+ * @param value The journal entry.
+ * @param verb The parsed verb.
+ * @returns True, false, or null when the verb has no success fact.
+ */
+function servedSuccessOf(
+    value: Record<string, unknown>,
+    verb: DocsOperation["verb"],
+): boolean | null {
+    if (value.status !== "completed") return false;
+    const result = isRecord(value.result) ? value.result : undefined;
+    const metadata =
+        result !== undefined && isRecord(result.metadata)
+            ? result.metadata
+            : undefined;
+    if (metadata === undefined) return null;
+    if (verb === "add") return metadata.written === true;
+    if (verb === "read") return typeof metadata.read === "string";
+    return null;
 }
 
 /** The verb one journal input expresses. */
@@ -429,19 +460,20 @@ export function operationMatchesNotePath(
 ): boolean {
     const expected = declaration.note;
     const qualified = `${declaration.lake}/${expected}`;
+    const reported =
+        operation.path === null
+            ? null
+            : lakeRelative(operation.path, declaration.lake);
+    const target =
+        operation.target === null ? null : barePath(operation.target);
     // The returned identity is authoritative. A request target that contradicts
     // it is contradictory evidence and cannot earn credit.
-    if (
-        operation.path !== null &&
-        operation.target !== null &&
-        barePath(operation.path) !== barePath(operation.target)
-    ) {
+    if (reported !== null && target !== null && reported !== target) {
         return false;
     }
-    const identity = operation.path ?? operation.target;
+    const identity = reported ?? target;
     if (identity === null) return false;
-    const value = barePath(identity);
-    return value === expected || value === qualified;
+    return identity === expected || identity === qualified;
 }
 
 /**
@@ -585,9 +617,14 @@ function changedDocument(raw: string): ChangedLakeDocument | undefined {
         kindWord === "removed"
             ? kindWord
             : "unknown";
+    const entryKind = /^(file|dir|symlink|mode|content)$/.exec(
+        / \(([a-z]+)\)$/.exec(line)?.[1] ?? "",
+    )?.[1];
+    // A directory is not a document and cannot compete for the credit.
+    if (entryKind === "dir") return undefined;
     const path = line
         .replace(/^[a-z]+:?\s*/, "")
-        .replace(/ \((file|dir|symlink|mode)\)$/, "");
+        .replace(/ \([a-z]+\)$/, "");
     const match = /^lakes\/([^/]+)\/(.+)$/.exec(path);
     if (match === null) return undefined;
     return { lake: match[1] as string, path: match[2] as string, kind };
@@ -605,8 +642,19 @@ export function operationMatchesChangedDocument(
 ): boolean {
     const identity = operation.path ?? operation.target;
     if (identity === null) return false;
-    if (barePath(identity) !== document.path) return false;
-    return operation.lake === null || operation.lake === document.lake;
+    // A completed write reports its resolved lake. Without one the document
+    // cannot be tied to the write.
+    if (operation.lake === null || operation.lake !== document.lake) {
+        return false;
+    }
+    return lakeRelative(identity, document.lake) === document.path;
+}
+
+/** Strip an optional root-relative `lakes/<lake>/` prefix. */
+function lakeRelative(identity: string, lake: string): string {
+    const bare = barePath(identity);
+    const prefix = `lakes/${lake}/`;
+    return bare.startsWith(prefix) ? bare.slice(prefix.length) : bare;
 }
 
 /** The verified journal lines, or why they are unusable. */
@@ -899,6 +947,7 @@ function retrievalOf(context: MeasureContext): {
         (operation) =>
             operation.verb === "read" &&
             operation.status === "completed" &&
+            operation.success !== false &&
             operationMatchesNotePath(operation, declaration),
     );
     const reads = matching.filter((operation) =>
@@ -993,11 +1042,14 @@ export function measureTrial(
     const context = contextOf(record, declarations);
     const completedAdds = context.operations.filter(
         (operation) =>
-            operation.verb === "add" && operation.status === "completed",
+            operation.verb === "add" &&
+            operation.status === "completed" &&
+            operation.success === true,
     );
     const failedAdds = context.operations.filter(
         (operation) =>
-            operation.verb === "add" && operation.status !== "completed",
+            operation.verb === "add" &&
+            (operation.status !== "completed" || operation.success === false),
     );
     const write = dispositionOf(context, completedAdds, failedAdds);
     const retrieval = retrievalOf(context);

@@ -28,7 +28,11 @@ function record(overrides: Record<string, unknown> = {}): string {
         status: "completed",
         result: {
             content: "note",
-            metadata: { lake: "docs", path: "db/pool.md" },
+            metadata: {
+                read: "docs:db/pool.md",
+                lake: "docs",
+                path: "lakes/docs/db/pool.md",
+            },
         },
         ...overrides,
     });
@@ -53,6 +57,13 @@ const dispatches = [
         tool: "docs",
         status: "completed",
         input: { read: "db/pool.md" },
+        callId: "call_abc",
+    },
+    {
+        tool: "docs",
+        status: "completed",
+        input: { add: { mode: "create", path: "db/pool.md" } },
+        callId: "call_add",
     },
 ];
 
@@ -67,7 +78,11 @@ const signedAdd = (
             input: { add: { mode: "create", path: "db/pool.md" } },
             result: {
                 content: "added",
-                metadata: { lake: "docs", path: "db/pool.md" },
+                metadata: {
+                    written: true,
+                    lake: "docs",
+                    path: "lakes/docs/db/pool.md",
+                },
             },
             ...overrides,
         },
@@ -82,7 +97,8 @@ const verify = (
         lines,
         key: KEY,
         identity,
-        callIds,
+        callIds: new Set(["call_abc", "call_add"]),
+        nativeCalls: [],
         dispatches,
         ...overrides,
     });
@@ -191,14 +207,42 @@ describe("operations-journal verification", () => {
         ]);
     });
 
-    it("rejects a record whose shape is not a served twin call", () => {
+    it("rejects a record whose surface is not a served registration", () => {
         // Act
-        const result = verify([signed({ surface: "native" })]);
+        const result = verify([signed({ surface: "unknown" })]);
 
         // Assert
         assert.deepEqual(result.rejected, [
             { index: 0, reason: "not-served-twin" },
         ]);
+    });
+
+    it("credits a native record against its own host call", () => {
+        // Act
+        const result = verify(
+            [
+                signed({
+                    surface: "native",
+                    callID: "native_1",
+                }),
+            ],
+            {
+                callIds: new Set(["native_1"]),
+                nativeCalls: [
+                    {
+                        tool: "docs",
+                        status: "completed",
+                        input: { read: "db/pool.md" },
+                        callId: "native_1",
+                    },
+                ],
+                dispatches: [],
+            },
+        );
+
+        // Assert
+        assert.equal(result.credited.length, 1);
+        assert.deepEqual(result.rejected, []);
     });
 });
 
@@ -284,7 +328,8 @@ const trialFiles = (
             exit: 0,
         }),
         [`${TRIAL}/final.md`]: answer,
-        [`${TRIAL}/writes.txt`]: "added lakes/docs/db/pool.md\n",
+        [`${TRIAL}/writes.txt`]:
+            "added: lakes/docs/db/pool.md (content)\n",
         [`${TRIAL}/stdout.jsonl`]: JSON.stringify({
             type: "step_finish",
             sessionID: "ses_abc",
@@ -296,7 +341,22 @@ const trialFiles = (
                 id: "call_add",
                 tool: "execute",
                 status: "completed",
-                metadata: {},
+                metadata: {
+                    metadata: {
+                        toolCalls: [
+                            {
+                                tool: "docs",
+                                status: "completed",
+                                input: {
+                                    add: {
+                                        mode: "create",
+                                        path: "db/pool.md",
+                                    },
+                                },
+                            },
+                        ],
+                    },
+                },
             }),
             JSON.stringify({
                 id: "call_abc",
@@ -309,13 +369,6 @@ const trialFiles = (
                                 tool: "docs",
                                 status: "completed",
                                 input: { read: "db/pool.md" },
-                            },
-                            {
-                                tool: "docs",
-                                status: "completed",
-                                input: {
-                                    add: { mode: "create", path: "db/pool.md" },
-                                },
                             },
                         ],
                     },

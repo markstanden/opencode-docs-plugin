@@ -27,7 +27,7 @@ export interface JournalIdentity {
     messages: ReadonlySet<string>;
 }
 
-/** One docs dispatch the host recorded inside an execute result. */
+/** One docs call the host recorded, native or nested. */
 export interface JournalDispatch {
     /** The journal's registered tool name (`docs` or `docs_search`). */
     tool: string;
@@ -35,6 +35,8 @@ export interface JournalDispatch {
     status: string;
     /** The dispatch input the host recorded. */
     input: unknown;
+    /** The host call id (native) or parent execute id (nested). */
+    callId: string | null;
 }
 
 /** One credited journal line. */
@@ -97,11 +99,13 @@ function parseLine(line: string): Record<string, unknown> | undefined {
     }
 }
 
-/** Whether a record names a served Code Mode twin call. */
-export function isServedTwinRecord(record: Record<string, unknown>): boolean {
+/** Whether a record names a served docs call on either registration surface. */
+export function isServedRecord(record: Record<string, unknown>): boolean {
     if (record.schemaVersion !== 1) return false;
     if (record.tool !== "docs" && record.tool !== "docs_search") return false;
-    if (record.surface !== "codemode-twin") return false;
+    if (record.surface !== "native" && record.surface !== "codemode-twin") {
+        return false;
+    }
     return isRecord(record.input);
 }
 
@@ -166,17 +170,20 @@ export function journalRecordAttributed(
  * @returns True when one dispatch was consumed.
  */
 function consumeDispatch(
-    dispatches: JournalDispatch[],
+    host: HostDispatches,
     record: Record<string, unknown>,
 ): boolean {
-    const match = dispatches.findIndex(
+    const native = record.surface === "native";
+    const candidates = native ? host.nativeCalls : host.dispatches;
+    const match = candidates.findIndex(
         (dispatch) =>
+            dispatch.callId === record.callID &&
             dispatch.tool === record.tool &&
             dispatch.status === record.status &&
             isDeepStrictEqual(dispatch.input, record.input),
     );
     if (match < 0) return false;
-    dispatches.splice(match, 1);
+    candidates.splice(match, 1);
     return true;
 }
 
@@ -192,7 +199,8 @@ function consumeDispatch(
  * @param input.key The run's signing key, or null when unavailable.
  * @param input.identity The run's observed session and message ids.
  * @param input.callIds The execute call ids in the run's trail.
- * @param input.dispatches The docs dispatches the host recorded.
+ * @param input.nativeCalls The docs calls the host recorded directly.
+ * @param input.dispatches The nested docs dispatches the host recorded.
  * @returns The explicit verification result.
  */
 export function verifyOperationsJournal(input: {
@@ -200,6 +208,7 @@ export function verifyOperationsJournal(input: {
     key: string | null | undefined;
     identity: JournalIdentity;
     callIds: ReadonlySet<string>;
+    nativeCalls?: readonly JournalDispatch[];
     dispatches: readonly JournalDispatch[];
 }): JournalVerification {
     if (input.lines === undefined) {
@@ -228,11 +237,15 @@ export function verifyOperationsJournal(input: {
             ],
         };
     }
-    const dispatches = [...input.dispatches];
+    const host: HostDispatches = {
+        callIds: new Set(input.callIds),
+        nativeCalls: input.nativeCalls ? [...input.nativeCalls] : [],
+        dispatches: [...input.dispatches],
+    };
     const credited: CreditedJournalRecord[] = [];
     const rejected: RejectedJournalRecord[] = [];
     for (const [index, line] of input.lines.entries()) {
-        const outcome = verifyLine(line, index, key, input, dispatches);
+        const outcome = verifyLine(line, index, key, input, host);
         if (outcome.rejected !== undefined) rejected.push(outcome.rejected);
         if (outcome.credited !== undefined) credited.push(outcome.credited);
     }
@@ -258,13 +271,13 @@ function verifyLine(
         identity: JournalIdentity;
         callIds: ReadonlySet<string>;
     },
-    dispatches: JournalDispatch[],
+    host: HostDispatches,
 ): { credited?: CreditedJournalRecord; rejected?: RejectedJournalRecord } {
     if (line.trim() === "") return {};
     const record = parseLine(line);
     if (record === undefined)
         return { rejected: { index, reason: "not-json" } };
-    if (!isServedTwinRecord(record)) {
+    if (!isServedRecord(record)) {
         return { rejected: { index, reason: "not-served-twin" } };
     }
     if (!journalMacValid(record, key)) {
@@ -273,7 +286,7 @@ function verifyLine(
     if (!journalRecordAttributed(record, input.identity, input.callIds)) {
         return { rejected: { index, reason: "unattributed" } };
     }
-    if (!consumeDispatch(dispatches, record)) {
+    if (!consumeDispatch(host, record)) {
         return { rejected: { index, reason: "no-host-dispatch" } };
     }
     return { credited: { index, record } };
@@ -331,9 +344,11 @@ function addEventIdentity(
 
 /** The host half of journal attribution, read from a saved tools trail. */
 export interface HostDispatches {
-    /** Execute call ids present in the trail. */
+    /** Host call ids present in the trail, native and execute. */
     callIds: Set<string>;
-    /** Docs dispatches the host recorded inside execute results. */
+    /** Native docs calls the host recorded directly. */
+    nativeCalls: JournalDispatch[];
+    /** Nested docs dispatches the host recorded inside execute results. */
     dispatches: JournalDispatch[];
 }
 
@@ -352,6 +367,7 @@ function dispatchTool(name: unknown): string | null {
 export function hostDispatchesFromTrail(toolsText: string): HostDispatches {
     const result: HostDispatches = {
         callIds: new Set(),
+        nativeCalls: [],
         dispatches: [],
     };
     for (const line of toolsText.split("\n")) {
@@ -376,15 +392,32 @@ function addHostDispatches(
     entry: Record<string, unknown>,
     result: HostDispatches,
 ): void {
-    if (typeof entry.id === "string" && entry.tool === "execute") {
-        result.callIds.add(entry.id);
+    if (typeof entry.id === "string") {
+        const tool = dispatchTool(entry.tool);
+        if (tool !== null) {
+            result.callIds.add(entry.id);
+            result.nativeCalls.push({
+                tool,
+                status:
+                    typeof entry.status === "string"
+                        ? entry.status
+                        : "unknown",
+                input: entry.input,
+                callId: entry.id,
+            });
+        }
+        if (entry.tool === "execute") result.callIds.add(entry.id);
     }
     if (entry.tool !== "execute" || !isRecord(entry.metadata)) return;
     const envelope = isRecord(entry.metadata.metadata)
         ? entry.metadata.metadata
         : entry.metadata;
     const calls = Array.isArray(envelope.toolCalls) ? envelope.toolCalls : [];
-    appendDispatches(calls, result.dispatches);
+    appendDispatches(
+        calls,
+        result.dispatches,
+        typeof entry.id === "string" ? entry.id : null,
+    );
 }
 
 /**
@@ -395,6 +428,7 @@ function addHostDispatches(
 function appendDispatches(
     calls: readonly unknown[],
     dispatches: JournalDispatch[],
+    parentCallId: string | null,
 ): void {
     for (const call of calls) {
         if (!isRecord(call)) continue;
@@ -404,6 +438,7 @@ function appendDispatches(
             tool,
             status: typeof call.status === "string" ? call.status : "unknown",
             input: call.input,
+            callId: parentCallId,
         });
     }
 }

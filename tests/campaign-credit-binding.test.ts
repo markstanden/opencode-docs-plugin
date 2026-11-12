@@ -43,18 +43,35 @@ const answer = "Updated the note.\n";
 const answerHash = createHash("sha256").update(answer, "utf8").digest("hex");
 
 /**
- * One judged, passing trial with a plugin add and a writes report.
+ * One judged, passing trial with a plugin write and a writes report.
  * @param root The evidence root.
  * @param arm The arm id.
- * @param addPath The plugin add's reported path.
+ * @param inputPath The add target the host delivered.
  * @param writes The writes report.
+ * @param options Producer-shape overrides for the journal record.
  */
 function trial(
     root: string,
     arm: string,
-    addPath: string,
+    inputPath: string,
     writes: string,
+    options: {
+        surface?: "native" | "codemode-twin";
+        written?: boolean;
+        reportedPath?: string;
+        callId?: string;
+        hostCallId?: string;
+        operation?: "add" | "read";
+        retrieval?: "applied" | "not-retrieved";
+        outcome?: string;
+    } = {},
 ): void {
+    const surface = options.surface ?? "codemode-twin";
+    const written = options.written ?? true;
+    const operation = options.operation ?? "add";
+    const reportedPath = options.reportedPath ?? `lakes/docs/${inputPath}`;
+    const callId = options.callId ?? "call_1";
+    const hostCallId = options.hostCallId ?? callId;
     const dir = join(
         root,
         "gen",
@@ -87,34 +104,53 @@ function trial(
         join(dir, "stdout.jsonl"),
         `${JSON.stringify({ sessionID: "ses_1", messageID: "msg_1" })}\n`,
     );
+    const input =
+        operation === "read"
+            ? { read: inputPath }
+            : { add: { mode: "update", path: inputPath } };
+    const metadata =
+        operation === "read"
+            ? written
+                ? { read: "docs:ops/note.md", lake: "docs", path: reportedPath }
+                : { read: null }
+            : written
+              ? { written: true, lake: "docs", path: reportedPath }
+              : { written: false };
     write(
         join(dir, "tools.jsonl"),
-        `${JSON.stringify({
-            id: "call_1",
-            tool: "execute",
-            status: "completed",
-            metadata: {
-                metadata: {
-                    toolCalls: [
-                        {
-                            tool: "docs",
-                            status: "completed",
-                            input: {
-                                add: { mode: "update", path: addPath },
-                            },
-                        },
-                    ],
-                },
-            },
-        })}\n`,
+        surface === "native"
+            ? `${JSON.stringify({
+                  id: hostCallId,
+                  tool: "docs",
+                  status: "completed",
+                  input,
+              })}\n`
+            : `${JSON.stringify({
+                  id: hostCallId,
+                  tool: "execute",
+                  status: "completed",
+                  metadata: {
+                      metadata: {
+                          toolCalls: [
+                              {
+                                  tool: "docs",
+                                  status: "completed",
+                                  input,
+                              },
+                          ],
+                      },
+                  },
+              })}\n`,
     );
     write(
         join(dir, "docs-operations.jsonl"),
         `${signed({
-            input: { add: { mode: "update", path: addPath } },
+            surface,
+            callID: callId,
+            input,
             result: {
-                content: "updated",
-                metadata: { lake: "docs", path: addPath },
+                content: written ? "done" : "REFUSE",
+                metadata,
             },
         })}\n`,
     );
@@ -123,9 +159,17 @@ function trial(
         join(dir, "ac/attempt-001/judgement.json"),
         JSON.stringify({
             status: "judged",
-            documentationOutcome: "useful-update",
+            documentationOutcome: options.outcome ?? "useful-update",
             documentationReason: "durable correction",
             evidence: ["the cap stays"],
+            ...(options.retrieval === undefined
+                ? {}
+                : {
+                      retrievalApplication: {
+                          state: options.retrieval,
+                          quote: options.retrieval === "applied" ? "used it" : "(none)",
+                      },
+                  }),
         }),
     );
     write(
@@ -211,8 +255,9 @@ function campaign(): { root: string; out: string } {
         }),
     );
     // A's add targets the changed document; B's add targets another note.
-    trial(root, "A", "ops/note.md", "modified lakes/docs/ops/note.md\n");
-    trial(root, "B", "ops/other.md", "modified lakes/docs/ops/note.md\n");
+    const writes = "modified: lakes/docs/ops/note.md (content)\n";
+    trial(root, "A", "ops/note.md", writes);
+    trial(root, "B", "ops/other.md", writes);
     return { root, out: mkdtempSync(join(tmpdir(), "pd-credit-out-")) };
 }
 
@@ -299,6 +344,266 @@ describe("shared evidence verifier through the analyser CLI", () => {
                     ?.recording.disposition,
                 "unknown",
             );
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+});
+
+/** Run the analyser and return the parsed analysis and report. */
+function analyse(root: string): {
+    status: number | null;
+    analysis: {
+        measures: {
+            arms: Record<
+                string,
+                {
+                    recording: { success: number };
+                    retrieval: { applied: number; unknown: number };
+                }
+            >;
+            trials: Array<{
+                arm: string;
+                recording: { disposition: string; success: boolean };
+                retrieval: { state: string };
+            }>;
+        };
+    };
+} {
+    const out = mkdtempSync(join(tmpdir(), "pd-credit-out-"));
+    const run = runAnalysis([
+        "--campaign",
+        join(root, "manifest.json"),
+        "--evidence-root",
+        root,
+        "--out",
+        out,
+    ]);
+    return {
+        status: run.status,
+        analysis: JSON.parse(readFileSync(join(out, "analysis.json"), "utf8")),
+    };
+}
+
+describe("real producer shapes and operation outcomes", () => {
+    it("credits a native add attributed to its host call", () => {
+        // Arrange
+        const { root } = campaign();
+        try {
+            trial(root, "A", "ops/note.md", "modified: lakes/docs/ops/note.md (content)\n", {
+                surface: "native",
+            });
+            trial(root, "B", "ops/other.md", "modified: lakes/docs/ops/note.md (content)\n", {
+                surface: "native",
+            });
+
+            // Act
+            const { status, analysis } = analyse(root);
+
+            // Assert
+            assert.equal(status, 0);
+            assert.equal(analysis.measures.arms.A?.recording.success, 1);
+            assert.equal(analysis.measures.arms.B?.recording.success, 0);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("does not credit a refused add beside a useful filesystem edit", () => {
+        // Arrange
+        const { root } = campaign();
+        try {
+            trial(root, "A", "ops/note.md", "modified: lakes/docs/ops/note.md (content)\n", {
+                written: false,
+            });
+
+            // Act
+            const { status, analysis } = analyse(root);
+
+            // Assert
+            assert.equal(status, 0);
+            const a = analysis.measures.trials.find((entry) => entry.arm === "A");
+            assert.equal(a?.recording.success, false);
+            assert.equal(a?.recording.disposition, "tool-error");
+            assert.equal(analysis.measures.arms.A?.recording.success, 0);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("does not credit a dispatch belonging to another execute", () => {
+        // Arrange
+        const { root } = campaign();
+        try {
+            const dir = join(
+                root,
+                "gen/a/results/pd-A-r0-X/X",
+            );
+            write(
+                join(dir, "tools.jsonl"),
+                [
+                    {
+                        id: "call_1",
+                        tool: "execute",
+                        status: "completed",
+                        metadata: {
+                            metadata: {
+                                toolCalls: [
+                                    {
+                                        tool: "docs",
+                                        status: "completed",
+                                        input: {
+                                            add: {
+                                                mode: "update",
+                                                path: "ops/note.md",
+                                            },
+                                        },
+                                    },
+                                ],
+                            },
+                        },
+                    },
+                    {
+                        id: "call_2",
+                        tool: "execute",
+                        status: "completed",
+                        metadata: {
+                            metadata: {
+                                toolCalls: [
+                                    {
+                                        tool: "docs",
+                                        status: "completed",
+                                        input: {
+                                            add: {
+                                                mode: "update",
+                                                path: "ops/other.md",
+                                            },
+                                        },
+                                    },
+                                ],
+                            },
+                        },
+                    },
+                ]
+                    .map((entry) => JSON.stringify(entry))
+                    .join("\n") + "\n",
+            );
+            write(
+                join(dir, "docs-operations.jsonl"),
+                `${signed({
+                    callID: "call_2",
+                    input: { add: { mode: "update", path: "ops/note.md" } },
+                    result: {
+                        content: "updated",
+                        metadata: {
+                            written: true,
+                            lake: "docs",
+                            path: "lakes/docs/ops/note.md",
+                        },
+                    },
+                })}\n`,
+            );
+
+            // Act
+            const { status, analysis } = analyse(root);
+
+            // Assert
+            assert.equal(status, 0);
+            assert.equal(analysis.measures.arms.A?.recording.success, 0);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("credits a new file under a new directory, ignoring the directory", () => {
+        // Arrange
+        const { root } = campaign();
+        try {
+            trial(
+                root,
+                "A",
+                "ops/new/note.md",
+                "added: lakes/docs/ops/new (dir)\nadded: lakes/docs/ops/new/note.md (content)\n",
+                { outcome: "useful-create" },
+            );
+            trial(
+                root,
+                "B",
+                "ops/new/other.md",
+                "added: lakes/docs/ops/new (dir)\nadded: lakes/docs/ops/new/note.md (content)\n",
+                { outcome: "useful-create" },
+            );
+
+            // Act
+            const { status, analysis } = analyse(root);
+
+            // Assert
+            assert.equal(status, 0);
+            assert.equal(analysis.measures.arms.A?.recording.success, 1);
+            assert.equal(analysis.measures.arms.B?.recording.success, 0);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("does not credit a write reported in another lake", () => {
+        // Arrange
+        const { root } = campaign();
+        try {
+            trial(root, "A", "ops/note.md", "modified: lakes/docs/ops/note.md (content)\n", {
+                reportedPath: "lakes/other/ops/note.md",
+            });
+
+            // Act
+            const { status, analysis } = analyse(root);
+
+            // Assert
+            assert.equal(status, 0);
+            assert.equal(analysis.measures.arms.A?.recording.success, 0);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("credits a native read that applied the declared lake note", () => {
+        // Arrange
+        const { root } = campaign();
+        try {
+            write(
+                join(root, "evidence/measures.json"),
+                JSON.stringify({
+                    recordingOpportunities: [],
+                    retrievalOpportunities: ["X"],
+                    scenarios: {
+                        X: {
+                            retrieval: {
+                                note: "ops/note.md",
+                                lake: "docs",
+                                detail: "the staging order",
+                            },
+                        },
+                    },
+                }),
+            );
+            trial(root, "A", "ops/note.md", "none\n", {
+                operation: "read",
+                surface: "native",
+                retrieval: "applied",
+            });
+            trial(root, "B", "ops/note.md", "none\n", {
+                operation: "read",
+                surface: "native",
+                written: false,
+                retrieval: "not-retrieved",
+            });
+
+            // Act
+            const { status, analysis } = analyse(root);
+
+            // Assert
+            assert.equal(status, 0);
+            assert.equal(analysis.measures.arms.A?.retrieval.applied, 1);
+            assert.equal(analysis.measures.arms.B?.retrieval.applied, 0);
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
