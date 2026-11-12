@@ -27,7 +27,9 @@ cd /path/to/opencode-docs-plugin
 REV=$(git rev-parse HEAD)
 export CAMPAIGN_ROOT=/home/mark/tmp/docs-prod014-$(date +%Y%m%dT%H%M%SZ)
 export CAMPAIGN_ID="pd-fresh-$REV"
-mkdir -p "$CAMPAIGN_ROOT"
+export CAMPAIGN_SOURCE_REPO=/path/to/measurement
+export REPORT_ROOT=/home/mark/tmp/docs-prod014-reports-$(date +%Y%m%dT%H%M%SZ)
+mkdir -p "$CAMPAIGN_ROOT/evidence" "$REPORT_ROOT"
 node tests/fixtures/placement-harness/prod014/campaign/materialise.mjs "$CAMPAIGN_ROOT"
 # The fresh manifest selects attempt-001; recovery writes attempt-002.
 
@@ -52,6 +54,7 @@ node "$CAMPAIGN_ROOT/prepare/surfaces.mjs" "$CAMPAIGN_ROOT/arms/a" \
 node "$CAMPAIGN_ROOT/prepare/surfaces.mjs" "$CAMPAIGN_ROOT/arms/b" \
   "$CAMPAIGN_ROOT/evidence/surfaces-b.json"
 # Delivery probes save the raw provider request beside the capture.
+# The probe's mount path must be absolute; $CAMPAIGN_ROOT already is.
 node "$CAMPAIGN_ROOT/prepare/delivery-probe.mjs" \
   "$CAMPAIGN_ROOT/evidence/delivery-a/capture.json" "$CAMPAIGN_ROOT/arms/a" \
   opencode-go/deepseek-v4.1-flash "Hello." 8801
@@ -61,27 +64,29 @@ node "$CAMPAIGN_ROOT/prepare/delivery-probe.mjs" \
 cp "$CAMPAIGN_ROOT/arms/a/tests/fixtures/placement-harness/prod014/measurement.json" \
   "$CAMPAIGN_ROOT/evidence/measurement-spec.json"
 # freeze.mjs builds/resolves the image first and records its immutable id.
-CAMPAIGN_ROOT="$CAMPAIGN_ROOT" CAMPAIGN_SOURCE_REPO=/path/to/measurement \
+CAMPAIGN_ROOT="$CAMPAIGN_ROOT" CAMPAIGN_SOURCE_REPO="$CAMPAIGN_SOURCE_REPO" \
   node "$CAMPAIGN_ROOT/prepare/freeze.mjs"
 
-# 4. P04 checkpoint: four pairs, then report before continuing.
-CAMPAIGN_ROOT="$CAMPAIGN_ROOT" node "$CAMPAIGN_ROOT/prepare/run.mjs" \
-  --pair-from 1 --pair-to 4
-node /path/to/measurement/tests/fixtures/placement-harness/analysis/analyse.mts \
+# 4. P04 checkpoint: four pairs, then report before continuing. The analyser
+#    refuses an output directory inside the evidence root.
+CAMPAIGN_ROOT="$CAMPAIGN_ROOT" CAMPAIGN_SOURCE_REPO="$CAMPAIGN_SOURCE_REPO" \
+  node "$CAMPAIGN_ROOT/prepare/run.mjs" --pair-from 1 --pair-to 4
+node "$CAMPAIGN_SOURCE_REPO/tests/fixtures/placement-harness/analysis/analyse.mts" \
   --campaign "$CAMPAIGN_ROOT/prepare/manifest.json" \
   --evidence-root "$CAMPAIGN_ROOT" \
-  --out "$CAMPAIGN_ROOT/evidence/reports/p04"
+  --out "$REPORT_ROOT/p04"
 # Continue only if P04 has no blocker, no unusable judge and no premise change;
 # otherwise stop, preserve the root and report.
 
 # 5. P08 remainder, then the final analysis and closure.
-CAMPAIGN_ROOT="$CAMPAIGN_ROOT" node "$CAMPAIGN_ROOT/prepare/run.mjs" \
-  --pair-from 5 --pair-to 8
-node /path/to/measurement/tests/fixtures/placement-harness/analysis/analyse.mts \
+CAMPAIGN_ROOT="$CAMPAIGN_ROOT" CAMPAIGN_SOURCE_REPO="$CAMPAIGN_SOURCE_REPO" \
+  node "$CAMPAIGN_ROOT/prepare/run.mjs" --pair-from 5 --pair-to 8
+node "$CAMPAIGN_SOURCE_REPO/tests/fixtures/placement-harness/analysis/analyse.mts" \
   --campaign "$CAMPAIGN_ROOT/prepare/manifest.json" \
   --evidence-root "$CAMPAIGN_ROOT" \
-  --out "$CAMPAIGN_ROOT/evidence/reports/p08"
-CAMPAIGN_ROOT="$CAMPAIGN_ROOT" node "$CAMPAIGN_ROOT/prepare/close-campaign.mjs"
+  --out "$REPORT_ROOT/p08"
+CAMPAIGN_ROOT="$CAMPAIGN_ROOT" CAMPAIGN_SOURCE_REPO="$CAMPAIGN_SOURCE_REPO" \
+  node "$CAMPAIGN_ROOT/prepare/close-campaign.mjs"
 ```
 
 Recovery is a separately authorised, separately identified attempt. It writes
@@ -89,8 +94,8 @@ Recovery is a separately authorised, separately identified attempt. It writes
 reuses `attempt-001` and never rewrites the freeze.
 
 ```sh
-CAMPAIGN_ROOT="$CAMPAIGN_ROOT" node "$CAMPAIGN_ROOT/prepare/rejudge.mjs" \
-  --attempt-id attempt-002
+CAMPAIGN_ROOT="$CAMPAIGN_ROOT" CAMPAIGN_SOURCE_REPO="$CAMPAIGN_SOURCE_REPO" \
+  node "$CAMPAIGN_ROOT/prepare/rejudge.mjs" --attempt-id attempt-002
 ```
 
 If a run is interrupted, preserve the root. An unresolved reservation blocks a

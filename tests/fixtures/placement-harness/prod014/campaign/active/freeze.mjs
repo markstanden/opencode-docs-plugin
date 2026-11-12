@@ -275,9 +275,11 @@ if (
     identities.arms.B.surfaces.nativeHash
 )
     problems.push("A and B descriptions are identical");
+const sameModel = (served) =>
+    served === MODEL || MODEL.endsWith(`/${served}`);
 if (
-    identities.arms.A.delivery.model !== MODEL ||
-    identities.arms.B.delivery.model !== MODEL
+    !sameModel(identities.arms.A.delivery.model) ||
+    !sameModel(identities.arms.B.delivery.model)
 ) {
     problems.push("a delivery probe served a different model");
 }

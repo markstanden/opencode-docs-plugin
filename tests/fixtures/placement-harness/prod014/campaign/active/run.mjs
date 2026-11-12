@@ -298,7 +298,6 @@ const envFor = (slot) => {
         PATH: `${SHIM}:${process.env.PATH ?? ""}`,
         CONTAINER_LOG: join(CONTAINER_LOGS, `${slot.stamp}.log`),
         PLACEMENT_TRIAL_IMAGE_ID: freezeRecord?.imageId ?? "",
-        PLACEMENT_IMAGE: freezeRecord?.imageId ?? "",
         PLACEMENT_CASES: cases,
         PLACEMENT_PROMPTS: join(base, "prompts"),
         PLACEMENT_FIXTURES: join(base, "fixtures"),
@@ -388,6 +387,17 @@ const slotProblems = (slot) => {
     }
     return problems;
 };
+
+/**
+ * The judge launch environment: the same envelope plus the immutable image,
+ * which only the judge launcher consumes. The trial wrapper identifies its
+ * container with PLACEMENT_TRIAL_IMAGE_ID, so the host describe step is never
+ * misclassified as an in-container run.
+ */
+const judgeEnv = (slot) => ({
+    ...envFor(slot),
+    PLACEMENT_IMAGE: freezeRecord?.imageId ?? "",
+});
 
 const dry = () => {
     const problems = [];
@@ -689,7 +699,7 @@ const judgeWrapperResult = (slot, base) =>
             String(JUDGE_TIMEOUT),
         ],
         {
-            env: envFor(slot),
+            env: judgeEnv(slot),
             encoding: "utf8",
             timeout: JUDGE_TIMEOUT + 120000,
         },

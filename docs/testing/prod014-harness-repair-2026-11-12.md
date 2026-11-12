@@ -84,6 +84,46 @@ commits changed launch, freeze, credit, closure and materialisation behaviour,
 so that rehearsal is historical evidence for its own revision, not for the
 review head.
 
+## Review-repair rehearsal (2026-11-12, second pass)
+
+Working tree at `cdb525b5fa1c` (review head `72950accf2239cf856c0c12898677d6dd702b9e7`
+plus the review repairs). Fresh root `/tmp/opencode/rehearsal-final`, real
+materialiser, real `container-run.sh` and `ac/judge-launcher.sh`, real image
+`58505eac2fe9`, arms A (415 native chars) and B (739), and a local provider fake
+on `127.0.0.1:8899` that returns a no-op trial answer and a valid `none`
+judgement. Zero paid calls; every provider request was local.
+
+- P04: 4 pairs, 8 trial launches, 8 judge attempts, 16 provider requests,
+  24.3 s wall. The analyser published `inconclusive` (no-op evidence).
+- P08 continuation: 8 pairs, 16 trial launches, 16 judge attempts, 16 usable
+  judgements, 34 provider requests (two extra came from the first S07 verdict,
+  which the fake judge had not yet made preservation-complete), 11.5 s for the
+  P07–P08 stage. Decision `no-promotion`, threshold `not-qualified`.
+- Closure: 8 completed pairs, 16 trial launches, 16 judge attempts, 16 usable,
+  0 unusable; token totals 0 with coverage 16/16 (the fake reports zero
+  tokens), catalogue estimate 0, no problems.
+- Interrupted copy: a reserved S05 claim made the runner refuse the range with
+  "unsettled trial claim", zero further provider requests; the closer refused
+  to publish a reconciliation.
+- After closure, `run.mjs` refused with exit 2 and changed neither the ledger
+  nor the provider-call count; a second close left `RECONCILIATION.json`
+  byte-identical.
+
+The rehearsal found and fixed three real defects: the provider payload names
+the unqualified model id (freeze now accepts the route-qualified form), passing
+the frozen image as `PLACEMENT_IMAGE` made the host `describe` look like an
+in-container trial (the judge environment now carries it alone), and the
+analyser refuses output inside the evidence root (the run card now writes
+reports outside the campaign root). The run card also had to create
+`evidence/` before `schedule.mjs`.
+
+This fake produced the required no-op tie, not a useful write. Successful
+native reads, content replacements, refused adds, new-directory documents and
+the B-only wording change are proven at the analyser boundary in
+`campaign-credit-binding`, `campaign-evidence-boundary` and
+`prod014-wording-change` using the plugin's real emitted shapes; they were not
+produced by this no-op rehearsal fake.
+
 ## D1–D10 mapping
 
 | Finding                | Production entry point                              | Named regression                                                                | Observed                                                            |

@@ -371,6 +371,58 @@ writeFileSync(join(attemptDir, "judgement.json"), JSON.stringify({ status: "judg
         }
     });
 
+    it("never marks the host describe as an in-container trial", () => {
+        // Arrange
+        const { root, counter, bin } = campaign();
+        const envFile = join(root, "trial-env.json");
+        const stub = join(root, "trial-env.sh");
+        write(
+            stub,
+            `#!/usr/bin/env sh
+node -e 'const fs=require("fs");fs.writeFileSync(process.env.ENV_FILE,JSON.stringify({image:process.env.PLACEMENT_IMAGE??null,imageId:process.env.PLACEMENT_TRIAL_IMAGE_ID??null}))'
+`,
+        );
+        chmodSync(stub, 0o755);
+
+        try {
+            // Act
+            spawnSync(
+                process.execPath,
+                [
+                    join(root, "prepare/run.mjs"),
+                    "--pair-from",
+                    "1",
+                    "--pair-to",
+                    "1",
+                    "--trial-command",
+                    stub,
+                ],
+                {
+                    env: {
+                        ...process.env,
+                        CAMPAIGN_ROOT: root,
+                        ZAI_API_KEY: "stub",
+                        STUB_COUNTER: counter,
+                        ENV_FILE: envFile,
+                        PATH: `${bin}:${process.env.PATH ?? ""}`,
+                    },
+                    encoding: "utf8",
+                    timeout: 60000,
+                },
+            );
+            const env = JSON.parse(readFileSync(envFile, "utf8")) as {
+                image: string | null;
+                imageId: string | null;
+            };
+
+            // Assert
+            assert.equal(env.image, null);
+            assert.equal(env.imageId, "sha256:test-image");
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     it("blocks a dispatch while a campaign close is in progress", () => {
         // Arrange
         const { root, counter, bin } = campaign();
