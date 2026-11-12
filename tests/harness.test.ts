@@ -2802,11 +2802,11 @@ test("F12: the wrapper mounts the selected corpus and stages per stamp+case", ()
         runJson.trialBoundary.image,
         "localhost/opencode-placement-trials",
     );
-    // Each staged case carries a nonsecret freeze receipt naming this
-    // stamp and case — the container-verifiable proof of a host freeze.
+    // Each staged case carries a nonsecret freeze receipt naming the neutral
+    // in-container slot and case — the arm-blind proof of a host freeze.
     const receipt = readJson(join(staged, "frozen.json"));
     assert.equal(receipt.kind, "placement-freeze-receipt");
-    assert.equal(receipt.stamp, "wx");
+    assert.equal(receipt.stamp, "slot");
     assert.equal(receipt.caseId, "T01");
     assert.match(receipt.runJsonSha256, /^[0-9a-f]{64}$/);
     // The staged fixture carries the generation fingerprint, never rubrics.

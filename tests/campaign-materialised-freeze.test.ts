@@ -33,6 +33,14 @@ function write(path: string, body: string): void {
 function arm(dir: string): void {
     mkdirSync(join(dir, "src"), { recursive: true });
     write(join(dir, "src/index.ts"), "export default {};\n");
+    write(
+        join(dir, "tests/fixtures/placement-harness/container-run.sh"),
+        "#!/usr/bin/env sh\nexit 0\n",
+    );
+    write(
+        join(dir, "tests/fixtures/placement-harness/harness.mts"),
+        "// harness\n",
+    );
     write(join(dir, "package-lock.json"), "{}\n");
     write(
         join(dir, "tests/fixtures/placement-harness/prod014/cases.json"),

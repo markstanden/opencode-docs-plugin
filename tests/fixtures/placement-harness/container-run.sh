@@ -104,8 +104,6 @@ prepare_image() {
         -e "OPENCODE_CONFIG_CONTENT=$overlay"
         -e "PLACEMENT_IMAGE=$IMAGE"
         -e "PLACEMENT_IMAGE_ID=$IMAGE_ID"
-        -e "PLACEMENT_PLUGIN_COMMIT=$PLUGIN_COMMIT"
-        -e "PLACEMENT_PLUGIN_DIRTY=$PLUGIN_DIRTY"
         -e "PLACEMENT_FIXTURE_HASH=$FIXTURE_HASH"
         "${TIMEOUT_ENV[@]}"
         -e "XDG_CONFIG_HOME=/tmp/agent-home/.config"
@@ -168,7 +166,7 @@ prepare_case_fixture() {
     printf '%s\n' "{
   \"kind\": \"placement-freeze-receipt\",
   \"schemaVersion\": 1,
-  \"stamp\": \"$STAMP\",
+  \"stamp\": \"slot\",
   \"caseId\": \"$id\",
   \"runJsonSha256\": \"$run_digest\",
   \"image\": \"$IMAGE\",
@@ -374,7 +372,7 @@ run_cases() {
             -v "$RUN_FIXTURES/$STAMP/$id:/fixtures/$id:ro" \
             -v "$CASES_RUN:/fixtures/cases.json:ro" \
             -v "$PROMPTS/$id.md:/prompts/$id.md:ro" \
-            -v "$result_case:/results/$STAMP/$id" \
+            -v "$result_case:/results/slot/$id" \
             -v "$HERE:/harness:ro" \
             -v "$REPO/package.json:/repo/package.json:ro" \
             -v "$REPO/src:/repo/src:ro" \
@@ -388,7 +386,7 @@ run_cases() {
             --prompts /prompts \
             --fixtures /fixtures \
             --results /results \
-            --stamp "$STAMP" \
+            --stamp slot \
             "${RUN_ARGS[@]}" || status=$?
         # Copy rubric/case only after the container exits. The run container
         # never sees this directory.
