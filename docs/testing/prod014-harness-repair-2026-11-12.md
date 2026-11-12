@@ -154,6 +154,43 @@ analyser boundary in `campaign-credit-binding`,
 `campaign-evidence-boundary` and `prod014-wording-change` using the plugin's
 real emitted shapes.
 
+## Defined Gate diagnosis (35769bf → c96602c)
+
+The gate failed twice at `35769bf` with only
+`node-coverage: coverage command failed: exit 1: no output`. Evidence:
+
+- Step elapsed: `144 s` (14:11:47–14:14:11) and `150 s` on the two failing runs;
+  green runs took `163 s` and `188 s`. The failure is not a timeout, and the
+  green runs are longer. No `timeout-minutes` exists on the job and the pinned
+  image's coverage runner passes no timeout.
+- Termination was an ordinary exit 1, not a signal or a killed process. The
+  gate folds the child's stdout and stderr into the failure text, so `no output`
+  means both were empty: the lcov reporter sends the whole report to the file
+  and names no test in CI. A local `--timings` run gives coverage `88.4 s`
+  inside a `96.6 s` verify; that is a local split, not a CI measurement.
+- Permissions are not the cause: in a controlled pair in the pinned image with
+  the same user and tree, the only difference being `.git`, both runs wrote
+  `coverage/lcov.info` (`-rw-r--r-- node node`) and no `EACCES`/`EPERM`
+  appeared. Without `.git` the suite exited 1; with `.git` it exited 0.
+- The cause is the gate's scope: `verify` runs against a scratch copy of tracked
+  files, which has no `.git`. `campaign-materialised-launch` resolved its source
+  revision with `git rev-parse HEAD` in the test checkout, so the scope failed
+  with `fatal: not a git repository` (reproduced: exit 128). Base `72950ac` did
+  not depend on that metadata; `35769bf` did.
+- Fix: `067f1b2` gives the launch tests their own committed source repo and
+  names it through `CAMPAIGN_SOURCE_REPO`, the same pattern the freeze suite
+  already used. Arrange plumbing only (`+22/−24`); no assertion, test, minimum
+  or gate setting was weakened. A `.git`-free copy at `c96602c` passes 9/9 and
+  the full suite passes 1,152/0.
+- Result: both defined-gate runs pass at `067f1b2` and at
+  `c96602c6a9c80d2932b8a332c8c4f958ebb97b6b`; SonarQube and SonarCloud pass and
+  the PR is `MERGEABLE`. The `c96602c` head includes the corrected rehearsal
+  record.
+
+Still unknowable from CI alone: coverage's own start/end in a green run, the
+discarded scratch-root lcov, and the failing test identity (identified here by
+reproduction at the same SHA, not by the CI log).
+
 ## D1–D10 mapping
 
 | Finding                | Production entry point                              | Named regression                                                                | Observed                                                            |
