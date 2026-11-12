@@ -204,6 +204,8 @@ export interface TrialRecordOptions {
     inventoryFactIds: string[];
     /** The manifest's recorded judgement-layer selection policy. */
     selectionPolicy: SelectionPolicy;
+    /** Whether legacy evidence without an answer hash is accepted. */
+    allowUnboundAnswer?: boolean;
 }
 
 /** Wrap a value as available. */
@@ -1089,7 +1091,9 @@ export function loadTrialRecord(
     const finalAnswer = reader.readTextFile(joinPath(dir, "final.md"));
     const answerProblem =
         finalAnswer.state === "available" && run.state === "available"
-            ? answerIdentityProblem(finalAnswer.value, run.value.answerHash)
+            ? answerIdentityProblem(finalAnswer.value, run.value.answerHash, {
+                  allowUnbound: options.allowUnboundAnswer === true,
+              })
             : null;
     const problems = [...attempt.problems, ...usability.problems];
     if (answerProblem !== null) problems.push(answerProblem);

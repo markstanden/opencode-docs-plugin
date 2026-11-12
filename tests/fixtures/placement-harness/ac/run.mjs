@@ -32,6 +32,11 @@ import {
     labelLeaks,
 } from "./campaign.mts";
 import {
+    hostDispatchesFromTrail,
+    journalIdentityFromTrail,
+    verifyOperationsJournal,
+} from "../analysis/journal.ts";
+import {
     PRESERVATION_CASE,
     buildAcPrompt,
     finalistQualifies,
@@ -189,6 +194,53 @@ function documentedOperations(path) {
         .map(operationLine);
 }
 
+/**
+ * The operations the judge may see: the journal's credited records only.
+ *
+ * A journal without its key or host trail cannot be attributed. New campaigns
+ * refuse that state; explicit legacy coverage drops the unattributable
+ * operations instead of guessing.
+ * @param caseDir The trial's result directory.
+ * @param allowLegacy Whether absent binding evidence is tolerated.
+ * @returns The credited operation lines, or a refusal.
+ */
+function attributableOperations(caseDir, allowLegacy) {
+    const journalPath = join(caseDir, "docs-operations.jsonl");
+    if (!existsSync(journalPath)) return { lines: [] };
+    const keyPath = join(caseDir, "docs-operations.key");
+    const toolsPath = join(caseDir, "tools.jsonl");
+    const stdoutPath = join(caseDir, "stdout.jsonl");
+    if (!existsSync(keyPath) || !existsSync(toolsPath)) {
+        if (allowLegacy) return { lines: [], reason: "legacy-unbound" };
+        return {
+            reason: "the operation journal has no signing key or host trail; it cannot be attributed",
+        };
+    }
+    const verification = verifyOperationsJournal({
+        lines: readText(journalPath).split("\n").filter((line) => line !== ""),
+        key: readText(keyPath).trim(),
+        identity: journalIdentityFromTrail(readText(stdoutPath)),
+        ...(() => {
+            const host = hostDispatchesFromTrail(readText(toolsPath));
+            return {
+                callIds: host.callIds,
+                nativeCalls: host.nativeCalls,
+                dispatches: host.dispatches,
+            };
+        })(),
+    });
+    if (verification.problems.length > 0 || verification.rejected.length > 0) {
+        return {
+            reason: `the operation journal is not attributable: ${verification.problems[0] ?? `${String(verification.rejected.length)} line(s) rejected`}`,
+        };
+    }
+    return {
+        lines: verification.credited.map((entry) =>
+            operationLine(entry.record),
+        ),
+    };
+}
+
 /** Changed paths from a writes report. */
 function changedPaths(writes) {
     return writes
@@ -232,7 +284,7 @@ function caseSpecOf(scoringSpec, caseId) {
  * @param truth The scenario-truth map.
  * @returns The packet text and the mutation facts behind it.
  */
-function packetFor(base, stamp, caseId, truth, scoringSpec) {
+function packetFor(base, stamp, caseId, truth, scoringSpec, docsOperations) {
     const caseDir = join(base, "results", stamp, caseId);
     const caseSpec = caseSpecOf(scoringSpec, caseId);
     const beforeDocs = lakeDocs(join(base, "fixtures", caseId, "lakes"));
@@ -248,9 +300,7 @@ function packetFor(base, stamp, caseId, truth, scoringSpec) {
         afterDocs,
         changedPaths: changedPaths(readText(join(caseDir, "writes.txt"))),
         primary: primaryEvidence(readJson(join(caseDir, "primary-check.json"))),
-        docsOperations: documentedOperations(
-            join(caseDir, "docs-operations.jsonl"),
-        ),
+        docsOperations,
         answer: readText(join(caseDir, "final.md")),
         requirePreservation:
             caseId === PRESERVATION_CASE && caseSpec.preservation === undefined,
@@ -465,12 +515,43 @@ function judge(args) {
     const scoringSpec = args.get("--spec")
         ? JSON.parse(readFileSync(need(args, "--spec"), "utf8"))
         : undefined;
+    const caseDir = join(base, "results", stamp, caseId);
+    const meta = JSON.parse(readFileSync(join(caseDir, "meta.json"), "utf8"));
+    const answerPath = join(caseDir, "final.md");
+    if (!existsSync(answerPath)) {
+        console.error(`refusing to judge ${stamp}/${caseId}: no final answer`);
+        return 4;
+    }
+    const answer = readText(answerPath);
+    const allowLegacy = args.get("--allow-legacy-unbound") === "true";
+    const recordedHash = meta.answerHash;
+    if (typeof recordedHash !== "string" || recordedHash === "") {
+        if (!allowLegacy) {
+            console.error(
+                `refusing to judge ${stamp}/${caseId}: meta.json records no answer hash; pass --allow-legacy-unbound for read-only legacy evidence`,
+            );
+            return 4;
+        }
+    } else if (sha256(answer) !== recordedHash) {
+        console.error(
+            `refusing to judge ${stamp}/${caseId}: the final answer no longer matches meta.answerHash`,
+        );
+        return 4;
+    }
+    const operations = attributableOperations(caseDir, allowLegacy);
+    if (operations.reason !== undefined && operations.reason !== "legacy-unbound") {
+        console.error(
+            `refusing to judge ${stamp}/${caseId}: ${operations.reason}`,
+        );
+        return 4;
+    }
     const { prompt, state } = packetFor(
         base,
         stamp,
         caseId,
         truth,
         scoringSpec,
+        operations.lines ?? [],
     );
     const leakProblems = labelLeaks(
         prompt,

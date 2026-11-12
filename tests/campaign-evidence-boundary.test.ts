@@ -266,9 +266,16 @@ describe("captured answer identity", () => {
         assert.match(problem ?? "", /does not match meta\.answerHash/);
     });
 
-    it("leaves an unhashed legacy answer unbound without refusing it", () => {
-        // Act / Assert
-        assert.equal(answerIdentityProblem(answer, undefined), null);
+    it("refuses an unhashed answer unless legacy coverage is explicit", () => {
+        // Act
+        const strict = answerIdentityProblem(answer, undefined);
+        const legacy = answerIdentityProblem(answer, undefined, {
+            allowUnbound: true,
+        });
+
+        // Assert
+        assert.match(String(strict), /no recorded answer hash/);
+        assert.equal(legacy, null);
     });
 });
 

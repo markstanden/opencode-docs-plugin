@@ -379,6 +379,7 @@ function analyse(root: string): {
         "--out",
         out,
     ]);
+    if (run.status !== 0) throw new Error(String(run.stderr));
     return {
         status: run.status,
         analysis: JSON.parse(readFileSync(join(out, "analysis.json"), "utf8")),
@@ -560,6 +561,46 @@ describe("real producer shapes and operation outcomes", () => {
             // Assert
             assert.equal(status, 0);
             assert.equal(analysis.measures.arms.A?.recording.success, 0);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("cannot promote on a missing required answer", () => {
+        // Arrange
+        const { root } = campaign();
+        try {
+            rmSync(join(root, "gen/a/results/pd-A-r0-X/X/final.md"), {
+                force: true,
+            });
+
+            // Act
+            const out = mkdtempSync(join(tmpdir(), "pd-credit-out-"));
+            const run = runAnalysis([
+                "--campaign",
+                join(root, "manifest.json"),
+                "--evidence-root",
+                root,
+                "--out",
+                out,
+            ]);
+
+            // Assert: a refusal or an unpromotable decision, never a promotion.
+            if (run.status === 0) {
+                const analysis = JSON.parse(
+                    readFileSync(join(out, "analysis.json"), "utf8"),
+                ) as {
+                    measures: {
+                        personalTrial: { recommendation: string };
+                    };
+                };
+                assert.notEqual(
+                    analysis.measures.personalTrial.recommendation,
+                    "personal-trial",
+                );
+            } else {
+                assert.notEqual(run.status, 0);
+            }
         } finally {
             rmSync(root, { recursive: true, force: true });
         }

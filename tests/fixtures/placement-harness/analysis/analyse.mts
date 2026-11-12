@@ -105,6 +105,8 @@ interface CliOptions {
     out: string;
     /** Whether to regenerate an existing analysis in place. */
     rerender: boolean;
+    /** Whether legacy answers without a recorded hash are accepted. */
+    allowLegacyUnbound: boolean;
 }
 
 /** The CLI outcome. */
@@ -260,10 +262,15 @@ function parseArgs(argv: readonly string[]): {
 } {
     const values = new Map<string, string>();
     let rerender = false;
+    let allowLegacyUnbound = false;
     for (let index = 0; index < argv.length; index += 1) {
         const flag = argv[index] ?? "";
         if (flag === "--rerender") {
             rerender = true;
+            continue;
+        }
+        if (flag === "--allow-legacy-unbound") {
+            allowLegacyUnbound = true;
             continue;
         }
         if (!["--campaign", "--evidence-root", "--out"].includes(flag)) {
@@ -280,7 +287,15 @@ function parseArgs(argv: readonly string[]): {
     if (campaign === undefined) return { error: "missing --campaign" };
     if (evidenceRoot === undefined) return { error: "missing --evidence-root" };
     if (out === undefined) return { error: "missing --out" };
-    return { options: { campaign, evidenceRoot, out, rerender } };
+    return {
+        options: {
+            campaign,
+            evidenceRoot,
+            out,
+            rerender,
+            allowLegacyUnbound,
+        },
+    };
 }
 
 /**
@@ -364,11 +379,13 @@ function readManifest(path: string): {
  * Load and score every scheduled slot.
  * @param manifest The validated manifest.
  * @param reader The evidence reader.
+ * @param allowLegacyUnbound Whether unhashed legacy answers are accepted.
  * @returns The loaded records and the scored trials.
  */
 function loadCampaign(
     manifest: CampaignManifest,
     reader: EvidenceReader,
+    allowLegacyUnbound: boolean,
 ): { records: TrialRecord[]; scored: TrialScored[] } {
     const scenarioById = new Map(
         manifest.scenarios.map((scenario) => [scenario.id, scenario]),
@@ -390,6 +407,7 @@ function loadCampaign(
                 scenario?.preservationInventory?.facts.map((fact) => fact.id) ??
                 [],
             selectionPolicy: manifest.assessment.selectionPolicy,
+            allowUnboundAnswer: allowLegacyUnbound,
         });
         records.push(record);
         scored.push(
@@ -1565,7 +1583,11 @@ export function runAnalysis(argv: readonly string[]): CliRun {
     }
     const consumed = new Map<string, ConsumedInput>();
     const reader = fsReader(options.evidenceRoot, consumed);
-    const loaded = loadCampaign(manifest, reader);
+    const loaded = loadCampaign(
+        manifest,
+        reader,
+        options.allowLegacyUnbound,
+    );
     const manifestText = readFileSync(options.campaign, "utf8");
     const result = assemble(
         manifest,

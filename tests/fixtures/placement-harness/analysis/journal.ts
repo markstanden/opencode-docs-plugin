@@ -451,13 +451,20 @@ function appendDispatches(
  * rendering. A missing hash leaves the answer unbound rather than trusted.
  * @param answer The recorded answer bytes.
  * @param answerHash The producer's recorded hash, when present.
- * @returns A problem, or null when the answer matches or no hash was recorded.
+ * @param options.allowUnbound Explicit read-only coverage for legacy evidence
+ *   written before the producer recorded a hash.
+ * @returns A problem, or null when the answer is bound.
  */
 export function answerIdentityProblem(
     answer: string,
     answerHash: unknown,
+    options: { allowUnbound?: boolean } = {},
 ): string | null {
-    if (typeof answerHash !== "string" || answerHash === "") return null;
+    if (typeof answerHash !== "string" || answerHash === "") {
+        return options.allowUnbound
+            ? null
+            : "no recorded answer hash; the answer cannot be bound to its trial";
+    }
     const actual = createHash("sha256").update(answer, "utf8").digest("hex");
     if (actual !== answerHash) {
         return "recorded answer does not match meta.answerHash; the answer was altered after capture";

@@ -20,6 +20,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { buildAcPrompt } from "./fixtures/placement-harness/ac-scoring.mts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const HARNESS = join(HERE, "fixtures/placement-harness");
@@ -146,7 +147,7 @@ describe("trial isolation", () => {
 });
 
 /** A minimal recorded trial for one judge dispatch. */
-function judgeStage(answer) {
+function judgeStage(answer, meta = { answerHash: sha256(answer) }) {
     const root = mkdtempSync(join(tmpdir(), "pd-judge-"));
     const stamp = "pd-A-r0-S02";
     const caseId = "S02";
@@ -157,7 +158,7 @@ function judgeStage(answer) {
         join(root, "fixtures", caseId, "work/AGENTS.md"),
         "You may record durable findings.\n",
     );
-    writeFileSync(join(caseDir, "meta.json"), JSON.stringify({ answerHash: sha256(answer) }));
+    writeFileSync(join(caseDir, "meta.json"), JSON.stringify(meta));
     writeFileSync(join(caseDir, "final.md"), answer);
     writeFileSync(join(caseDir, "prompt.md"), "Repair the check.\n");
     writeFileSync(join(caseDir, "writes.txt"), "none\n");
@@ -219,6 +220,70 @@ describe("judge blinding", () => {
         // Assert
         assert.equal(result.status, 3, result.stderr);
         assert.equal(existsSync(stage.launch), false);
+    });
+
+    it("refuses an edited final answer before dispatch", () => {
+        // Arrange
+        const stage = judgeStage("Nothing durable was found.\n");
+        writeFileSync(
+            join(stage.root, "results", stage.stamp, stage.caseId, "final.md"),
+            "An answer edited after capture.\n",
+        );
+
+        // Act
+        const result = dispatch(stage);
+
+        // Assert
+        assert.equal(result.status, 4, result.stderr);
+        assert.match(String(result.stderr), /no longer matches/);
+        assert.equal(existsSync(stage.launch), false);
+    });
+
+    it("refuses a missing answer hash without explicit legacy coverage", () => {
+        // Arrange
+        const stage = judgeStage("Nothing durable was found.\n", {});
+
+        // Act
+        const result = dispatch(stage);
+
+        // Assert
+        assert.equal(result.status, 4, result.stderr);
+        assert.match(String(result.stderr), /no answer hash/);
+        assert.equal(existsSync(stage.launch), false);
+    });
+
+    it("renders the declared lake and path in the retrieval criterion", () => {
+        // Arrange
+        const prompt = (
+            lake: string,
+            changedPaths: string[],
+        ): string =>
+            buildAcPrompt({
+                taskPrompt: "Repair it.",
+                standingPermission: "Record durable findings.",
+                scenarioTruth: "truth",
+                beforeDocs: [],
+                afterDocs: [],
+                changedPaths,
+                primary: { status: "pass", exit: 0, stdout: "", stderr: "" },
+                docsOperations: [],
+                answer: "answer",
+                retrievalSpec: {
+                    note: "db/pool.md",
+                    lake,
+                    detail: "the pool cap",
+                },
+            });
+
+        // Act
+        const shared = prompt("shared", ["db/pool.md"]);
+        const docs = prompt("docs", ["db/pool.md"]);
+
+        // Assert
+        assert.match(shared, /`shared\/db\/pool\.md`/);
+        assert.match(shared, /declared lake "shared"/);
+        assert.match(docs, /`docs\/db\/pool\.md`/);
+        assert.notEqual(shared, docs);
     });
 
     it("dispatches from a neutral working directory", () => {

@@ -4,7 +4,7 @@
         "ledger.ts": "100eefbd99bca05bbe81431c2726d0c8ea1abe0effa81c572240c305bfbeba1d",
         "budget.ts": "ffaa0aab5eb709eff78984519103ab766a4bf872adfe2dc562d7e411853d6825",
         "selector.ts": "6a8c3168a90f617094f32e77092835806a78bbe262b779614b4290a3527a86f3",
-        "journal.ts": "3ff4b54b3a5c9241d4a73ff9aa485a3fc793bdc3f78dd840b9072cd2c2b21dcf",
+        "journal.ts": "531bc618f3701d2d25c57e45c358438823ea6db1e90b3b35e135d818c4bc4e5d",
         "freeze.ts": "8ebebcd418f5a5bc10949b099f225bada5267e80e6ea36752e93a587fef2d627",
         "closure.ts": "ca54e611eb61b52483bca8045cc75072bf062ce77eb6879a4c677e0663819ecd"
     }
