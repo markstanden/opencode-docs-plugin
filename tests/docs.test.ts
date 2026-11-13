@@ -167,6 +167,34 @@ describe("parseFrontMatter", () => {
         assert.deepEqual(meta, {});
         assert.equal(body, raw);
     });
+
+    it("parses CRLF front-matter", () => {
+        // Arrange – a Windows checkout: every line ends CRLF.
+        const raw =
+            "---\r\nArea: decisions\r\nSummary: A doc\r\n---\r\n" +
+            "# Title\r\n\r\nBody.\r\n";
+
+        // Act
+        const { meta, body } = parseFrontMatter(raw);
+
+        // Assert – fields parse, and the body starts at the H1, not a bare CR.
+        assert.equal(meta.Area, "decisions");
+        assert.equal(meta.Summary, "A doc");
+        assert.match(body, /^# Title/);
+    });
+
+    it("validates a CRLF doc without reporting blank fields", () => {
+        // Arrange
+        const raw =
+            "---\r\nArea: aa\r\nKeywords: alpha\r\nSummary: S.\r\n---\r\n" +
+            "# CRLF doc\r\n\r\n### Facts\r\n\r\n- x.\r\n";
+
+        // Act
+        const findings = validateDoc("aa/x.md", raw);
+
+        // Assert
+        assert.deepEqual(findings, []);
+    });
 });
 
 describe("titleOf", () => {

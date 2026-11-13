@@ -201,7 +201,9 @@ export const EXCLUDED_AREAS = ["plans", "requirements", "wiki"] as const;
 
 /**
  * Split a doc into its YAML front-matter key/values and body. Flat `Key: value`
- * lines only — enough for the doc schema, so no YAML parser.
+ * lines only — enough for the doc schema, so no YAML parser. CRLF files are
+ * accepted (a hand-edited Windows checkout is still a doc); the writer always
+ * emits LF, so the same bytes have one canonical form.
  * @param raw Full file contents.
  * @returns Parsed metadata and the body after the closing `---`.
  */
@@ -209,15 +211,16 @@ export function parseFrontMatter(raw: string): {
     meta: Record<string, string>;
     body: string;
 } {
-    if (!raw.startsWith("---\n")) {
+    const opener = /^---\r?\n/.exec(raw);
+    if (opener === null) {
         return { meta: {}, body: raw };
     }
-    const end = raw.indexOf("\n---", 4);
+    const end = raw.indexOf("\n---", opener[0].length);
     if (end === -1) {
         return { meta: {}, body: raw };
     }
     const meta: Record<string, string> = {};
-    for (const line of raw.slice(4, end).split("\n")) {
+    for (const line of raw.slice(opener[0].length, end).split("\n")) {
         const colon = line.indexOf(":");
         if (colon === -1) {
             continue;
@@ -227,7 +230,7 @@ export function parseFrontMatter(raw: string): {
             meta[key] = line.slice(colon + 1).trim();
         }
     }
-    return { meta, body: raw.slice(end + 4).replace(/^\n+/, "") };
+    return { meta, body: raw.slice(end + 4).replace(/^(?:\r?\n)+/, "") };
 }
 
 /**
