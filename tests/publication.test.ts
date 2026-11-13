@@ -22,6 +22,7 @@ import { basename, dirname, join } from "node:path";
 import {
     createLakes,
     createDocsTool,
+    MAX_TEMP_ATTEMPTS,
     revisionOf,
     serializeDoc,
     targetLockPath,
@@ -1203,5 +1204,105 @@ describe("exclusive temp publication", () => {
         // No false success: two 2-byte writes stored; the stall at zero
         // throws so no caller can mistake a truncated file for a publication.
         assert.equal(readFileSync(join(root, "stalled.bin"), "utf8"), "yyyy");
+    });
+});
+
+describe("create failure recovery", () => {
+    it("removes its own partial file when a create fails mid-write", async () => {
+        // Arrange – a create whose write stores half the bytes, then fails
+        // with an ordinary I/O refusal.
+        const root = tempDir();
+        const tool = createDocsTool({
+            lakes: createLakes([lakeSpec(root)], {
+                seams: {
+                    writeFull: (fd) => {
+                        writeSync(fd, Buffer.from("# partial", "utf8"));
+                        const error = new Error("injected mid-write");
+                        (error as NodeJS.ErrnoException).code = "EPERM";
+                        throw error;
+                    },
+                },
+            }),
+        });
+
+        // Act
+        const failed = await tool.execute(
+            createAdd("Crash") as never,
+            {} as never,
+        );
+
+        // Assert – refused, the operation's own partial doc removed, no lock
+        // or temp left, and the path stays free for a deliberate retry.
+        assert.equal(failed.metadata?.written, false);
+        assert.match(String(failed.content), /could not publish/);
+        assert.equal(existsSync(join(root, "aa/crash.md")), false);
+        assertClean(root);
+        const retry = await createDocsTool({
+            lakes: createLakes([lakeSpec(root)]),
+        }).execute(createAdd("Crash") as never, {} as never);
+        assert.equal(retry.metadata?.written, true);
+    });
+
+    it("propagates an unmapped publication error instead of refusing", async () => {
+        // Arrange – an I/O error no refusal mapping covers.
+        const root = tempDir();
+        const tool = createDocsTool({
+            lakes: createLakes([lakeSpec(root)], {
+                seams: {
+                    writeFull: (fd) => {
+                        writeSync(fd, Buffer.from("# partial", "utf8"));
+                        const error = new Error("injected mid-write");
+                        (error as NodeJS.ErrnoException).code = "EIO";
+                        throw error;
+                    },
+                },
+            }),
+        });
+
+        // Act / Assert – the failure is the caller's, not a refusal, and its
+        // own partial doc is still removed.
+        await assert.rejects(
+            tool.execute(createAdd("Crash") as never, {} as never),
+            /injected mid-write/,
+        );
+        assert.equal(existsSync(join(root, "aa/crash.md")), false);
+        assertClean(root);
+    });
+
+    it("gives up after MAX_TEMP_ATTEMPTS occupied temp names", async () => {
+        // Arrange – every candidate temp name is already occupied by a
+        // foreign object this operation does not own.
+        const root = tempDir();
+        const raw = seed(root, "aa/doc.md", "A body.");
+        let attempts = 0;
+        const tool = createDocsTool({
+            lakes: createLakes([lakeSpec(root)], {
+                seams: {
+                    temp: () => {
+                        attempts += 1;
+                        const error = new Error("occupied");
+                        (error as NodeJS.ErrnoException).code = "EEXIST";
+                        throw error;
+                    },
+                },
+            }),
+        });
+
+        // Act
+        const result = await tool.execute(
+            replaceAdd("aa/doc.md", revisionOf(raw)) as never,
+            {} as never,
+        );
+
+        // Assert – the bound is the contract, the document is untouched, and
+        // nothing was published under a name the operation did not own.
+        assert.equal(result.metadata?.written, false);
+        assert.match(
+            String(result.content),
+            /every candidate temp name was occupied/,
+        );
+        assert.equal(attempts, MAX_TEMP_ATTEMPTS);
+        assert.equal(readFileSync(join(root, "aa/doc.md"), "utf8"), raw);
+        assertClean(root);
     });
 });
