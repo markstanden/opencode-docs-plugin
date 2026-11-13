@@ -279,3 +279,81 @@ describe("token subtotals with unknowns", () => {
         assert.equal(report.trial.tokenCoverage.input, 2);
     });
 });
+
+describe("closure integrity guards", () => {
+    it("exposes a trial reservation that never spawned without counting a launch", () => {
+        // Arrange
+        const claim: BudgetClaim = {
+            kind: "trial",
+            index: 1,
+            path: "trial/trial-0001.claim",
+            state: "reserved",
+            at: "2026-11-11T00:00:00Z",
+            stamp: null,
+            attemptId: null,
+            note: null,
+            key: null,
+        };
+
+        // Act
+        const report = deriveClosure(
+            input({ trialClaims: [claim], observations: [] }),
+        );
+
+        // Assert
+        assert.equal(report.trialLaunches, 0);
+        assert.match(
+            report.problems.join("; "),
+            /durable trial reservation\(s\) never spawned/,
+        );
+    });
+
+    it("reports a spawned judge attempt with no readable trail", () => {
+        // Arrange – the process started but no step was ever recorded.
+        const observations = [
+            slot(1, [{ ...judged("attempt-001"), steps: null }]),
+        ];
+
+        // Act
+        const report = deriveClosure(input({ observations }));
+
+        // Assert
+        assert.match(
+            report.problems.join("; "),
+            /spawned without a readable trail/,
+        );
+    });
+
+    it("reports a closed campaign whose observed slot lacks a recorded result", () => {
+        // Arrange – the ledger closed, but one launched slot has no result.
+        const observations = [
+            slot(1, [judged("attempt-001")], { recorded: false }),
+        ];
+
+        // Act
+        const report = deriveClosure(input({ closed: true, observations }));
+
+        // Assert
+        assert.match(
+            report.problems.join("; "),
+            /closed with 1 observed slot\(s\)/,
+        );
+    });
+
+    it("keeps steps and tokens unknown when an attempt reports none", () => {
+        // Arrange – a trial with no step count and a judge with no token record.
+        const observations = [
+            slot(1, [{ ...judged("attempt-001"), tokens: null }], {
+                trialSteps: null,
+            }),
+        ];
+
+        // Act
+        const report = deriveClosure(input({ observations }));
+
+        // Assert – unknown stays unknown; it never restarts at zero.
+        assert.equal(report.trial.steps, null);
+        assert.equal(report.judge.tokens.input, null);
+        assert.equal(report.judge.tokenCoverage.input, 0);
+    });
+});

@@ -434,6 +434,107 @@ process.stdout.write(JSON.stringify(result));`;
             rmSync(root, { recursive: true, force: true });
         }
     });
+
+    it("refuses a non-integer or non-positive ceiling", () => {
+        // Arrange
+        const root = temp("ceiling");
+
+        try {
+            // Act / Assert – a table of unusable ceilings, each refused with
+            // the kind named and no claim written.
+            for (const ceiling of [0, -1, 1.5, Number.NaN]) {
+                const result = claimBudget(root, "trial", ceiling);
+
+                assert.equal(result.ok, false, String(ceiling));
+                assert.match(
+                    (result as { reason: string }).reason,
+                    /invalid trial ceiling/,
+                    String(ceiling),
+                );
+            }
+            assert.equal(claimUsage(root, "trial").claimed, 0);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("counts a claim with an unrecognised state as unreadable and reserved", () => {
+        // Arrange
+        const root = temp("bogus-state");
+        claimBudget(root, "trial", 1);
+
+        try {
+            // Act
+            writeFileSync(
+                join(root, "trial", "trial-0002.claim"),
+                '{"state":"abandoned"}',
+                "utf8",
+            );
+            const claims = readClaims(root, "trial");
+
+            // Assert
+            assert.equal(claims.length, 2);
+            assert.equal(claims[1]?.state, "reserved");
+            assert.match(claims[1]?.note ?? "", /unreadable/);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("refuses to release a claim twice", () => {
+        // Arrange
+        const root = temp("double-release");
+        try {
+            const claimed = claimBudget(root, "trial", 1, {
+                stamp: "pd-A-r0-X",
+                key: "pd-A-r0-X",
+            });
+            assert.equal(claimed.ok, true);
+            const claim = (
+                claimed as {
+                    ok: true;
+                    claim: Parameters<typeof releaseClaim>[0];
+                }
+            ).claim;
+
+            // Act
+            const first = releaseClaim(claim);
+            const second = releaseClaim(claim);
+
+            // Assert
+            assert.equal(first, true);
+            assert.equal(second, false);
+            assert.equal(readClaims(root, "trial").length, 0);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("classifies a closed claim as having no restart disposition", () => {
+        // Arrange
+        const root = temp("closed-disposition");
+        try {
+            const claimed = claimBudget(root, "trial", 1);
+            assert.equal(claimed.ok, true);
+            const closed = advanceClaim(
+                (
+                    claimed as {
+                        ok: true;
+                        claim: Parameters<typeof advanceClaim>[0];
+                    }
+                ).claim,
+                "closed",
+            );
+
+            // Act
+            const disposition = restartDisposition(closed);
+
+            // Assert
+            assert.equal(disposition, null);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
 });
 
 describe("logical attempt ownership", () => {
