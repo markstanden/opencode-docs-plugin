@@ -1120,6 +1120,29 @@ describe("status campaign mode: live position", () => {
         assert.equal(position.usableAssessments, 2);
     });
 
+    it("counts a judged status even when outcome names the documentation outcome", () => {
+        // Arrange: the live runner records status=judged and outcome=none on
+        // the same event; the historical fixture recorded outcome=judged.
+        const root = liveRoot("pd-status-judged-status");
+        completePair(root, "P01");
+        ledgerEvent(root, {
+            event: "judge-exit",
+            slot: 3,
+            pairId: "P02",
+            stamp: "pd-B-r0-S02",
+            arm: "B",
+            status: "judged",
+            outcome: "none",
+        });
+
+        // Act
+        const result = statusJson(["--root", root]);
+
+        // Assert
+        const position = result.position as { usableAssessments: number };
+        assert.equal(position.usableAssessments, 3);
+    });
+
     it("suppresses the paid suggestion when a ceiling is exhausted", () => {
         // Arrange
         const root = liveRoot("pd-status-ceiling");

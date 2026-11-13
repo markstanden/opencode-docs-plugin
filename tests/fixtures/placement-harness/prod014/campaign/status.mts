@@ -1482,7 +1482,11 @@ function completedPairsOf(lines: readonly RawLedgerLine[]): string[] {
 function usableAssessmentsOf(lines: readonly RawLedgerLine[]): number {
     let judged = 0;
     for (const line of lines) {
-        if (line.event === "judge-exit" && line.record.outcome === "judged") {
+        if (
+            line.event === "judge-exit" &&
+            (line.record.status === "judged" ||
+                line.record.outcome === "judged")
+        ) {
             judged += 1;
         }
     }
