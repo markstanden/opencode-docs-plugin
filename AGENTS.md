@@ -1,4 +1,4 @@
-<!-- update: agent=opencode | date=2026-10-11 | scope=AGENTS.md -->
+<!-- update: agent=opencode | date=2026-11-13 | scope=AGENTS.md -->
 
 # AGENTS.md
 
@@ -88,3 +88,11 @@ npm test          # node --test
 npm run typecheck
 defined comply    # the verdict — bootstrap, repair and verify
 ```
+
+**PR verification.** Run final verification from a clean checkout of the
+intended PR head. Record `git rev-parse HEAD` and check `git status
+--porcelain` in that same checkout after `defined comply --full`. If the gate
+repairs files, review and commit the repairs, then verify the resulting
+commit. Report the tested SHA, post-gate tree state and CI verdict for the same
+pushed head. The managed _After a run_ rule above governs the repair loop; this
+adds the checkout identity and same-SHA confirmation the gate cannot make.
