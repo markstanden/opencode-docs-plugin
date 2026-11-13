@@ -2179,8 +2179,8 @@ describe("tool add", () => {
         assert.equal(written.length, 0);
     });
 
-    it("leaves an existing doc byte-identical when a replacement is refused", async () => {
-        // Arrange – an existing doc and a claim-less replacement for it.
+    it("leaves an existing doc byte-identical when a create at its path is refused", async () => {
+        // Arrange – an existing doc and a claim-less create naming its path.
         const original = "---\nArea: aa\n---\n# Old\n\n### Facts\n\n- Kept.\n";
         const { seam, written } = memoryFs({ "aa/fresh.md": original });
         const tool = createDocsTool({ collect: () => [], ...seam });

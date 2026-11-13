@@ -1205,9 +1205,6 @@ function skipDirectory(
     profile: LakeProfile,
     nested: readonly string[],
 ): boolean {
-    if (item.isSymbolicLink()) {
-        return true;
-    }
     const path = join(directory, item.name);
     if (nested.some((other) => isUnder(path, other))) {
         return true;
@@ -1636,14 +1633,12 @@ function modeOf(add: DocsAdd): AddMode | { reason: string } {
 /**
  * Whether a create's deliberate near-twin override is present: a non-blank,
  * non-empty explanation. It bypasses only the semantic near-twin guard, never
- * the structural checks or the target state.
+ * the structural checks or the target state. Callers establish create mode
+ * first, so this checks the explanation alone.
  * @param add The typed request.
- * @returns True when the override may be used in this mode.
+ * @returns True when a non-blank override explanation is present.
  */
 function overrideGiven(add: DocsAdd): boolean {
-    if (add.mode !== "create") {
-        return false;
-    }
     return (
         typeof add.allowNearTwinReason === "string" &&
         add.allowNearTwinReason.trim() !== ""
