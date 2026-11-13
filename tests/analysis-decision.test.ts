@@ -903,3 +903,50 @@ describe("decision compatibility with finalistQualifies", () => {
         assert.equal(decision.threshold.status, "fail");
     });
 });
+
+describe("guardrail evidence gaps", () => {
+    it("reports an unreadable preservation assessment as unknown", () => {
+        // Arrange – the assessment exists but one fact's entry is malformed.
+        const malformed: Loaded<PreservationByFact> = {
+            state: "available",
+            source: "ac",
+            value: {
+                poolSize: {
+                    state: "malformed",
+                    source: "ac#poolSize",
+                    problems: ["bad quote"],
+                },
+                obsoleteTlsClaim: {
+                    state: "missing",
+                    source: "ac#obsoleteTlsClaim",
+                },
+            },
+        };
+
+        // Act
+        const finding = evaluateGuardrail(
+            lossGuardrail,
+            record({ preservation: malformed }),
+            inventoryScenario,
+        );
+
+        // Assert – an unreadable entry is unknown, never a pass or a loss.
+        assert.equal(finding.status, "unknown");
+        assert.match(finding.evidence[0] ?? "", /poolSize: unreadable/);
+    });
+
+    it("reports a declared guardrail with no trials as not applicable", () => {
+        // Act
+        const summaries = summariseGuardrails([mutationGuardrail], [], []);
+
+        // Assert
+        assert.equal(summaries.length, 1);
+        assert.equal(summaries[0]?.status, "not-applicable");
+        assert.deepEqual(summaries[0]?.coverage, {
+            pass: 0,
+            fail: 0,
+            unknown: 0,
+            "not-applicable": 0,
+        });
+    });
+});

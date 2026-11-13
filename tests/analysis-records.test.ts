@@ -605,3 +605,175 @@ describe("loadLaunchLedger", () => {
         assert.equal(malformed.state, "malformed");
     });
 });
+
+describe("malformed evidence stays explicit", () => {
+    it("reports a nonzero exit, a signal and output overflow as invalidating", () => {
+        // Arrange – three independent validity failures in one run record.
+        const files = {
+            ...completeTrial("cc-A-r0-R01"),
+            "results/cc-A-r0-R01/R01/meta.json": JSON.stringify({
+                exit: 2,
+                signal: "SIGTERM",
+                timedOut: false,
+                outputOverflow: true,
+                answerValid: true,
+            }),
+        };
+
+        // Act
+        const record = load(files);
+
+        // Assert
+        assert.equal(record.attempt.usable, false);
+        assert.ok(record.attempt.problems.some((p) => p.includes("exit is 2")));
+        assert.ok(
+            record.attempt.problems.some((p) =>
+                p.includes("signal is SIGTERM"),
+            ),
+        );
+        assert.ok(
+            record.attempt.problems.some((p) => p.includes("outputOverflow")),
+        );
+    });
+
+    it("reports judgement evidence that is not an array", () => {
+        // Arrange
+        const files = {
+            ...completeTrial("cc-A-r0-R01"),
+            "results/cc-A-r0-R01/R01/ac/attempt-001/judgement.json":
+                JSON.stringify({
+                    status: "judged",
+                    documentationOutcome: "useful-create",
+                    evidence: "a single quote",
+                }),
+        };
+
+        // Act
+        const record = load(files);
+
+        // Assert
+        assert.equal(record.assessment.status, "judged");
+        assert.ok(
+            record.assessment.problems.some((p) =>
+                p.includes("evidence is not an array"),
+            ),
+        );
+        assert.deepEqual(record.assessment.evidence, []);
+    });
+
+    it("drops blank evidence entries but keeps the usable quote", () => {
+        // Arrange
+        const files = {
+            ...completeTrial("cc-A-r0-R01"),
+            "results/cc-A-r0-R01/R01/ac/attempt-001/judgement.json":
+                JSON.stringify({
+                    status: "judged",
+                    documentationOutcome: "useful-create",
+                    evidence: ["decisive quote", "  ", 7],
+                }),
+        };
+
+        // Act
+        const record = load(files);
+
+        // Assert
+        assert.deepEqual(record.assessment.evidence, ["decisive quote"]);
+        assert.ok(
+            record.assessment.problems.some((p) =>
+                p.includes("non-string or blank"),
+            ),
+        );
+    });
+
+    it("reports an unsupported judgement status as unassessed", () => {
+        // Arrange
+        const files = {
+            ...completeTrial("cc-A-r0-R01"),
+            "results/cc-A-r0-R01/R01/ac/attempt-001/judgement.json":
+                JSON.stringify({ status: "mystery" }),
+        };
+
+        // Act
+        const record = load(files);
+
+        // Assert
+        assert.equal(record.assessment.status, "unassessed");
+        assert.equal(record.assessment.outcome, undefined);
+        assert.ok(
+            record.assessment.problems.some((p) =>
+                p.includes("unsupported judgement status"),
+            ),
+        );
+    });
+
+    it("reports a retrievalApplication that is not an object", () => {
+        // Arrange
+        const files = {
+            ...completeTrial("cc-A-r0-R01"),
+            "results/cc-A-r0-R01/R01/ac/attempt-001/judgement.json":
+                JSON.stringify({
+                    status: "judged",
+                    documentationOutcome: "useful-create",
+                    evidence: [],
+                    retrievalApplication: [],
+                }),
+        };
+
+        // Act
+        const record = load(files);
+
+        // Assert
+        const retrieval = record.assessment.retrieval;
+        assert.equal(retrieval.state, "malformed");
+        assert.deepEqual(
+            retrieval.state === "malformed" ? retrieval.problems : [],
+            ["retrievalApplication is not an object"],
+        );
+    });
+
+    it("reports a retrievalApplication with non-string fields", () => {
+        // Arrange
+        const files = {
+            ...completeTrial("cc-A-r0-R01"),
+            "results/cc-A-r0-R01/R01/ac/attempt-001/judgement.json":
+                JSON.stringify({
+                    status: "judged",
+                    documentationOutcome: "useful-create",
+                    evidence: [],
+                    retrievalApplication: { state: 1, quote: null },
+                }),
+        };
+
+        // Act
+        const record = load(files);
+
+        // Assert
+        const retrieval = record.assessment.retrieval;
+        assert.equal(retrieval.state, "malformed");
+        assert.deepEqual(
+            retrieval.state === "malformed" ? retrieval.problems : [],
+            ["retrievalApplication needs string state and quote"],
+        );
+    });
+
+    it("reports an unsupported primary-check status as unknown", () => {
+        // Arrange
+        const files = {
+            ...completeTrial("cc-A-r0-R01"),
+            "results/cc-A-r0-R01/R01/primary-check.json": JSON.stringify({
+                status: "weird",
+            }),
+        };
+
+        // Act
+        const record = load(files);
+
+        // Assert
+        assert.equal(record.primary.status, "unknown");
+        assert.ok(
+            record.primary.problems.some((p) =>
+                p.includes("unsupported primary status"),
+            ),
+        );
+    });
+});
