@@ -337,6 +337,30 @@ describe("setup", () => {
         );
     });
 
+    it("appends the nudge to a result with no content", async () => {
+        // Arrange – a completed miss whose result carries no content field.
+        const added = await setup(tempDir());
+        const hook = added.toolHooks["execute.after"] as (
+            event: never,
+        ) => unknown;
+        const event = {
+            tool: "glob",
+            status: "completed",
+            sessionID: "ses_no_content",
+            input: { pattern: "queue" },
+            result: {},
+        };
+
+        // Act
+        await hook(event as never);
+
+        // Assert – the line is the only content, after a blank separator.
+        assert.match(
+            String((event.result as { content: unknown }).content),
+            /^\n\nNote: the `docs` tool/,
+        );
+    });
+
     it("stays quiet when the hook event is malformed", async () => {
         const added = await setup(tempDir());
         const hook = added.toolHooks["execute.after"] as (

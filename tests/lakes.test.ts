@@ -6,6 +6,7 @@ import {
     mkdirSync,
     mkdtempSync,
     readFileSync,
+    realpathSync,
     rmSync,
     symlinkSync,
     writeFileSync,
@@ -17,9 +18,11 @@ import {
     collectDocPaths,
     collectReadmes,
     createDocsTool,
+    createLake,
     createLakes,
     fallbackDates,
     gitDates,
+    linkFindings,
     markdownTargets,
     MAX_RESULTS,
     MAX_CHECK_CHARS,
@@ -858,6 +861,40 @@ describe("check validation scope", () => {
         assert.match(content, /^readonly: read-only, not validated\.$/m);
     });
 
+    it("caps a report whose first line alone exceeds the cap", async () => {
+        // Arrange – one finding line longer than the whole report budget: the
+        // cap must cut cleanly rather than return an unbounded line.
+        const root = tempDir();
+        mkdirSync(join(root, "aa"), { recursive: true });
+        const target = `${"a".repeat(MAX_CHECK_CHARS + 200)}.md`;
+        writeFileSync(
+            join(root, "aa/long.md"),
+            "---\nArea: aa\nKeywords: alpha\nSummary: S.\n---\n\n# Long\n\n" +
+                `### Facts\n\n- [x](./${target})\n`,
+        );
+        const tool = createDocsTool({
+            lakes: createLakes([
+                {
+                    name: "scope",
+                    class: "repo",
+                    root,
+                    profile: "knowledge",
+                    writable: true,
+                },
+            ]),
+        });
+
+        // Act
+        const result = await tool.execute({ check: true }, {} as never);
+        const content = String(result.content);
+
+        // Assert – the head is empty and the cut is named.
+        assert.match(content, /^… and \d+ more lines not shown\./);
+        assert.match(content, /Narrow it per lake with the `lake` selector/);
+        assert.ok(content.length < MAX_CHECK_CHARS);
+        assert.doesNotMatch(content, /broken link/);
+    });
+
     it("reports when no lakes are configured", async () => {
         // Act
         const result = await createDocsTool({ lakes: [] }).execute(
@@ -1245,6 +1282,37 @@ describe("lake path safety", () => {
         );
     });
 
+    it("does not refuse a publication whose containment names the lake itself", () => {
+        // Arrange – a direct caller may pass the receiving lake in its own
+        // containment list; that is not a nested owner.
+        const root = tempDir();
+        writeFileSync(join(root, "seed.md"), "# Seed\n");
+        const spec = {
+            name: "repo",
+            class: "repo" as const,
+            root,
+            profile: "knowledge" as const,
+            writable: true,
+        };
+        const lake = createLake(spec, {
+            containment: [
+                {
+                    lake: { name: spec.name, root: spec.root, writable: true },
+                    realRoot: realpathSync(root),
+                },
+            ],
+        });
+
+        // Act
+        const result = lake.publish?.("aa/x.md", "# X\n", {
+            mode: "create",
+            label: "aa/x.md",
+        });
+
+        // Assert – the write is published, not refused as an alias.
+        assert.ok(result !== undefined && "revision" in result);
+    });
+
     it("refuses an add whose target is a symlink", async () => {
         const { lake, outside } = escapeFixture();
         const tool = createDocsTool({ lakes: [lake] });
@@ -1324,6 +1392,27 @@ describe("link check", () => {
         // Assert – the raw target is reported; the URIError stays caught.
         assert.match(report, /broken link to a%zz\.md/);
     });
+
+    it("resolves links from a doc directly under the lake root", () => {
+        // Arrange – a root-level doc has no folder to resolve against, and
+        // `./` and empty segments normalise rather than accumulate.
+        const seen: string[] = [];
+        const exists = (path: string): boolean => {
+            seen.push(path);
+            return false;
+        };
+
+        // Act
+        const findings = linkFindings(
+            "a.md",
+            "# A\n\n### Facts\n\n- [x](b.md)\n- [y](./c.md)\n- [z](sub//d.md)\n",
+            exists,
+        );
+
+        // Assert
+        assert.deepEqual(seen, ["b.md", "c.md", "sub/d.md"]);
+        assert.equal(findings.length, 3);
+    });
 });
 
 describe("soft length note", () => {
@@ -1369,6 +1458,24 @@ describe("soft length note", () => {
         if (outcome.action === "write") {
             assert.deepEqual(outcome.notes, []);
         }
+    });
+
+    it("does not note a body exactly at maxDocLines", () => {
+        // Arrange – this body is six lines: title, blank, heading, blank, two
+        // claims. The note belongs to bodies that exceed the limit, not meet it.
+        const outcome = prepareAdd(
+            {
+                mode: "create",
+                metadata: { Area: "aa", Keywords: ["alpha"], Summary: "S." },
+                body: "# T\n\n### Facts\n\n- one.\n- two.\n",
+            },
+            [],
+            { maxDocLines: 6 },
+        );
+
+        // Assert
+        assert.equal(outcome.action, "write");
+        assert.deepEqual(outcome.action === "write" ? outcome.notes : [], []);
     });
 });
 
@@ -2122,5 +2229,32 @@ describe("readmePaths symlink filtering", () => {
         symlinkSync(join(outside, "notes.md"), join(project, "readme.md"));
 
         assert.deepEqual(readmePaths(project), ["README.md"]);
+    });
+});
+
+describe("primary lake fallback", () => {
+    it("renders the first configured lake unqualified when no repo lake exists", async () => {
+        // Arrange – a configuration with no repo-class lake: the first lake is
+        // the primary, so its results carry no provenance prefix.
+        const root = tempDir();
+        writeFileSync(join(root, "note.md"), "# Note\n");
+        const tool = createDocsTool({
+            lakes: createLakes([
+                {
+                    name: "personal",
+                    class: "machine",
+                    root,
+                    profile: "knowledge",
+                    writable: true,
+                },
+            ]),
+        });
+
+        // Act
+        const result = await tool.execute({ search: "" }, {} as never);
+
+        // Assert
+        assert.match(String(result.content), /^note\.md/m);
+        assert.doesNotMatch(String(result.content), /^personal:/m);
     });
 });

@@ -424,10 +424,13 @@ test("F08: unparsable stdout with exit 0 is invalid (no completion evidence)", (
     rmRoot(root);
 });
 
-test("F08: nonzero trial exit with text is a failing run and an invalid judge", () => {
+test("F08: nonzero trial exit with text is an invalid run", () => {
+    // Arrange
     const root = newRoot("f08-exit7");
     const fake = writeFakeOpencode(root);
     const { paths } = generate(root, fake, [baselineCase("T01")]);
+
+    // Act
     const run = runHarness(
         root,
         fake,
@@ -437,17 +440,41 @@ test("F08: nonzero trial exit with text is a failing run and an invalid judge", 
             FAKE_TRIAL_EXIT: "7",
         },
     );
+
+    // Assert
     assert.notEqual(run.status, 0);
     const meta = readJson(join(paths.results, "s1", "T01", "meta.json"));
     assert.equal(meta.exit, 7);
     assert.equal(meta.invalidReason, "trial did not complete (exit 7)");
+    rmRoot(root);
+});
+
+test("F08: an invalid run is never sent to the judge", () => {
+    // Arrange – the same failing run, recorded first; the judge must refuse it
+    // before any model call, proven by a hook that would leave a marker.
+    const root = newRoot("f08-exit7-judge");
+    const fake = writeFakeOpencode(root);
+    const { paths } = generate(root, fake, [baselineCase("T01")]);
+    runHarness(
+        root,
+        fake,
+        ["run", "T01", "--stamp", "s1", ...commandArgs(paths)],
+        {
+            FAKE_TRIAL_OUT: file(root, "trial.jsonl", ANSWER_JSONL()),
+            FAKE_TRIAL_EXIT: "7",
+        },
+    );
     const marker = file(root, "judge-invoked", "");
+
+    // Act
     const judge = runHarness(
         root,
         fake,
         ["judge", "T01", "--stamp", "s1", ...commandArgs(paths)],
         { FAKE_JUDGE_HOOK: markerHook(root, marker) },
     );
+
+    // Assert
     assert.notEqual(judge.status, 0);
     assert.equal(
         readJson(join(paths.results, "s1", "T01", "verdict.json")).verdict,

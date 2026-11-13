@@ -167,6 +167,34 @@ describe("parseFrontMatter", () => {
         assert.deepEqual(meta, {});
         assert.equal(body, raw);
     });
+
+    it("parses CRLF front-matter", () => {
+        // Arrange – a Windows checkout: every line ends CRLF.
+        const raw =
+            "---\r\nArea: decisions\r\nSummary: A doc\r\n---\r\n" +
+            "# Title\r\n\r\nBody.\r\n";
+
+        // Act
+        const { meta, body } = parseFrontMatter(raw);
+
+        // Assert – fields parse, and the body starts at the H1, not a bare CR.
+        assert.equal(meta.Area, "decisions");
+        assert.equal(meta.Summary, "A doc");
+        assert.match(body, /^# Title/);
+    });
+
+    it("validates a CRLF doc without reporting blank fields", () => {
+        // Arrange
+        const raw =
+            "---\r\nArea: aa\r\nKeywords: alpha\r\nSummary: S.\r\n---\r\n" +
+            "# CRLF doc\r\n\r\n### Facts\r\n\r\n- x.\r\n";
+
+        // Act
+        const findings = validateDoc("aa/x.md", raw);
+
+        // Assert
+        assert.deepEqual(findings, []);
+    });
 });
 
 describe("titleOf", () => {
@@ -867,6 +895,18 @@ describe("unversionedNote", () => {
         const [note] = unversionedNote(tempDir());
 
         assert.match(note ?? "", /not inside a git work tree/);
+    });
+
+    it("names a missing root without a lake name", () => {
+        // Arrange – the legacy call shape carries no lake name.
+        const root = join(tempDir(), "anon");
+
+        // Act
+        const [note] = unversionedNote(root);
+
+        // Assert
+        assert.ok(note?.includes(`lake root ${root} does not exist`));
+        assert.doesNotMatch(note ?? "", /lake '/);
     });
 
     it("stays quiet for a version-controlled root", () => {
@@ -2167,8 +2207,8 @@ describe("tool add", () => {
         assert.equal(written.length, 0);
     });
 
-    it("leaves an existing doc byte-identical when a replacement is refused", async () => {
-        // Arrange – an existing doc and a claim-less replacement for it.
+    it("leaves an existing doc byte-identical when a create at its path is refused", async () => {
+        // Arrange – an existing doc and a claim-less create naming its path.
         const original = "---\nArea: aa\n---\n# Old\n\n### Facts\n\n- Kept.\n";
         const { seam, written } = memoryFs({ "aa/fresh.md": original });
         const tool = createDocsTool({ collect: () => [], ...seam });

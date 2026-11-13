@@ -744,6 +744,114 @@ describe("personal-trial screen", () => {
         assert.equal(unknown.recommendation, "inconclusive");
         assert.match(unknown.reasons.join("; "), /unknown/);
     });
+
+    /**
+     * The candidate must win on opportunities for the quality gate to run at
+     * all: the default screen fails the opportunity criterion first, so a
+     * quality test without this overlay would pass for the wrong reason.
+     */
+    const qualityCandidate = () => arm({ retrieval: { applied: 3, miss: 2 } });
+
+    it("refuses promotion when the candidate's weighted utility is lower", () => {
+        // Arrange
+        const decision = screen({
+            measures: { A: arm(), B: qualityCandidate() },
+            counts: {
+                A: counts({ utilityTotal: 21 }),
+                B: counts({ utilityTotal: 20 }),
+            },
+        });
+
+        // Assert
+        assert.equal(decision.recommendation, "no-promotion");
+        assert.match(decision.reasons.join("; "), /weighted utility is lower/);
+    });
+
+    it("refuses promotion when the candidate's primary passes are lower", () => {
+        // Arrange
+        const decision = screen({
+            measures: { A: arm(), B: qualityCandidate() },
+            counts: {
+                A: counts({ primary: { pass: 3, fail: 0, unknown: 0 } }),
+                B: counts({ primary: { pass: 2, fail: 0, unknown: 0 } }),
+            },
+        });
+
+        // Assert
+        assert.equal(decision.recommendation, "no-promotion");
+        assert.match(decision.reasons.join("; "), /primary passes are lower/);
+    });
+
+    it("refuses promotion when the candidate records more misleading outcomes", () => {
+        // Arrange
+        const decision = screen({
+            measures: { A: arm(), B: qualityCandidate() },
+            counts: {
+                A: counts(),
+                B: counts({
+                    outcomes: { ...counts().outcomes, misleading: 1 },
+                }),
+            },
+        });
+
+        // Assert
+        assert.equal(decision.recommendation, "no-promotion");
+        assert.match(
+            decision.reasons.join("; "),
+            /misleading outcomes increased/,
+        );
+    });
+
+    it("refuses promotion when a candidate guardrail is breached", () => {
+        // Arrange
+        const decision = screen({
+            measures: { A: arm(), B: qualityCandidate() },
+            guardrails: {
+                status: "breached",
+                detail: "mutation-policy: 2 out-of-policy",
+            },
+        });
+
+        // Assert
+        assert.equal(decision.recommendation, "no-promotion");
+        assert.match(decision.reasons.join("; "), /guardrail is breached/);
+    });
+
+    it("stays inconclusive when an arm has no opportunity summary", () => {
+        // Arrange
+        const decision = screen({ measures: { A: arm() } });
+
+        // Assert
+        assert.equal(decision.recommendation, "inconclusive");
+        assert.match(decision.reasons.join("; "), /no opportunity summary/);
+    });
+
+    it("stays inconclusive when accounting counts are missing for an arm", () => {
+        // Arrange
+        const decision = screen({ counts: { A: counts() } });
+
+        // Assert
+        assert.equal(decision.recommendation, "inconclusive");
+        assert.match(decision.reasons.join("; "), /counts are missing/);
+    });
+
+    it("stays inconclusive when a primary result is unknown", () => {
+        // Arrange
+        const decision = screen({
+            measures: { A: arm(), B: qualityCandidate() },
+            counts: {
+                A: counts(),
+                B: counts({ primary: { pass: 2, fail: 0, unknown: 1 } }),
+            },
+        });
+
+        // Assert
+        assert.equal(decision.recommendation, "inconclusive");
+        assert.match(
+            decision.reasons.join("; "),
+            /primary-task result is unknown/,
+        );
+    });
 });
 
 describe("retrieval declaration preflight", () => {

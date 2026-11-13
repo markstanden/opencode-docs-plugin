@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { Schema } from "effect";
 import {
     createDocsTool,
+    createLake,
     createLakes,
     DOCS_INPUT,
     revisionOf,
@@ -668,5 +669,95 @@ describe("create and replace contracts", () => {
         );
         assert.equal(nativeWrite.metadata?.written, true);
         assert.equal(twinWrite.metadata?.written, true);
+    });
+});
+
+describe("legacy publication seam", () => {
+    /** A legacy closure tool over fixed state, recording any write. */
+    function legacyTool(state: { exists?: boolean; current?: string }): {
+        tool: ReturnType<typeof createDocsTool>;
+        written: string[];
+    } {
+        const written: string[] = [];
+        const tool = createDocsTool({
+            collect: () => [],
+            exists: () => state.exists ?? false,
+            read: () => state.current ?? "",
+            write: (path) => void written.push(path),
+        });
+        return { tool, written };
+    }
+
+    it("refuses replace on a missing legacy target without creating it", async () => {
+        // Arrange
+        const { tool, written } = legacyTool({ exists: false });
+
+        // Act
+        const result = await tool.execute(
+            {
+                add: replacePayload("aa/gone.md", "Fresh", {
+                    expectedRevision: revisionOf("never stored"),
+                }),
+            } as never,
+            {} as never,
+        );
+
+        // Assert
+        assert.equal(result.metadata?.written, false);
+        assert.match(String(result.content), /replace never creates/);
+        assert.deepEqual(written, []);
+    });
+
+    it("refuses a stale legacy replacement without writing", async () => {
+        // Arrange – the stored bytes are not the ones the caller read.
+        const current = "# Existing\n\n- Old body.\n";
+        const { tool, written } = legacyTool({ exists: true, current });
+
+        // Act
+        const result = await tool.execute(
+            {
+                add: replacePayload("aa/doc.md", "Fresh", {
+                    expectedRevision: revisionOf("what the caller read"),
+                }),
+            } as never,
+            {} as never,
+        );
+
+        // Assert
+        assert.equal(result.metadata?.written, false);
+        assert.match(String(result.content), /changed since you read it/);
+        assert.deepEqual(written, []);
+    });
+
+    it("refuses an unsafe legacy write through a guarded seam", async () => {
+        // Arrange – the documented legacy shape: a lake with no publish seam
+        // whose write is the guarded one, over a symlinked directory. The
+        // symlink refusal must arrive as a refusal, not a rejected call.
+        const root = tempDir();
+        const outside = tempDir();
+        symlinkSync(outside, join(root, "aa"), "dir");
+        const guarded = createLake({
+            name: "docs",
+            class: "repo",
+            root,
+            profile: "knowledge",
+            writable: true,
+        });
+        const legacy = { ...guarded };
+        delete legacy.publish;
+        const tool = createDocsTool({ lakes: [legacy] });
+
+        // Act
+        const result = await tool.execute(
+            { add: createPayload("Fresh note") } as never,
+            {} as never,
+        );
+
+        // Assert
+        assert.equal(result.metadata?.written, false);
+        assert.match(
+            String(result.content),
+            /Rejected: path 'aa\/fresh-note\.md' escapes the lake root or crosses a symlink/,
+        );
     });
 });

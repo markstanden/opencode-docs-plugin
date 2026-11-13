@@ -201,7 +201,9 @@ export const EXCLUDED_AREAS = ["plans", "requirements", "wiki"] as const;
 
 /**
  * Split a doc into its YAML front-matter key/values and body. Flat `Key: value`
- * lines only — enough for the doc schema, so no YAML parser.
+ * lines only — enough for the doc schema, so no YAML parser. CRLF files are
+ * accepted (a hand-edited Windows checkout is still a doc); the writer always
+ * emits LF, so the same bytes have one canonical form.
  * @param raw Full file contents.
  * @returns Parsed metadata and the body after the closing `---`.
  */
@@ -209,15 +211,16 @@ export function parseFrontMatter(raw: string): {
     meta: Record<string, string>;
     body: string;
 } {
-    if (!raw.startsWith("---\n")) {
+    const opener = /^---\r?\n/.exec(raw);
+    if (opener === null) {
         return { meta: {}, body: raw };
     }
-    const end = raw.indexOf("\n---", 4);
+    const end = raw.indexOf("\n---", opener[0].length);
     if (end === -1) {
         return { meta: {}, body: raw };
     }
     const meta: Record<string, string> = {};
-    for (const line of raw.slice(4, end).split("\n")) {
+    for (const line of raw.slice(opener[0].length, end).split("\n")) {
         const colon = line.indexOf(":");
         if (colon === -1) {
             continue;
@@ -227,7 +230,7 @@ export function parseFrontMatter(raw: string): {
             meta[key] = line.slice(colon + 1).trim();
         }
     }
-    return { meta, body: raw.slice(end + 4).replace(/^\n+/, "") };
+    return { meta, body: raw.slice(end + 4).replace(/^(?:\r?\n)+/, "") };
 }
 
 /**
@@ -1205,9 +1208,6 @@ function skipDirectory(
     profile: LakeProfile,
     nested: readonly string[],
 ): boolean {
-    if (item.isSymbolicLink()) {
-        return true;
-    }
     const path = join(directory, item.name);
     if (nested.some((other) => isUnder(path, other))) {
         return true;
@@ -1636,14 +1636,12 @@ function modeOf(add: DocsAdd): AddMode | { reason: string } {
 /**
  * Whether a create's deliberate near-twin override is present: a non-blank,
  * non-empty explanation. It bypasses only the semantic near-twin guard, never
- * the structural checks or the target state.
+ * the structural checks or the target state. Callers establish create mode
+ * first, so this checks the explanation alone.
  * @param add The typed request.
- * @returns True when the override may be used in this mode.
+ * @returns True when a non-blank override explanation is present.
  */
 function overrideGiven(add: DocsAdd): boolean {
-    if (add.mode !== "create") {
-        return false;
-    }
     return (
         typeof add.allowNearTwinReason === "string" &&
         add.allowNearTwinReason.trim() !== ""
@@ -4371,6 +4369,12 @@ function writeTarget(
 /**
  * Publish a prepared write through a legacy lake's plain write seam,
  * translating the seam's path-safety error into a refusal.
+ *
+ * The shipped route never needs this: every lake `createLakes` builds carries
+ * the guarded `publish` seam. The legacy shape is still supported — a `Lake`
+ * whose optional `publish` is absent may expose a guarded `write` (for example
+ * one taken from `createLake`), so the symlink refusal can arrive here and must
+ * surface as a refusal rather than a failed tool call.
  * @param target The lake the write lands in.
  * @param outcome The prepared write.
  * @param outcome.path The root-relative target path.
