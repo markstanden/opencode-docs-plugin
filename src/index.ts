@@ -4369,27 +4369,22 @@ function writeTarget(
 }
 
 /**
- * Publish a prepared write through a legacy lake's plain write seam,
- * translating the seam's path-safety error into a refusal.
+ * Publish a prepared write through a legacy lake's plain write seam.
+ *
+ * `prepareAdd` has already validated the path (`explicitTarget`, the Area rule
+ * and the collection-visibility rule) and the guarded route owns symlink
+ * refusal, so this seam cannot raise `UnsafePathError`; anything it does throw
+ * is the caller's to see.
  * @param target The lake the write lands in.
  * @param outcome The prepared write.
  * @param outcome.path The root-relative target path.
  * @param outcome.contents The serialised file contents.
- * @returns The refusal on an unsafe path, or null once written.
  */
 function publishLegacy(
     target: Lake,
     outcome: { path: string; contents: string },
-): string | null {
-    try {
-        target.write(outcome.path, outcome.contents);
-    } catch (error) {
-        if (error instanceof UnsafePathError) {
-            return `${REFUSE} ${error.message}`;
-        }
-        throw error;
-    }
-    return null;
+): void {
+    target.write(outcome.path, outcome.contents);
 }
 
 /**
@@ -4503,8 +4498,8 @@ function publishPrepared(
     if (legacy !== null) {
         return { reason: legacy };
     }
-    const unsafe = publishLegacy(target, outcome);
-    return unsafe === null ? {} : { reason: unsafe };
+    publishLegacy(target, outcome);
+    return {};
 }
 
 /**
