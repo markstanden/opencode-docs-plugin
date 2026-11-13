@@ -130,3 +130,22 @@ test("journal: a thrown call is recorded as an error and rethrown", async () => 
     assert.equal(record.result, undefined);
     journal.cleanup();
 });
+
+test("journal: an unwritable path never fails the tool", async () => {
+    // Arrange – the configured path is a directory, so appending must fail
+    // inside the plugin and stay swallowed: measurement never breaks a tool.
+    const directory = mkdtempSync(join(tmpdir(), "docs-journal-dir-"));
+    const tool = createDocsTool({ lakes: [] });
+
+    try {
+        // Act
+        const result = await withJournal(directory, () =>
+            tool.execute({ search: "help" }, {} as never),
+        );
+
+        // Assert
+        assert.match(String(result.content), /Configured lakes/);
+    } finally {
+        rmSync(directory, { recursive: true, force: true });
+    }
+});

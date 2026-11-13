@@ -869,6 +869,18 @@ describe("unversionedNote", () => {
         assert.match(note ?? "", /not inside a git work tree/);
     });
 
+    it("names a missing root without a lake name", () => {
+        // Arrange – the legacy call shape carries no lake name.
+        const root = join(tempDir(), "anon");
+
+        // Act
+        const [note] = unversionedNote(root);
+
+        // Assert
+        assert.ok(note?.includes(`lake root ${root} does not exist`));
+        assert.doesNotMatch(note ?? "", /lake '/);
+    });
+
     it("stays quiet for a version-controlled root", () => {
         const root = tempDir();
         git(root, ["init", "-q"]);
