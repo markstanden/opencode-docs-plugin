@@ -202,6 +202,48 @@ describe("attempt selection", () => {
         );
     });
 
+    it("accepts an explicit override when the manifest declares no attempt", () => {
+        // Act – the legacy-freeze recovery path: no manifest declaration, an
+        // operator supplies the attempt to read.
+        const result = resolveAttemptSelection({
+            overrideAttemptId: "attempt-002",
+        });
+
+        // Assert
+        assert.deepEqual(result, {
+            ok: true,
+            selection: { attemptId: "attempt-002", source: "override" },
+        });
+    });
+
+    it("refuses a malformed override attempt id", () => {
+        // Act
+        const result = resolveAttemptSelection({
+            overrideAttemptId: "attempt-2",
+        });
+
+        // Assert
+        assert.equal(result.ok, false);
+        assert.match(
+            (result as { problems: string[] }).problems[0] ?? "",
+            /override attemptId/,
+        );
+    });
+
+    it("refuses a malformed recovery attempt id", () => {
+        // Act
+        const result = resolveRecoverySelection({
+            recoveryAttemptId: "attempt-2",
+        });
+
+        // Assert
+        assert.equal(result.ok, false);
+        assert.match(
+            (result as { problems: string[] }).problems[0] ?? "",
+            /recovery attemptId/,
+        );
+    });
+
     it("requires recovery to name its own, later selection", () => {
         // Act
         const absent = resolveRecoverySelection({});

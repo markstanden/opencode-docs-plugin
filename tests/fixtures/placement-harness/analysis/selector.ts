@@ -50,10 +50,12 @@ export const DEFAULT_ATTEMPT_ID = "attempt-001";
 /**
  * Resolve the single attempt selection.
  *
- * Precedence is: a valid manifest declaration wins; an absent declaration
- * defaults to `attempt-001`. An override is accepted only when it matches the
- * resolved id. An invalid id or a contradiction returns problems and no
- * selection, so callers refuse rather than guess.
+ * Precedence is: a valid manifest declaration wins; an override may agree with
+ * it but never contradict it. With no manifest declaration the selection
+ * defaults to `attempt-001`, unless the caller supplies an override — the
+ * legacy-freeze recovery path, where the frozen record names no attempt and an
+ * operator selects one explicitly. An invalid id or a contradiction returns
+ * problems and no selection, so callers refuse rather than guess.
  * @param input The manifest declaration and any override.
  * @returns The selection, or every problem found.
  */

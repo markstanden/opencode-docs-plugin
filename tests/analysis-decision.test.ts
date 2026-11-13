@@ -674,6 +674,99 @@ describe("evaluateDecision", () => {
         assert.equal(decision.threshold.status, "inconclusive");
         assert.equal(decision.overall, "inconclusive");
     });
+
+    it("qualifies when the interval's lower bound sits exactly on the threshold", () => {
+        // Act
+        const decision = evaluateDecision(
+            selection({ threshold: 5 }),
+            {
+                A: counts(),
+                B: counts({
+                    utilityTotal: 105,
+                    utilityLow: 105,
+                    utilityHigh: 105,
+                }),
+            },
+            [guardrailSummary("clean")],
+        );
+
+        // Assert – the rule is "every completion clears it", so equality passes.
+        assert.deepEqual(decision.threshold.interval, { low: 5, high: 5 });
+        assert.equal(decision.threshold.status, "pass");
+        assert.equal(decision.overall, "qualified");
+    });
+
+    it("is inconclusive when the interval's upper bound sits exactly on the threshold", () => {
+        // Act
+        const decision = evaluateDecision(
+            selection({ threshold: 5 }),
+            {
+                A: counts(),
+                B: counts({
+                    utilityTotal: 100,
+                    utilityLow: 100,
+                    utilityHigh: 105,
+                }),
+            },
+            [guardrailSummary("clean")],
+        );
+
+        // Assert – equality is not a failure: only an interval wholly below the
+        // threshold fails.
+        assert.deepEqual(decision.threshold.interval, { low: 0, high: 5 });
+        assert.equal(decision.threshold.status, "inconclusive");
+        assert.equal(decision.overall, "inconclusive");
+    });
+
+    it("marks coverage not-applicable when the rule does not require it", () => {
+        // Act
+        const decision = evaluateDecision(
+            selection({ requireCompleteCoverage: false }),
+            {
+                A: counts(),
+                B: counts({
+                    utilityTotal: 105,
+                    utilityLow: 105,
+                    utilityHigh: 105,
+                    documented: 19,
+                    assessed: 19,
+                }),
+            },
+            [guardrailSummary("clean")],
+        );
+
+        // Assert
+        assert.equal(decision.coverage.status, "not-applicable");
+        assert.equal(decision.overall, "qualified");
+    });
+
+    it("reports not-defined when the campaign declared no guardrails", () => {
+        // Act – model validation forbids an empty list in a real manifest, so
+        // this limb is reachable only from a direct caller.
+        const decision = evaluateDecision(
+            selection(),
+            { A: counts(), B: counts() },
+            [],
+        );
+
+        // Assert
+        assert.equal(decision.guardrails.status, "not-defined");
+        assert.equal(
+            decision.guardrails.detail,
+            "the campaign declared no guardrails",
+        );
+    });
+
+    it("reports not-defined when the selection names an arm with no accounting", () => {
+        // Act
+        const decision = evaluateDecision(selection(), { A: counts() }, [
+            guardrailSummary("clean"),
+        ]);
+
+        // Assert
+        assert.equal(decision.overall, "not-defined");
+        assert.match(decision.reasons.join("; "), /A\/B/);
+    });
 });
 
 describe("decision compatibility with finalistQualifies", () => {
