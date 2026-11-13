@@ -108,6 +108,65 @@ describe("delivery probe extraction", () => {
         // Assert
         assert.match(result.problem ?? "", /does not serve tool docs/);
     });
+
+    it("refuses a delivery body that is not an object", () => {
+        // Act
+        const result = deliveredToolDescription("not a body");
+
+        // Assert
+        assert.match(result.problem ?? "", /is not an object/);
+        assert.equal(result.delivered, undefined);
+    });
+
+    it("refuses a delivery body without a tools array", () => {
+        // Act
+        const result = deliveredToolDescription({ tools: "docs" });
+
+        // Assert
+        assert.match(result.problem ?? "", /has no tools array/);
+    });
+
+    it("refuses a served tool with a blank description", () => {
+        // Act
+        const result = deliveredToolDescription({
+            tools: [{ function: { name: "docs", description: "   " } }],
+        });
+
+        // Assert
+        assert.match(result.problem ?? "", /no nonblank description/);
+    });
+
+    it("skips malformed entries before the served tool", () => {
+        // Arrange – nulls, a missing function block and a different tool all
+        // come first; only the named entry may be read.
+        const body = {
+            tools: [
+                null,
+                { function: null },
+                { function: { name: "other", description: DESCRIPTIONS.A } },
+                { function: { name: "docs", description: DESCRIPTIONS.B } },
+            ],
+        };
+
+        // Act
+        const result = deliveredToolDescription(body);
+
+        // Assert
+        assert.equal(result.delivered?.description, DESCRIPTIONS.B);
+    });
+
+    it("counts a description in characters, not UTF-16 units", () => {
+        // Arrange – one emoji is one character but two code units.
+        const description = `a${"\u{1F600}"}`;
+
+        // Act
+        const result = deliveredToolDescription({
+            tools: [{ function: { name: "docs", description } }],
+        });
+
+        // Assert
+        assert.equal(result.delivered?.chars, 2);
+    });
 });
 
 describe("experiment freeze", () => {
