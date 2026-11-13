@@ -54,8 +54,21 @@ const repo = here.endsWith("/tests") ? dirname(here) : here;
 
 const IMAGE_ID = "sha256:fake-image-id-for-status-tests";
 const PODMAN_VERSION = "podman version 6.1.4-fake";
-/** The worktree's actual HEAD: the tests' CAMPAIGN_SOURCE_REPO value. */
-const BASE = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], {
+// A source repo independent of the test checkout: a read-only gate verify runs
+// against a scratch copy of the git scope, which carries no .git metadata.
+const sourceRepo = mkdtempSync(join(tmpdir(), "pd-status-source-"));
+writeFileSync(join(sourceRepo, "README.md"), "status test source\n", "utf8");
+for (const args of [
+    ["init", "-q"],
+    ["config", "user.email", "t@example.com"],
+    ["config", "user.name", "t"],
+    ["add", "-A"],
+    ["commit", "-qm", "source"],
+]) {
+    execFileSync("git", ["-C", sourceRepo, ...args], { encoding: "utf8" });
+}
+/** The fixture source repo's HEAD: every freeze's sourceRevision. */
+const BASE = execFileSync("git", ["-C", sourceRepo, "rev-parse", "HEAD"], {
     encoding: "utf8",
 }).trim();
 
@@ -132,7 +145,7 @@ function status(
         env: {
             ...process.env,
             PATH: `${bin}:${process.env.PATH ?? ""}`,
-            CAMPAIGN_SOURCE_REPO: repo,
+            CAMPAIGN_SOURCE_REPO: sourceRepo,
             ZAI_API_KEY: "",
             ZAI_API_KEY_FILE: "",
             ...env,
@@ -522,6 +535,24 @@ function writeReport(dir: string, options: ReportOptions = {}): string {
 }
 
 // ---------------------------------------------------------------------------
+
+describe("source revision fixture", () => {
+    it("pins the frozen revision to its own repo, not the checkout", () => {
+        // Act
+        const head = execFileSync(
+            "git",
+            ["-C", sourceRepo, "rev-parse", "HEAD"],
+            {
+                encoding: "utf8",
+            },
+        ).trim();
+
+        // Assert: a read-only verify copies the git scope without .git, so the
+        // suite must never read this checkout's revision.
+        assert.equal(BASE, head);
+        assert.notEqual(sourceRepo, repo);
+    });
+});
 
 describe("status CLI contract", () => {
     it("prints usage and exits 0 for --help", () => {
@@ -1502,7 +1533,7 @@ describe("status projections and safety", () => {
             env: {
                 ...process.env,
                 PATH: `${bin}:${process.env.PATH ?? ""}`,
-                CAMPAIGN_SOURCE_REPO: repo,
+                CAMPAIGN_SOURCE_REPO: sourceRepo,
             },
         });
 
