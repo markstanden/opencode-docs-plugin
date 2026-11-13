@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { Schema } from "effect";
 import {
     createDocsTool,
+    createLake,
     createLakes,
     DOCS_INPUT,
     revisionOf,
@@ -726,5 +727,37 @@ describe("legacy publication seam", () => {
         assert.equal(result.metadata?.written, false);
         assert.match(String(result.content), /changed since you read it/);
         assert.deepEqual(written, []);
+    });
+
+    it("refuses an unsafe legacy write through a guarded seam", async () => {
+        // Arrange – the documented legacy shape: a lake with no publish seam
+        // whose write is the guarded one, over a symlinked directory. The
+        // symlink refusal must arrive as a refusal, not a rejected call.
+        const root = tempDir();
+        const outside = tempDir();
+        symlinkSync(outside, join(root, "aa"), "dir");
+        const guarded = createLake({
+            name: "docs",
+            class: "repo",
+            root,
+            profile: "knowledge",
+            writable: true,
+        });
+        const legacy = { ...guarded };
+        delete legacy.publish;
+        const tool = createDocsTool({ lakes: [legacy] });
+
+        // Act
+        const result = await tool.execute(
+            { add: createPayload("Fresh note") } as never,
+            {} as never,
+        );
+
+        // Assert
+        assert.equal(result.metadata?.written, false);
+        assert.match(
+            String(result.content),
+            /Rejected: path 'aa\/fresh-note\.md' escapes the lake root or crosses a symlink/,
+        );
     });
 });
