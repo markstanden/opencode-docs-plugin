@@ -14,6 +14,11 @@
  * the filesystem or calls a model.
  */
 
+import {
+    parseRecoveryPolicy,
+    type RecoveryPolicy,
+} from "./recovery.ts";
+
 /** The only manifest schema version this framework parses. */
 export const MANIFEST_SCHEMA_VERSION = 1;
 
@@ -152,6 +157,12 @@ export interface AssessmentSpec {
      * `attempt-001`; a preserved earlier attempt is never overwritten.
      */
     attemptId?: string;
+    /**
+     * The registered recovery policy. Absent means the historical behaviour:
+     * no recovery is authorised. Present, it is validated here and its per-slot
+     * selection record becomes the checked evidence for recovered slots.
+     */
+    recovery?: RecoveryPolicy;
 }
 
 /** One non-compensable guardrail. */
@@ -865,6 +876,14 @@ function assessmentProblems(value: unknown): string[] {
             !/^attempt-\d{3}$/.test(value.attemptId))
     ) {
         return ['assessment.attemptId must match "attempt-NNN"'];
+    }
+    if ("recovery" in value && value.recovery !== undefined) {
+        const parsed = parseRecoveryPolicy(value.recovery);
+        if (!parsed.ok) {
+            return parsed.problems.map(
+                (problem) => `assessment.recovery: ${problem}`,
+            );
+        }
     }
     return [];
 }

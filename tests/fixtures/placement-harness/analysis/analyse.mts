@@ -403,10 +403,16 @@ function loadCampaign(
                 : { attemptId: manifest.assessment.attemptId }),
             stamp: slot.stamp,
             scenario: slot.scenario,
+            slot: slot.slot,
+            ...(slot.pairId === undefined ? {} : { pairId: slot.pairId }),
+            arm: slot.arm,
             inventoryFactIds:
                 scenario?.preservationInventory?.facts.map((fact) => fact.id) ??
                 [],
             selectionPolicy: manifest.assessment.selectionPolicy,
+            ...(manifest.assessment.recovery === undefined
+                ? {}
+                : { recoveryPolicy: manifest.assessment.recovery }),
             allowUnboundAnswer: allowLegacyUnbound,
         });
         records.push(record);
@@ -1370,6 +1376,31 @@ function assemble(
             note: "No monetary cost was recorded; token and step totals are reported without an invented price.",
         },
         ledger: ledgerSummary,
+        assessmentSelection: (() => {
+            const manifestAttempt = manifest.assessment.attemptId ?? "attempt-001";
+            const ordinal = (attemptId: string): number =>
+                Number(attemptId.slice("attempt-".length));
+            const slots = records.map((record) => ({
+                stamp: record.identity.stamp,
+                selectedAttemptId:
+                    record.assessment.selectedAttemptId ?? null,
+                recovered:
+                    record.assessment.selectedAttemptId !== undefined &&
+                    ordinal(record.assessment.selectedAttemptId) >
+                        ordinal(manifestAttempt),
+            }));
+            return {
+                slots,
+                recovered: slots.filter((slot) => slot.recovered).length,
+                initial: slots.filter(
+                    (slot) =>
+                        slot.selectedAttemptId !== null && !slot.recovered,
+                ).length,
+                unrecorded: slots.filter(
+                    (slot) => slot.selectedAttemptId === null,
+                ).length,
+            };
+        })(),
         limitations,
     };
 }

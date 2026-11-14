@@ -341,17 +341,19 @@ export function selectionRecordOf(input: SelectionInput): SelectionRecord {
 
 /** The facts a recorded selection is checked against. */
 export interface SelectionFacts {
-    slot: number;
-    pairId: string;
-    stamp: string;
-    arm: string;
-    scenario: string;
+    slot?: number;
+    pairId?: string;
+    stamp?: string;
+    arm?: string;
+    scenario?: string;
     /** Attempt directories actually present for the slot. */
     attemptIds: readonly string[];
     /** The frozen manifest selector. */
     manifestAttemptId: string | null;
     /** The registered policy, or null. */
     policy: RecoveryPolicy | null;
+    /** The actual attempt facts, when the caller can re-derive them. */
+    attemptFacts?: Record<string, SelectionAttempt>;
 }
 
 /**
@@ -375,13 +377,14 @@ export function selectionProblems(
         problems.push("selection schemeVersion must be 1");
     }
     for (const field of ["pairId", "stamp", "arm", "scenario"] as const) {
-        if (value[field] !== facts[field]) {
+        const expected = facts[field];
+        if (expected !== undefined && value[field] !== expected) {
             problems.push(
-                `selection ${field} ${JSON.stringify(value[field])} does not match the slot ${JSON.stringify(facts[field])}`,
+                `selection ${field} ${JSON.stringify(value[field])} does not match the slot ${JSON.stringify(expected)}`,
             );
         }
     }
-    if (value.slot !== facts.slot) {
+    if (facts.slot !== undefined && value.slot !== facts.slot) {
         problems.push("selection slot does not match the schedule");
     }
     const selected = value.selectedAttemptId;
@@ -457,6 +460,24 @@ export function selectionProblems(
         problems.push(
             `selection attempts ${JSON.stringify(claimed)} do not match the evidence ${JSON.stringify(actual)}`,
         );
+    }
+    if (facts.attemptFacts !== undefined) {
+        for (const [attemptId, entry] of recorded) {
+            const actualEntry = facts.attemptFacts[attemptId];
+            if (actualEntry === undefined) continue;
+            for (const field of [
+                "judgementStatus",
+                "packetSha256",
+                "failureClass",
+                "complete",
+            ] as const) {
+                if (entry[field] !== actualEntry[field]) {
+                    problems.push(
+                        `selection ${attemptId} ${field} ${JSON.stringify(entry[field])} does not match the recorded evidence ${JSON.stringify(actualEntry[field])}`,
+                    );
+                }
+            }
+        }
     }
     const selectedEntry = recorded.get(selected);
     if (selectedEntry === undefined) {

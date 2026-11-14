@@ -41,6 +41,10 @@ import {
 } from "../../analysis/budget.ts";
 import { unresolvedReservations } from "../../analysis/closure.ts";
 import {
+    parseRecoveryPolicy,
+    type RecoveryPolicy,
+} from "../../analysis/recovery.ts";
+import {
     spendFreezeProblem,
     verifyFreeze,
     type FreezeRecord,
@@ -245,6 +249,8 @@ export interface SlotObservation {
     stamp: string;
     /** Observed state in the harness event vocabulary's terms. */
     state: string;
+    /** The published selection's attempt, when a selection record exists. */
+    selectedAttemptId?: string | null;
     /** Supporting reason from the evidence, when recorded. */
     note?: string;
 }
@@ -282,6 +288,8 @@ export interface SpendObservation {
     trial: SpendKind;
     /** Judge claims against the judge ceiling. */
     judge: SpendKind;
+    /** Recovery claims against the policy ceiling, when a policy is registered. */
+    recovery?: SpendKind | null;
     /** Claims not yet observed to start. */
     reserved?: number;
     /** Claims whose call started and has not closed. */
@@ -310,6 +318,10 @@ export interface Position {
     usableAssessments?: number;
     /** Trial launch events recorded. */
     trialLaunches?: number;
+    /** Recovery attempts recorded in the ledger. */
+    recoveries?: number;
+    /** The policy's recovery ceiling, when a policy is registered. */
+    recoveryCeiling?: number | null;
     /** Per-slot states, in schedule order. */
     slots?: SlotObservation[];
     /** Spend accounting, when ceilings are registered. */
@@ -727,6 +739,24 @@ function readManifest(
         return null;
     }
     return read.value;
+}
+
+/**
+ * The registered recovery policy from the prepare manifest, or null.
+ * A malformed registration reads as absent here; the runner and analyser
+ * refuse it outright before any spend.
+ * @param root The campaign root.
+ * @returns The policy, or null.
+ */
+function recoveryPolicyOf(root: string): RecoveryPolicy | null {
+    const read = readJsonFile(join(root, "prepare/manifest.json"));
+    if (!isRecord(read.value)) return null;
+    const assessment = isRecord(read.value.assessment)
+        ? read.value.assessment
+        : null;
+    if (assessment === null || assessment.recovery === undefined) return null;
+    const parsed = parseRecoveryPolicy(assessment.recovery);
+    return parsed.ok ? parsed.policy : null;
 }
 
 /** A tolerant mirror of contracts.mts freezeRecordOf: validate, never exit. */
@@ -1352,18 +1382,30 @@ export function observePosition(
     position.completedPairs = completedPairsOf(lines);
     position.usableAssessments = usableAssessmentsOf(lines);
     position.trialLaunches = trialLaunchesOf(lines);
+    position.recoveries = lines.filter(
+        (line) => line.event === "recovery-launch",
+    ).length;
+    const recoveryPolicy = recoveryPolicyOf(root);
+    position.recoveryCeiling = recoveryPolicy?.recoveryCeiling ?? null;
     const schedule = files.schedule;
     if (schedule !== null) {
-        position.slots = schedule.slots.map((slot) =>
-            slotObservation(
+        position.slots = schedule.slots.map((slot) => {
+            const observation = slotObservation(
                 slot,
                 evidence,
                 eventsByStamp(ledger.reparse.events),
                 lines,
-            ),
-        );
+            );
+            const selected = selectionOf(root, slot);
+            if (selected !== null) observation.selectedAttemptId = selected;
+            return observation;
+        });
     }
-    position.spend = spendObservation(evidence, files.freezeRecord);
+    position.spend = spendObservation(
+        evidence,
+        files.freezeRecord,
+        recoveryPolicy,
+    );
     position.closingLock = existsSync(join(evidence, "CLOSING.lock"));
     return position;
 }
@@ -1588,24 +1630,65 @@ function judgedStateOf(
     return { state: judged ? "adjudicated" : "awaiting-judgement" };
 }
 
-/** Spend accounting from claim files; ceilings from the freeze only. */
+/** The one slot's published selection, when a selection record exists. */
+function selectionOf(root: string, slot: ScheduleSlotLite): string | null {
+    const read = readJsonFile(
+        join(
+            root,
+            "gen",
+            slot.arm.toLowerCase(),
+            "results",
+            slot.stamp,
+            slot.scenario,
+            "ac",
+            "selection.json",
+        ),
+    );
+    if (!isRecord(read.value)) return null;
+    return typeof read.value.selectedAttemptId === "string"
+        ? read.value.selectedAttemptId
+        : null;
+}
+
+/** Spend accounting from claim files; ceilings from the freeze or policy. */
 function spendObservation(
     evidence: string,
     record: FreezeRecord | null,
+    policy: RecoveryPolicy | null = null,
 ): SpendObservation {
     const ceilings = record?.ceilings ?? { trial: 0, judge: 0 };
     const trialClaims = safeReadClaims(evidence, "trial");
     const judgeClaims = safeReadClaims(evidence, "judge");
+    const recoveryClaims =
+        policy === null ? [] : safeReadClaims(evidence, "recovery");
+    const judgeCeiling =
+        policy === null ? ceilings.judge : policy.totalJudgeAttempts;
     const spend: SpendObservation = {
         trial: kindSpend(evidence, "trial", ceilings.trial),
-        judge: kindSpend(evidence, "judge", ceilings.judge),
+        judge: kindSpend(evidence, "judge", judgeCeiling),
+        ...(policy === null
+            ? {}
+            : {
+                  recovery: kindSpend(
+                      evidence,
+                      "recovery",
+                      policy.recoveryCeiling,
+                  ),
+              }),
         reserved:
             countState(trialClaims, "reserved") +
-            countState(judgeClaims, "reserved"),
+            countState(judgeClaims, "reserved") +
+            countState(recoveryClaims, "reserved"),
         spawned:
             countState(trialClaims, "spawned") +
-            countState(judgeClaims, "spawned"),
-        unresolved: unresolvedClaims(evidence, trialClaims, judgeClaims),
+            countState(judgeClaims, "spawned") +
+            countState(recoveryClaims, "spawned"),
+        unresolved: unresolvedClaims(
+            evidence,
+            trialClaims,
+            judgeClaims,
+            recoveryClaims,
+        ),
     };
     return spend;
 }
@@ -1614,7 +1697,7 @@ function spendObservation(
  * read means unknown spend: it must never display as available. */
 function kindSpend(
     evidence: string,
-    kind: "trial" | "judge",
+    kind: "trial" | "judge" | "recovery",
     ceiling: number,
 ): SpendKind {
     const basis = "claim files under evidence/<kind>, counted from creation";
@@ -1633,7 +1716,7 @@ function kindSpend(
 /** readClaims without letting a read failure abort the observation. */
 function safeReadClaims(
     evidence: string,
-    kind: "trial" | "judge",
+    kind: "trial" | "judge" | "recovery",
 ): BudgetClaim[] {
     try {
         return readClaims(evidence, kind);
@@ -1652,6 +1735,7 @@ function unresolvedClaims(
     evidence: string,
     trialClaims: readonly BudgetClaim[],
     judgeClaims: readonly BudgetClaim[],
+    recoveryClaims: readonly BudgetClaim[] = [],
 ): UnresolvedClaim[] {
     const named: { claim: BudgetClaim; kind: string }[] = [
         ...unresolvedReservations(trialClaims).map((claim) => ({
@@ -1661,6 +1745,10 @@ function unresolvedClaims(
         ...unresolvedReservations(judgeClaims).map((claim) => ({
             claim,
             kind: "judge",
+        })),
+        ...unresolvedReservations(recoveryClaims).map((claim) => ({
+            claim,
+            kind: "recovery",
         })),
     ];
     return named.map(({ claim, kind }) => {
@@ -3266,9 +3354,16 @@ export function renderText(result: StatusResult, detail: boolean): string {
 function spendLines(position: Position | undefined): string[] {
     const spend = position?.spend;
     if (spend === undefined) return [];
-    return [
-        `spend: trial ${spendValue(spend.trial)} of ${spend.trial.ceiling}, judge ${spendValue(spend.judge)} of ${spend.judge.ceiling}`,
+    const parts = [
+        `trial ${spendValue(spend.trial)} of ${spend.trial.ceiling}`,
+        `judge ${spendValue(spend.judge)} of ${spend.judge.ceiling}`,
     ];
+    if (spend.recovery !== null && spend.recovery !== undefined) {
+        parts.push(
+            `recovery ${spendValue(spend.recovery)} of ${spend.recovery.ceiling}`,
+        );
+    }
+    return [`spend: ${parts.join(", ")}`];
 }
 
 /** One kind's used/remaining display, with unknown kept explicit. */
@@ -3445,8 +3540,12 @@ function ledgerLine(position: Position): string[] {
 /** The completed-pairs line. */
 function pairLine(position: Position): string[] {
     if (position.completedPairs === undefined) return [];
+    const recoveries =
+        position.recoveries === undefined
+            ? ""
+            : ` · recoveries: ${String(position.recoveries)}${position.recoveryCeiling === null || position.recoveryCeiling === undefined ? "" : ` of ${String(position.recoveryCeiling)}`}`;
     return [
-        `  completed pairs: ${position.completedPairs.join(" ") || "none"} · usable assessments (judge-exit judged): ${position.usableAssessments ?? 0}`,
+        `  completed pairs: ${position.completedPairs.join(" ") || "none"} · usable assessments (judge-exit judged): ${position.usableAssessments ?? 0}${recoveries}`,
     ];
 }
 
@@ -3469,7 +3568,12 @@ function claimLines(position: Position): string[] {
 /** One slot's observation line. */
 function slotLine(slot: SlotObservation): string {
     const note = slot.note === undefined ? "" : ` (${slot.note})`;
-    return `  slot ${String(slot.slot).padStart(2, "0")} ${slot.pairId} ${slot.scenario} ${slot.arm}: ${slot.state}${note}`;
+    const selected =
+        slot.selectedAttemptId === undefined ||
+        slot.selectedAttemptId === null
+            ? ""
+            : ` · selected ${slot.selectedAttemptId}`;
+    return `  slot ${String(slot.slot).padStart(2, "0")} ${slot.pairId} ${slot.scenario} ${slot.arm}: ${slot.state}${note}${selected}`;
 }
 
 /** The checkpoint section. */

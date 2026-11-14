@@ -253,7 +253,11 @@ interface Campaign {
  * Materialise a disposable campaign: schedule, freeze, measurement tree, arm
  * inputs and the documented run-card entry point.
  */
-function campaign(options: { recovery?: unknown } = {}): Campaign {
+function campaign(options: {
+    recovery?: unknown;
+    manifest?: Record<string, unknown>;
+    measurement?: unknown;
+} = {}): Campaign {
     const root = mkdtempSync(join(tmpdir(), "pd-recovery-driver-"));
     const { bin, captures, plan } = fakePodman(root);
     execFileSync(process.execPath, [MATERIALISE, root], { encoding: "utf8" });
@@ -270,17 +274,22 @@ function campaign(options: { recovery?: unknown } = {}): Campaign {
         JSON.stringify({ campaign: "pd-recovery", slots }, null, 2),
     );
     write(join(root, "evidence/ATTEMPTS.jsonl"), "");
-    write(join(root, "evidence/measurement-spec.json"), "{}\n");
+    write(
+        join(root, "evidence/measurement-spec.json"),
+        `${JSON.stringify(options.measurement ?? {}, null, 2)}\n`,
+    );
     write(
         join(root, "prepare/manifest.json"),
-        JSON.stringify({
-            assessment: {
-                attemptId: "attempt-001",
-                ...(options.recovery === undefined
-                    ? {}
-                    : { recovery: options.recovery }),
+        JSON.stringify(
+            options.manifest ?? {
+                assessment: {
+                    attemptId: "attempt-001",
+                    ...(options.recovery === undefined
+                        ? {}
+                        : { recovery: options.recovery }),
+                },
             },
-        }),
+        ),
     );
     const source = sourceRepo(root);
     const hash = (path: string): string =>
@@ -456,6 +465,256 @@ function attemptDir(root: string, arm: "a" | "b", attemptId: string): string {
         attemptId,
     );
 }
+
+const ANALYSE = join(HARNESS, "analysis", "analyse.mts");
+const STATUS = join(HARNESS, "prod014", "campaign", "status.mts");
+
+/** A full analyser manifest for the two-slot recovered campaign. */
+function analyserManifest(): Record<string, unknown> {
+    return {
+        schemaVersion: 1,
+        campaign: {
+            id: "pd-recovery",
+            question: "does a bounded recovery keep the accounting honest?",
+        },
+        arms: [
+            { id: "A", label: "arm A" },
+            { id: "B", label: "arm B" },
+        ],
+        scenarios: [{ id: CASE, kind: "create" }],
+        schedule: {
+            slots: [
+                {
+                    slot: 1,
+                    pairId: "P01",
+                    repetition: 0,
+                    scenario: CASE,
+                    arm: "A",
+                    stamp: "pd-A-r0-R01",
+                },
+                {
+                    slot: 2,
+                    pairId: "P01",
+                    repetition: 0,
+                    scenario: CASE,
+                    arm: "B",
+                    stamp: "pd-B-r0-R01",
+                },
+            ],
+        },
+        evidence: {
+            layout: "ac-v1",
+            resultRoots: { A: "gen/a/results", B: "gen/b/results" },
+            inputs: { attempts: "evidence/ATTEMPTS.jsonl" },
+        },
+        assessment: {
+            selectionPolicy: "resolution-then-judgement",
+            attemptId: "attempt-001",
+            recovery: POLICY,
+        },
+        policy: {
+            policyId: "pd-recovery-test",
+            weights: {
+                useful: 5,
+                transient: -1,
+                duplicate: -2,
+                misleading: -5,
+                taskFailure: -5,
+            },
+            guardrails: [
+                {
+                    id: "destructive-loss",
+                    kind: "destructive-loss",
+                    requirement: "no loss of still-valid facts",
+                },
+            ],
+            selection: {
+                controlArm: "A",
+                candidateArm: "B",
+                threshold: 0,
+                requireCompleteCoverage: true,
+            },
+        },
+    };
+}
+
+describe("recovery accounting across surfaces", () => {
+    it("agrees between the analyser, status, reconciliation and reports", () => {
+        // Arrange: one recovered slot and one clean slot.
+        const { root, captures, plan, source } = campaign({
+            manifest: analyserManifest(),
+            measurement: { retrievalOpportunities: [], scenarios: {} },
+        });
+        planResponse(plan, 1, trail(malformedText()));
+        const out = mkdtempSync(join(tmpdir(), "pd-recovery-analysis-"));
+
+        try {
+            const driver = runDriver(root);
+            assert.equal(driver.status, 0, String(driver.stderr));
+
+            // Act: the analyser reads the published selections.
+            const analysed = spawnSync(
+                process.execPath,
+                [
+                    ANALYSE,
+                    "--campaign",
+                    join(root, "prepare/manifest.json"),
+                    "--evidence-root",
+                    root,
+                    "--out",
+                    out,
+                ],
+                { encoding: "utf8", timeout: 120000 },
+            );
+
+            // Assert: the analyser agrees with the driver's selection.
+            assert.equal(analysed.status, 0, String(analysed.stderr));
+            const analysis = JSON.parse(
+                readFileSync(join(out, "analysis.json"), "utf8"),
+            ) as {
+                assessmentSelection: {
+                    slots: Array<{
+                        stamp: string;
+                        selectedAttemptId: string | null;
+                        recovered: boolean;
+                    }>;
+                    recovered: number;
+                };
+            };
+            const recovered = analysis.assessmentSelection.slots.find(
+                (slot) => slot.stamp === "pd-A-r0-R01",
+            );
+            const clean = analysis.assessmentSelection.slots.find(
+                (slot) => slot.stamp === "pd-B-r0-R01",
+            );
+            assert.equal(recovered?.selectedAttemptId, "attempt-002");
+            assert.equal(recovered?.recovered, true);
+            assert.equal(clean?.selectedAttemptId, "attempt-001");
+            assert.equal(clean?.recovered, false);
+            assert.equal(analysis.assessmentSelection.recovered, 1);
+
+            // Assert: the receipt binds the selection records it read.
+            const receipt = JSON.parse(
+                readFileSync(join(out, "analysis-receipt.json"), "utf8"),
+            ) as {
+                inputs: Array<{
+                    reference: string;
+                    sha256: string | null;
+                    state: string;
+                }>;
+            };
+            const bound = receipt.inputs.filter((input) =>
+                input.reference.includes("selection.json"),
+            );
+            assert.equal(bound.length, 2);
+            assert.ok(
+                bound.every(
+                    (input) =>
+                        input.sha256 !== null && input.state === "available",
+                ),
+            );
+
+            // Assert: the Markdown report names the recovered slot.
+            assert.match(
+                readFileSync(join(out, "REPORT.md"), "utf8"),
+                /## Assessment selection[\s\S]*pd-A-r0-R01 → attempt-002/,
+            );
+
+            // Act: closure derives the reconciliation from the same evidence.
+            const closed = spawnSync(
+                process.execPath,
+                [join(root, "prepare/close-campaign.mts")],
+                {
+                    encoding: "utf8",
+                    timeout: 120000,
+                    env: {
+                        ...process.env,
+                        CAMPAIGN_ROOT: root,
+                        CAMPAIGN_SOURCE_REPO: source,
+                    },
+                },
+            );
+
+            // Assert: recovery counts and the selection agree, and unknown
+            // judge telemetry stays unknown rather than zero.
+            assert.equal(closed.status, 0, String(closed.stderr));
+            const reconciliation = JSON.parse(
+                readFileSync(join(root, "evidence/RECONCILIATION.json"), "utf8"),
+            ) as {
+                judge: {
+                    initialAttempts: number;
+                    recoveryAttempts: number;
+                    tokens: { input: number | null };
+                };
+                selectedAttempts: Array<{
+                    slot: number;
+                    selectedAttemptId: string;
+                }>;
+                budgets: {
+                    recoveryCeiling: number | null;
+                    recoveryUsed: number;
+                    judgeCeiling: number;
+                };
+            };
+            assert.equal(reconciliation.judge.initialAttempts, 2);
+            assert.equal(reconciliation.judge.recoveryAttempts, 1);
+            assert.deepEqual(reconciliation.selectedAttempts, [
+                { slot: 1, stamp: "pd-A-r0-R01", selectedAttemptId: "attempt-002" },
+                { slot: 2, stamp: "pd-B-r0-R01", selectedAttemptId: "attempt-001" },
+            ]);
+            assert.equal(reconciliation.budgets.recoveryCeiling, 1);
+            assert.equal(reconciliation.budgets.recoveryUsed, 1);
+            assert.equal(reconciliation.budgets.judgeCeiling, 3);
+            assert.equal(reconciliation.judge.tokens.input, null);
+
+            // Act: the status command observes the closed campaign.
+            const status = spawnSync(
+                process.execPath,
+                [STATUS, "--root", root, "--detail"],
+                { encoding: "utf8", timeout: 120000 },
+            );
+            const statusJson = spawnSync(
+                process.execPath,
+                [STATUS, "--root", root, "--json"],
+                { encoding: "utf8", timeout: 120000 },
+            );
+
+            // Assert: text and JSON agree on recovery spend and selection.
+            assert.equal(status.status, 0, String(status.stderr));
+            assert.match(String(status.stdout), /recoveries: 1 of 1/);
+            assert.match(String(status.stdout), /selected attempt-002/);
+            const projection = JSON.parse(String(statusJson.stdout)) as {
+                status: string;
+                result: {
+                    position: {
+                        spend: {
+                            recovery?: { used: number; ceiling: number };
+                        };
+                        slots: Array<{
+                            stamp: string;
+                            selectedAttemptId?: string | null;
+                        }>;
+                    };
+                };
+            };
+            assert.equal(projection.status, "ok");
+            assert.equal(projection.result.position.spend.recovery?.used, 1);
+            assert.equal(
+                projection.result.position.spend.recovery?.ceiling,
+                1,
+            );
+            assert.equal(
+                projection.result.position.slots.find(
+                    (slot) => slot.stamp === "pd-A-r0-R01",
+                )?.selectedAttemptId,
+                "attempt-002",
+            );
+        } finally {
+            rmSync(out, { recursive: true, force: true });
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+});
 
 describe("registered recovery through the real driver", () => {
     it("recovers a complete syntax failure once and selects attempt-002", () => {

@@ -26,8 +26,16 @@ import {
     type TokenFields,
 } from "../runner/closure.ts";
 import {
+    parseRecoveryPolicy,
+    recoveryPolicySha256,
+    selectionProblems,
+    type RecoveryPolicy,
+    type SelectionAttempt,
+} from "../runner/recovery.ts";
+import {
     errorText,
     freezeRecordOf,
+    manifestOf,
     readJson as readJsonValue,
     readText,
     recordOf,
@@ -245,6 +253,12 @@ function judgeAttemptOf(dir: string): JudgeAttempt & { readProblem?: string } {
     const status: AttemptStatus = usable
         ? "judged"
         : attemptStatus(judgement, meta);
+    const completion =
+        meta !== null &&
+        typeof meta.completion === "object" &&
+        meta.completion !== null
+            ? (meta.completion as Record<string, unknown>)
+            : null;
     return {
         attemptId: basename(dir),
         spawned: meta !== null || usage.steps !== null,
@@ -255,6 +269,18 @@ function judgeAttemptOf(dir: string): JudgeAttempt & { readProblem?: string } {
         durationMs:
             meta !== null && typeof meta.durationMs === "number"
                 ? meta.durationMs
+                : null,
+        packetSha256:
+            meta !== null && typeof meta.packetSha256 === "string"
+                ? meta.packetSha256
+                : null,
+        failureClass:
+            judgement !== null && typeof judgement.failureClass === "string"
+                ? judgement.failureClass
+                : null,
+        complete:
+            completion !== null && typeof completion.complete === "boolean"
+                ? completion.complete
                 : null,
         ...(usage.problem === undefined ? {} : { readProblem: usage.problem }),
     };
@@ -454,6 +480,25 @@ const frozenValue = readJson(join(EVIDENCE, "FROZEN.json"));
 const frozen = freezeRecordOf(
     frozenValue === null ? null : recordOf(frozenValue, "FROZEN.json").freeze,
 );
+const manifest = manifestOf(join(ROOT, "prepare/manifest.json"));
+const recoveryPolicy: RecoveryPolicy | null = (() => {
+    const declared = manifest?.assessment?.recovery;
+    if (declared === undefined) return null;
+    const parsed = parseRecoveryPolicy(declared);
+    if (!parsed.ok) {
+        console.error(
+            `registered recovery policy is invalid: ${parsed.problems.join("; ")}`,
+        );
+        process.exit(1);
+    }
+    return parsed.policy;
+})();
+// The registered policy's total is the authoritative judge-attempt ceiling;
+// the freeze record keeps the historical initial budget.
+const judgeCeiling =
+    recoveryPolicy === null
+        ? (frozen?.ceilings.judge ?? 0)
+        : recoveryPolicy.totalJudgeAttempts;
 
 let lockHeld = false;
 try {
@@ -497,6 +542,37 @@ try {
                       return attempt;
                   })
             : [];
+        const selection = objectOrNull(join(acDir, "selection.json"));
+        let selectedAttemptId: string | null = null;
+        if (selection !== null) {
+            selectedAttemptId =
+                typeof selection.selectedAttemptId === "string"
+                    ? selection.selectedAttemptId
+                    : null;
+            const attemptFacts: Record<string, SelectionAttempt> = {};
+            for (const attempt of attempts) {
+                attemptFacts[attempt.attemptId] = {
+                    attemptId: attempt.attemptId,
+                    judgementStatus: attempt.status,
+                    packetSha256: attempt.packetSha256 ?? null,
+                    failureClass: attempt.failureClass ?? null,
+                    complete: attempt.complete ?? null,
+                };
+            }
+            for (const problem of selectionProblems(selection, {
+                slot: slot.slot,
+                pairId: slot.pairId ?? "",
+                stamp: slot.stamp,
+                arm: slot.arm,
+                scenario: slot.scenario,
+                attemptIds: attempts.map((attempt) => attempt.attemptId),
+                manifestAttemptId: manifest?.assessment?.attemptId ?? null,
+                policy: recoveryPolicy,
+                attemptFacts,
+            })) {
+                readProblems.push(`${slot.stamp}: ${problem}`);
+            }
+        }
         const meta = objectOrNull(join(dir, "meta.json"));
         const timings =
             meta !== null &&
@@ -529,6 +605,7 @@ try {
             trialDurationMs:
                 typeof timings.totalMs === "number" ? timings.totalMs : null,
             judgeAttempts: attempts,
+            selectedAttemptId,
         };
     });
 
@@ -539,7 +616,7 @@ try {
         judgeClaims,
         ceilings: {
             trial: frozen?.ceilings.trial ?? 0,
-            judge: frozen?.ceilings.judge ?? 0,
+            judge: judgeCeiling,
         },
         closed: false,
     });
@@ -585,6 +662,8 @@ try {
         },
         judge: {
             attempts: report.judge.attempts,
+            initialAttempts: report.judge.initialAttempts,
+            recoveryAttempts: report.judge.recoveryAttempts,
             reachedInference: report.judge.inferred,
             usableJudgements: report.judge.usableJudgements,
             unusableJudgements: report.judge.unusableJudgements,
@@ -593,6 +672,35 @@ try {
             tokenCoverage: report.judge.tokenCoverage,
             durationMs: report.judge.durationMs,
         },
+        selectedAttempts: observations
+            .filter((slot) => slot.selectedAttemptId !== null)
+            .map((slot) => ({
+                slot: slot.slot,
+                stamp: slot.stamp,
+                selectedAttemptId: slot.selectedAttemptId,
+            })),
+        budgets: {
+            trialCeiling: frozen?.ceilings.trial ?? 0,
+            judgeCeiling,
+            recoveryCeiling: recoveryPolicy?.recoveryCeiling ?? null,
+            recoveryUsed: readClaims(EVIDENCE, "recovery").length,
+            judgeUsed: report.judge.attempts,
+        },
+        stopReason: (() => {
+            const lastBlocked = readText(LEDGER)
+                .split("\n")
+                .filter(Boolean)
+                .map((line) => JSON.parse(line) as Record<string, unknown>)
+                .filter(
+                    (event) =>
+                        event.event === "slot-blocked" ||
+                        event.event === "recovery-blocked",
+                )
+                .at(-1);
+            return typeof lastBlocked?.reason === "string"
+                ? lastBlocked.reason
+                : null;
+        })(),
         unrunSlots: observations
             .filter((slot) => !observed.includes(slot))
             .map((slot) => ({
