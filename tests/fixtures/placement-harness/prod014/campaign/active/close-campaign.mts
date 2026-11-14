@@ -520,10 +520,7 @@ const judgeCeiling =
         : recoveryPolicy.totalJudgeAttempts;
 
 /** Every recorded attempt for one slot, collecting unreadable trails. */
-function attemptsOfSlot(
-    acDir: string,
-    readProblems: string[],
-): JudgeAttempt[] {
+function attemptsOfSlot(acDir: string, readProblems: string[]): JudgeAttempt[] {
     if (!existsSync(acDir)) return [];
     return readdirSync(acDir)
         .filter((name) => /^attempt-\d{3}$/.test(name))
@@ -543,9 +540,7 @@ function selectedAttemptOf(
     attempts: readonly JudgeAttempt[],
     readProblems: string[],
 ): string | null {
-    const selection = objectOrNull(
-        join(caseDir(slot), "ac", "selection.json"),
-    );
+    const selection = objectOrNull(join(caseDir(slot), "ac", "selection.json"));
     if (selection === null) return null;
     for (const problem of selectionProblemTexts(selection, slot, attempts)) {
         readProblems.push(`${slot.stamp}: ${problem}`);
@@ -635,12 +630,10 @@ function launchedOf(
     return (
         existsSync(dir) ||
         trialClaims.some(
-            (claim) =>
-                claim.stamp === slot.stamp && claim.state !== "reserved",
+            (claim) => claim.stamp === slot.stamp && claim.state !== "reserved",
         ) ||
         ledgerParse.events.some(
-            (event) =>
-                event.event === "launch" && event.stamp === slot.stamp,
+            (event) => event.event === "launch" && event.stamp === slot.stamp,
         )
     );
 }

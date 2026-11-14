@@ -662,7 +662,11 @@ function selectionSection(result: AnalysisResult): string {
     const rows = selection.slots.map((slot) => [
         slot.stamp,
         slot.selectedAttemptId ?? "unrecorded (manifest selector)",
-        slot.recovered ? "recovered" : slot.selectedAttemptId === null ? "manifest" : "initial",
+        slot.recovered
+            ? "recovered"
+            : slot.selectedAttemptId === null
+              ? "manifest"
+              : "initial",
     ]);
     return [
         "## Assessment selection",

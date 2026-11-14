@@ -883,9 +883,7 @@ const attemptStatusOf = (attemptDir: string): string => {
     );
     if (resolution?.status === "judged") return "judged";
     const judgement = plainRecord(readJson(join(attemptDir, "judgement.json")));
-    return typeof judgement?.status === "string"
-        ? judgement.status
-        : "missing";
+    return typeof judgement?.status === "string" ? judgement.status : "missing";
 };
 
 /** The recorded facts of every attempt for one slot, in order. */
@@ -1091,6 +1089,8 @@ const recoveryRefusal = (
  * @param attemptDir The recovery attempt directory.
  * @param recoveryAttemptId The recovery attempt id.
  * @param claim The dual claim already taken.
+ * @param claim.recovery The recovery-budget claim.
+ * @param claim.judge The judge-budget claim.
  * @returns Whether a usable recovery judgement landed.
  */
 const runRecoveryChild = (
@@ -1139,9 +1139,7 @@ const runRecoveryChild = (
     advanceClaim(claim.recovery, "closed");
     advanceClaim(claim.judge, "closed");
     const resolve = resolveJudge(base);
-    const judgement = plainRecord(
-        readJson(join(attemptDir, "judgement.json")),
-    );
+    const judgement = plainRecord(readJson(join(attemptDir, "judgement.json")));
     const status = attemptStatusOf(attemptDir);
     ledger({
         event: "recovery-exit",

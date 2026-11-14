@@ -225,10 +225,7 @@ describe("recovery eligibility", () => {
 
         // Assert
         assert.equal(decision.eligible, false);
-        assert.match(
-            (decision as { reason: string }).reason,
-            /completion/,
-        );
+        assert.match((decision as { reason: string }).reason, /completion/);
     });
 
     it("never replaces a usable first assessment", () => {
@@ -274,10 +271,7 @@ describe("recovery eligibility", () => {
         // Assert
         for (const decision of decisions) {
             assert.equal(decision.eligible, false);
-            assert.match(
-                (decision as { reason: string }).reason,
-                /ledger/,
-            );
+            assert.match((decision as { reason: string }).reason, /ledger/);
         }
     });
 
@@ -312,9 +306,15 @@ describe("recovery eligibility", () => {
 
         // Assert
         assert.equal(recovery.eligible, false);
-        assert.match((recovery as { reason: string }).reason, /recovery ceiling/);
+        assert.match(
+            (recovery as { reason: string }).reason,
+            /recovery ceiling/,
+        );
         assert.equal(total.eligible, false);
-        assert.match((total as { reason: string }).reason, /judge-attempt ceiling/);
+        assert.match(
+            (total as { reason: string }).reason,
+            /judge-attempt ceiling/,
+        );
     });
 
     it("refuses a policy that makes no failure class eligible", () => {
@@ -446,7 +446,10 @@ describe("selection record as checked evidence", () => {
                     ...valid,
                     attempts: [
                         valid.attempts[0]!,
-                        { ...valid.attempts[1]!, judgementStatus: "invalid-verdict" },
+                        {
+                            ...valid.attempts[1]!,
+                            judgementStatus: "invalid-verdict",
+                        },
                     ],
                 },
                 /unusable attempt/,
@@ -543,7 +546,11 @@ describe("selection record as checked evidence", () => {
                 { ...valid, attempts: "nope" },
                 /attempts must be an array/,
             ],
-            ["malformed entry", { ...valid, attempts: [null] }, /entry is malformed/],
+            [
+                "malformed entry",
+                { ...valid, attempts: [null] },
+                /entry is malformed/,
+            ],
             [
                 "bad id",
                 { ...valid, attempts: [{ attemptId: "attempt-1" }] },
@@ -558,7 +565,9 @@ describe("selection record as checked evidence", () => {
                 "no status",
                 {
                     ...valid,
-                    attempts: [{ attemptId: "attempt-001", packetSha256: null }],
+                    attempts: [
+                        { attemptId: "attempt-001", packetSha256: null },
+                    ],
                 },
                 /no judgement status/,
             ],
@@ -737,8 +746,12 @@ describe("selection record as checked evidence", () => {
         });
 
         // Assert
-        assert.ok(problems.some((problem) => /at most 1 permitted/.test(problem)));
-        assert.ok(problems.some((problem) => /not the next attempt/.test(problem)));
+        assert.ok(
+            problems.some((problem) => /at most 1 permitted/.test(problem)),
+        );
+        assert.ok(
+            problems.some((problem) => /not the next attempt/.test(problem)),
+        );
     });
 });
 

@@ -897,7 +897,9 @@ function attemptFactOf(
     const resolved = loadedRecordOf(
         loadJson(reader, joinPath(base, "resolution.json")),
     );
-    const metadata = loadedRecordOf(loadJson(reader, joinPath(base, "meta.json")));
+    const metadata = loadedRecordOf(
+        loadJson(reader, joinPath(base, "meta.json")),
+    );
     const completion =
         metadata !== null && isRecord(metadata.completion)
             ? metadata.completion
@@ -910,9 +912,7 @@ function attemptFactOf(
                 ? metadata.packetSha256
                 : null,
         failureClass:
-            typeof judge?.failureClass === "string"
-                ? judge.failureClass
-                : null,
+            typeof judge?.failureClass === "string" ? judge.failureClass : null,
         complete:
             typeof completion?.complete === "boolean"
                 ? completion.complete
@@ -974,7 +974,9 @@ function loadSelection(
             `selection record cannot be checked: ${acDir} is ${dirs.state}`,
         );
     }
-    const attemptIds = dirs.value.filter((name) => /^attempt-\d{3}$/.test(name));
+    const attemptIds = dirs.value.filter((name) =>
+        /^attempt-\d{3}$/.test(name),
+    );
     const attemptFacts: Record<string, SelectionAttempt> = {};
     for (const attemptId of attemptIds) {
         attemptFacts[attemptId] = attemptFactOf(reader, acDir, attemptId);
@@ -991,7 +993,12 @@ function loadSelection(
 /** A missing or unreadable selection record. */
 function unavailableSelection(loaded: Loaded<unknown>): LoadedSelection {
     if (loaded.state === "missing") {
-        return { attemptId: null, present: false, invalid: false, problems: [] };
+        return {
+            attemptId: null,
+            present: false,
+            invalid: false,
+            problems: [],
+        };
     }
     return invalidSelection(
         `selection record is ${loaded.state}: ${loaded.source}`,

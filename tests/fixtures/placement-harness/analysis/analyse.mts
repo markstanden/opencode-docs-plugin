@@ -1377,13 +1377,13 @@ function assemble(
         },
         ledger: ledgerSummary,
         assessmentSelection: (() => {
-            const manifestAttempt = manifest.assessment.attemptId ?? "attempt-001";
+            const manifestAttempt =
+                manifest.assessment.attemptId ?? "attempt-001";
             const ordinal = (attemptId: string): number =>
                 Number(attemptId.slice("attempt-".length));
             const slots = records.map((record) => ({
                 stamp: record.identity.stamp,
-                selectedAttemptId:
-                    record.assessment.selectedAttemptId ?? null,
+                selectedAttemptId: record.assessment.selectedAttemptId ?? null,
                 recovered:
                     record.assessment.selectedAttemptId !== undefined &&
                     ordinal(record.assessment.selectedAttemptId) >

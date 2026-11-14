@@ -151,10 +151,7 @@ export function manifestOf(path: string): Manifest | null {
 }
 
 /** The validated assessment section of one manifest. */
-function assessmentOf(
-    value: Record<string, unknown>,
-    path: string,
-): Manifest {
+function assessmentOf(value: Record<string, unknown>, path: string): Manifest {
     const assessment =
         value.assessment === undefined
             ? undefined

@@ -12,11 +12,7 @@
  */
 
 import { createHash } from "node:crypto";
-import {
-    claimBudget,
-    releaseClaim,
-    type BudgetClaim,
-} from "./budget.ts";
+import { claimBudget, releaseClaim, type BudgetClaim } from "./budget.ts";
 
 /** The policy schema version this module understands. */
 export const RECOVERY_POLICY_VERSION = 1;
@@ -47,8 +43,7 @@ export interface RecoveryPolicy {
 
 /** The outcome of reading one registered policy. */
 export type PolicyParse =
-    | { ok: true; policy: RecoveryPolicy }
-    | { ok: false; problems: string[] };
+    { ok: true; policy: RecoveryPolicy } | { ok: false; problems: string[] };
 
 /** Whether a value is a plain JSON object. */
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -211,8 +206,7 @@ export interface RecoveryFacts {
 
 /** The eligibility decision for one failed slot. */
 export type RecoveryDecision =
-    | { eligible: true; attemptId: string }
-    | { eligible: false; reason: string };
+    { eligible: true; attemptId: string } | { eligible: false; reason: string };
 
 /** The numeric ordinal of an `attempt-NNN` id. */
 function ordinal(attemptId: string): number {
@@ -435,7 +429,10 @@ export function selectionProblems(
     const identity = identityProblems(value, facts);
     const selected = value.selectedAttemptId;
     if (typeof selected !== "string" || !/^attempt-\d{3}$/.test(selected)) {
-        return [...identity, "selection selectedAttemptId must match attempt-NNN"];
+        return [
+            ...identity,
+            "selection selectedAttemptId must match attempt-NNN",
+        ];
     }
     if (!Array.isArray(value.attempts)) {
         return [...identity, "selection attempts must be an array"];
@@ -511,10 +508,7 @@ function entryIdentityOf(entry: unknown): {
 }
 
 /** The first malformed field of one attempt entry, or undefined. */
-function entryFieldProblem(
-    entry: unknown,
-    label: string,
-): string | undefined {
+function entryFieldProblem(entry: unknown, label: string): string | undefined {
     const value = entry as Record<string, unknown>;
     if (typeof value.judgementStatus !== "string") {
         return `${label} has no judgement status`;
@@ -617,7 +611,13 @@ function choiceProblems(
     const manifest = facts.manifestAttemptId;
     if (manifest !== null && selected !== manifest) {
         problems.push(
-            ...recoveryChoiceProblems(value, recorded, selected, manifest, facts),
+            ...recoveryChoiceProblems(
+                value,
+                recorded,
+                selected,
+                manifest,
+                facts,
+            ),
         );
     } else {
         problems.push(...firstChoiceProblems(recorded, selected, facts));
@@ -645,10 +645,17 @@ function recoveryChoiceProblems(
     }
     const base = recorded.get(manifest);
     if (base === undefined) {
-        problems.push(`selection has no entry for the manifest attempt ${manifest}`);
+        problems.push(
+            `selection has no entry for the manifest attempt ${manifest}`,
+        );
     } else {
         problems.push(
-            ...baseEligibilityProblems(base, recorded.get(selected), manifest, facts),
+            ...baseEligibilityProblems(
+                base,
+                recorded.get(selected),
+                manifest,
+                facts,
+            ),
         );
     }
     if (ordinal(selected) !== ordinal(manifest) + 1) {
@@ -680,7 +687,9 @@ function baseEligibilityProblems(
         facts.policy?.requiresCompletionEvidence === true &&
         base.complete !== true
     ) {
-        problems.push(`selection recovers from incomplete capture for ${manifest}`);
+        problems.push(
+            `selection recovers from incomplete capture for ${manifest}`,
+        );
     }
     if (
         base.packetSha256 === null ||
@@ -698,9 +707,7 @@ function baseClassProblems(
 ): string[] {
     const problems: string[] = [];
     if (base.judgementStatus === "judged") {
-        problems.push(
-            `selection replaces the usable first assessment`,
-        );
+        problems.push(`selection replaces the usable first assessment`);
     }
     if (
         base.failureClass === null ||
@@ -727,7 +734,9 @@ function firstChoiceProblems(
             recorded.get(attempt)?.judgementStatus === "judged",
     );
     return judgedLater.length > 0
-        ? [`selection ignores a later usable judgement ${judgedLater.join(", ")}`]
+        ? [
+              `selection ignores a later usable judgement ${judgedLater.join(", ")}`,
+          ]
         : [];
 }
 
@@ -766,7 +775,10 @@ export function claimRecoveryBudget(
         identity,
     );
     if (!recovery.ok) {
-        return { ok: false, reason: `recovery budget refused: ${recovery.reason}` };
+        return {
+            ok: false,
+            reason: `recovery budget refused: ${recovery.reason}`,
+        };
     }
     const judge = claimBudget(
         root,

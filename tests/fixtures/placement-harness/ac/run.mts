@@ -713,7 +713,8 @@ function recordJudgement(
     // malformed answer can be diagnosed without re-deriving the extraction.
     writeFileSync(join(attemptDir, "finalAnswer.txt"), answer, "utf8");
     const timedOut =
-        (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
+        (result.error as NodeJS.ErrnoException | undefined)?.code ===
+        "ETIMEDOUT";
     const completion = completionEvidence(
         output,
         answer,
@@ -754,7 +755,10 @@ function verdictOutcome(
     caseId: string,
     scoringSpec: unknown,
     completion: CompletionEvidence,
-): { failureClass: JudgeFailureClass | null; judgement: Record<string, unknown> } {
+): {
+    failureClass: JudgeFailureClass | null;
+    judgement: Record<string, unknown>;
+} {
     const payload = judgementPayload(parsed, state, caseId, scoringSpec);
     if (payload.problems.length === 0) {
         return { failureClass: null, judgement: payload.value };

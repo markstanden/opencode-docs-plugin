@@ -396,7 +396,9 @@ export function judgeFailureClass(input: {
 }
 
 /** Schema problems for one parsed judgement: fields, enums and evidence. */
-export function judgementSchemaProblems(value: Record<string, unknown>): string[] {
+export function judgementSchemaProblems(
+    value: Record<string, unknown>,
+): string[] {
     const problems: string[] = [];
     const outcome = value.documentationOutcome;
     if (

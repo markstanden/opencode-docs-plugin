@@ -14,10 +14,7 @@
  * the filesystem or calls a model.
  */
 
-import {
-    parseRecoveryPolicy,
-    type RecoveryPolicy,
-} from "./recovery.ts";
+import { parseRecoveryPolicy, type RecoveryPolicy } from "./recovery.ts";
 
 /** The only manifest schema version this framework parses. */
 export const MANIFEST_SCHEMA_VERSION = 1;

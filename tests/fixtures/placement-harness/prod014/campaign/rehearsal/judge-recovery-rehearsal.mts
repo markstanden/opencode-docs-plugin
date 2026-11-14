@@ -26,7 +26,11 @@ import {
     rmSync,
     writeFileSync,
 } from "node:fs";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import {
+    createServer,
+    type IncomingMessage,
+    type ServerResponse,
+} from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,7 +40,8 @@ const HARNESS = join(HERE, "..", "..", "..");
 const AC_RUN = join(HARNESS, "ac", "run.mts");
 const LAUNCHER = join(HARNESS, "ac", "judge-launcher.sh");
 const MATERIALISE = join(HERE, "..", "materialise.mts");
-const IMAGE = process.env.PLACEMENT_IMAGE ?? "localhost/opencode-placement-trials";
+const IMAGE =
+    process.env.PLACEMENT_IMAGE ?? "localhost/opencode-placement-trials";
 const MODEL = process.env.REHEARSAL_MODEL ?? "zai-coding-plan/glm-5.3-flash";
 const CASE = "R01";
 
@@ -91,12 +96,16 @@ const POLICY = {
 };
 
 /** Read one request body as a JSON object. */
-async function bodyOf(request: IncomingMessage): Promise<Record<string, unknown>> {
+async function bodyOf(
+    request: IncomingMessage,
+): Promise<Record<string, unknown>> {
     let raw = "";
     for await (const chunk of request) raw += chunk;
     try {
         const parsed: unknown = JSON.parse(raw);
-        return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+        return typeof parsed === "object" &&
+            parsed !== null &&
+            !Array.isArray(parsed)
             ? (parsed as Record<string, unknown>)
             : {};
     } catch {
@@ -252,7 +261,12 @@ const sha256 = (body: string | Buffer): string =>
 
 /** The malformed judge text from the observed campaign. */
 function malformedText(): string {
-    const fixture = join(HARNESS, "..", "judge-recovery", "observed-output.jsonl");
+    const fixture = join(
+        HARNESS,
+        "..",
+        "judge-recovery",
+        "observed-output.jsonl",
+    );
     const line = readFileSync(fixture, "utf8").trim().split("\n")[1]!;
     return (JSON.parse(line) as { part: { text: string } }).part.text;
 }
@@ -349,10 +363,9 @@ function overlay(port: number, providerBody?: Record<string, unknown>): string {
 
 /** One recorded judge attempt's judgement. */
 function judgementAt(dir: string): Record<string, unknown> {
-    return JSON.parse(readFileSync(join(dir, "judgement.json"), "utf8")) as Record<
-        string,
-        unknown
-    >;
+    return JSON.parse(
+        readFileSync(join(dir, "judgement.json"), "utf8"),
+    ) as Record<string, unknown>;
 }
 
 /** The trial stub: records one usable trial result per stamp. */
@@ -420,7 +433,10 @@ function armInputs(root: string): void {
             "#!/bin/sh\n",
         );
         write(
-            join(armRoot, "tests/fixtures/placement-harness/prod014/cases.json"),
+            join(
+                armRoot,
+                "tests/fixtures/placement-harness/prod014/cases.json",
+            ),
             "[]\n",
         );
         write(
@@ -434,7 +450,10 @@ function armInputs(root: string): void {
         mkdirSync(join(root, "gen", arm, "rubrics", CASE), { recursive: true });
     }
     write(
-        join(root, "arms/a/tests/fixtures/placement-harness/prod014/truth.json"),
+        join(
+            root,
+            "arms/a/tests/fixtures/placement-harness/prod014/truth.json",
+        ),
         JSON.stringify({ [CASE]: "A durable BOM finding." }),
     );
 }
@@ -592,7 +611,10 @@ function seedTrial(root: string): string {
         join(caseDir, "primary-check.json"),
         JSON.stringify({ status: "pass", exit: 0, stdout: "", stderr: "" }),
     );
-    write(join(root, "truth.json"), JSON.stringify({ R01: "A durable BOM finding." }));
+    write(
+        join(root, "truth.json"),
+        JSON.stringify({ R01: "A durable BOM finding." }),
+    );
     return caseDir;
 }
 
@@ -607,7 +629,11 @@ interface LauncherScenario {
 /** The launcher-level probes: request accounting and output controls. */
 async function launcherOutcomes(containing: string): Promise<Outcome[]> {
     const scenarios: LauncherScenario[] = [
-        { name: "launcher-valid", plan: [{ status: 200, content: validText() }], expected: "judged" },
+        {
+            name: "launcher-valid",
+            plan: [{ status: 200, content: validText() }],
+            expected: "judged",
+        },
         {
             name: "launcher-malformed",
             plan: [{ status: 200, content: malformedText() }],

@@ -26,7 +26,12 @@ import {
 const HERE = import.meta.dirname;
 const HARNESS = join(HERE, "fixtures", "placement-harness");
 const MATERIALISE = join(HARNESS, "prod014", "campaign", "materialise.mts");
-const OBSERVED = join(HERE, "fixtures", "judge-recovery", "observed-output.jsonl");
+const OBSERVED = join(
+    HERE,
+    "fixtures",
+    "judge-recovery",
+    "observed-output.jsonl",
+);
 const CASE = "R01";
 
 /** The prospective policy, scaled to this suite's two-slot campaign. */
@@ -72,7 +77,11 @@ function trail(text: string, terminal = true): string {
  * A fake podman at the external boundary. It captures the container view and
  * replays one planned judge response per call, or a valid default.
  */
-function fakePodman(root: string): { bin: string; captures: string; plan: string } {
+function fakePodman(root: string): {
+    bin: string;
+    captures: string;
+    plan: string;
+} {
     const bin = join(root, "fake-bin");
     const captures = join(root, "podman-captures");
     const plan = join(root, "response-plan");
@@ -250,11 +259,13 @@ interface Campaign {
  * Materialise a disposable campaign: schedule, freeze, measurement tree, arm
  * inputs and the documented run-card entry point.
  */
-function campaign(options: {
-    recovery?: unknown;
-    manifest?: Record<string, unknown>;
-    measurement?: unknown;
-} = {}): Campaign {
+function campaign(
+    options: {
+        recovery?: unknown;
+        manifest?: Record<string, unknown>;
+        measurement?: unknown;
+    } = {},
+): Campaign {
     const root = mkdtempSync(join(tmpdir(), "pd-recovery-driver-"));
     const { bin, captures, plan } = fakePodman(root);
     execFileSync(process.execPath, [MATERIALISE, root], { encoding: "utf8" });
@@ -360,14 +371,14 @@ function campaign(options: {
         write(join(armRoot, "src/index.ts"), "export default {};\n");
         write(join(armRoot, "package-lock.json"), "{}\n");
         write(
-            join(
-                armRoot,
-                "tests/fixtures/placement-harness/container-run.sh",
-            ),
+            join(armRoot, "tests/fixtures/placement-harness/container-run.sh"),
             "#!/bin/sh\n",
         );
         write(
-            join(armRoot, "tests/fixtures/placement-harness/prod014/cases.json"),
+            join(
+                armRoot,
+                "tests/fixtures/placement-harness/prod014/cases.json",
+            ),
             "[]\n",
         );
         write(
@@ -381,7 +392,10 @@ function campaign(options: {
         mkdirSync(join(root, "gen", arm, "rubrics", CASE), { recursive: true });
     }
     write(
-        join(root, "arms/a/tests/fixtures/placement-harness/prod014/truth.json"),
+        join(
+            root,
+            "arms/a/tests/fixtures/placement-harness/prod014/truth.json",
+        ),
         JSON.stringify({ [CASE]: "A durable BOM finding." }),
     );
     return { root, bin, captures, plan, stub: trialStub(root), source };
@@ -439,10 +453,7 @@ function ledgerOf(root: string): Array<Record<string, unknown>> {
 }
 
 /** The selection record of one slot's trial. */
-function selectionOf(
-    root: string,
-    arm: "a" | "b",
-): Record<string, unknown> {
+function selectionOf(root: string, arm: "a" | "b"): Record<string, unknown> {
     return JSON.parse(
         readFileSync(
             join(
@@ -636,7 +647,10 @@ describe("recovery accounting across surfaces", () => {
             // judge telemetry stays unknown rather than zero.
             assert.equal(closed.status, 0, String(closed.stderr));
             const reconciliation = JSON.parse(
-                readFileSync(join(root, "evidence/RECONCILIATION.json"), "utf8"),
+                readFileSync(
+                    join(root, "evidence/RECONCILIATION.json"),
+                    "utf8",
+                ),
             ) as {
                 judge: {
                     initialAttempts: number;
@@ -656,8 +670,16 @@ describe("recovery accounting across surfaces", () => {
             assert.equal(reconciliation.judge.initialAttempts, 2);
             assert.equal(reconciliation.judge.recoveryAttempts, 1);
             assert.deepEqual(reconciliation.selectedAttempts, [
-                { slot: 1, stamp: "pd-A-r0-R01", selectedAttemptId: "attempt-002" },
-                { slot: 2, stamp: "pd-B-r0-R01", selectedAttemptId: "attempt-001" },
+                {
+                    slot: 1,
+                    stamp: "pd-A-r0-R01",
+                    selectedAttemptId: "attempt-002",
+                },
+                {
+                    slot: 2,
+                    stamp: "pd-B-r0-R01",
+                    selectedAttemptId: "attempt-001",
+                },
             ]);
             assert.equal(reconciliation.budgets.recoveryCeiling, 1);
             assert.equal(reconciliation.budgets.recoveryUsed, 1);
@@ -696,10 +718,7 @@ describe("recovery accounting across surfaces", () => {
             };
             assert.equal(projection.status, "ok");
             assert.equal(projection.result.position.spend.recovery?.used, 1);
-            assert.equal(
-                projection.result.position.spend.recovery?.ceiling,
-                1,
-            );
+            assert.equal(projection.result.position.spend.recovery?.ceiling, 1);
             assert.equal(
                 projection.result.position.slots.find(
                     (slot) => slot.stamp === "pd-A-r0-R01",
@@ -748,21 +767,26 @@ describe("registered recovery through the real driver", () => {
                 2,
             );
             assert.equal(
-                ledger.filter((event) => event.event === "judge-launch")
-                    .length,
+                ledger.filter((event) => event.event === "judge-launch").length,
                 2,
             );
 
             // Assert: the first attempt is preserved, the second is usable.
             const first = JSON.parse(
                 readFileSync(
-                    join(attemptDir(root, "a", "attempt-001"), "judgement.json"),
+                    join(
+                        attemptDir(root, "a", "attempt-001"),
+                        "judgement.json",
+                    ),
                     "utf8",
                 ),
             ) as Record<string, unknown>;
             const second = JSON.parse(
                 readFileSync(
-                    join(attemptDir(root, "a", "attempt-002"), "judgement.json"),
+                    join(
+                        attemptDir(root, "a", "attempt-002"),
+                        "judgement.json",
+                    ),
                     "utf8",
                 ),
             ) as Record<string, unknown>;
@@ -771,7 +795,10 @@ describe("registered recovery through the real driver", () => {
             assert.equal(second.status, "judged");
             assert.equal(
                 readFileSync(
-                    join(attemptDir(root, "a", "attempt-001"), "finalAnswer.txt"),
+                    join(
+                        attemptDir(root, "a", "attempt-001"),
+                        "finalAnswer.txt",
+                    ),
                     "utf8",
                 ),
                 malformedText(),
@@ -785,7 +812,10 @@ describe("registered recovery through the real driver", () => {
             >;
             assert.equal(attempts.length, 2);
             assert.equal(attempts[0]?.packetSha256, attempts[1]?.packetSha256);
-            assert.equal(selectionOf(root, "b").selectedAttemptId, "attempt-001");
+            assert.equal(
+                selectionOf(root, "b").selectedAttemptId,
+                "attempt-001",
+            );
 
             // Assert: the blind packet is identical for both assessments and
             // the judge config carries the model and a deny-all permission.
@@ -832,18 +862,15 @@ describe("registered recovery through the real driver", () => {
                 /recovery judgement is invalid-verdict/,
             );
             assert.deepEqual(
-                readdirSync(join(root, "gen/a/results/pd-A-r0-R01/R01/ac")).filter(
-                    (name) => name.startsWith("attempt-"),
-                ),
+                readdirSync(
+                    join(root, "gen/a/results/pd-A-r0-R01/R01/ac"),
+                ).filter((name) => name.startsWith("attempt-")),
                 ["attempt-001", "attempt-002"],
             );
             const blocked = ledgerOf(root).find(
                 (event) => event.event === "slot-blocked",
             );
-            assert.match(
-                String(blocked?.reason),
-                /second unusable assessment/,
-            );
+            assert.match(String(blocked?.reason), /second unusable assessment/);
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
@@ -865,8 +892,14 @@ describe("registered recovery through the real driver", () => {
                 existsSync(attemptDir(root, "a", "attempt-002")),
                 false,
             );
-            assert.equal(readClaims(join(root, "evidence"), "recovery").length, 0);
-            assert.match(String(result.stderr), /no usable attempt-001 judgement/);
+            assert.equal(
+                readClaims(join(root, "evidence"), "recovery").length,
+                0,
+            );
+            assert.match(
+                String(result.stderr),
+                /no usable attempt-001 judgement/,
+            );
         } finally {
             rmSync(root, { recursive: true, force: true });
         }

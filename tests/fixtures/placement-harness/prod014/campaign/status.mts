@@ -3569,8 +3569,7 @@ function claimLines(position: Position): string[] {
 function slotLine(slot: SlotObservation): string {
     const note = slot.note === undefined ? "" : ` (${slot.note})`;
     const selected =
-        slot.selectedAttemptId === undefined ||
-        slot.selectedAttemptId === null
+        slot.selectedAttemptId === undefined || slot.selectedAttemptId === null
             ? ""
             : ` · selected ${slot.selectedAttemptId}`;
     return `  slot ${String(slot.slot).padStart(2, "0")} ${slot.pairId} ${slot.scenario} ${slot.arm}: ${slot.state}${note}${selected}`;

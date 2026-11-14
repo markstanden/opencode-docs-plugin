@@ -57,10 +57,7 @@ function validCloseText(): string {
 }
 
 /** One JSONL judge trail with an optional terminal step finish. */
-function trail(
-    text: string,
-    options: { reason?: string | null } = {},
-): string {
+function trail(text: string, options: { reason?: string | null } = {}): string {
     const events: Array<Record<string, unknown>> = [
         { type: "step_start", part: { type: "step-start" } },
         { type: "text", part: { type: "text", text } },
@@ -102,7 +99,11 @@ function seedTrial(root: string, options: { changed?: boolean } = {}): string {
         }),
         "utf8",
     );
-    writeFileSync(join(dir, "prompt.md"), "Fix the failing assertion.\n", "utf8");
+    writeFileSync(
+        join(dir, "prompt.md"),
+        "Fix the failing assertion.\n",
+        "utf8",
+    );
     writeFileSync(
         join(dir, "writes.txt"),
         options.changed === true
@@ -323,7 +324,10 @@ describe("judge attempt taxonomy", () => {
         // Arrange: a finished step, then trailing text with no terminal finish.
         const root = campaign();
         const body = [
-            JSON.stringify({ type: "step_start", part: { type: "step-start" } }),
+            JSON.stringify({
+                type: "step_start",
+                part: { type: "step-start" },
+            }),
             JSON.stringify({
                 type: "step_finish",
                 part: { type: "step-finish", reason: "stop" },
