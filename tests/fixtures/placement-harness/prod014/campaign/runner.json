@@ -2,10 +2,11 @@
     "source": "tests/fixtures/placement-harness/analysis",
     "files": {
         "ledger.ts": "100eefbd99bca05bbe81431c2726d0c8ea1abe0effa81c572240c305bfbeba1d",
-        "budget.ts": "b333bca724f1a2efda54d649e0c981352843ebf77af52fd0c1d98cdbe077aea3",
+        "budget.ts": "2268f4e808fe6eee0b7903a22ddfd90a7aa777a86ab8c59e2bac2061e2f5fe31",
         "selector.ts": "063fb6517eedad95d603270cc0be909bf674f26a82431a1348aa36f678e91c0b",
         "journal.ts": "ea0f70f3733a292b19af3cc13a4be5d7a30fc2589ef2d902d289114fc9259c81",
         "freeze.ts": "3397ad115995559b1eb4ad8714aed3bb77e0027c77d84f373c18f9ed451a1a21",
-        "closure.ts": "85465bae06203a1902bd4188744db814af5e09d0be74927a5614d66c73dd92bb"
+        "closure.ts": "32177b42e13a60089d226b1bb4d42de909b0dcee0ddf06bda40fc10c929fce26",
+        "recovery.ts": "1469ba2196055447244911c02a60aae25a0395b95f2e057e588ef5465cc570a9"
     }
 }

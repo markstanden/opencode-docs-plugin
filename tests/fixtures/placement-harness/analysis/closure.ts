@@ -34,6 +34,8 @@ export interface SlotObservation {
     trialDurationMs: number | null;
     /** Judge attempts recorded for this slot. */
     judgeAttempts: readonly JudgeAttempt[];
+    /** The published selection for this slot, or null when unrecorded. */
+    selectedAttemptId?: string | null;
 }
 
 /** One token field, kept explicit so a known zero differs from unknown. */
@@ -65,6 +67,12 @@ export interface JudgeAttempt {
         "judged" | "invalid-verdict" | "judge-error" | "started" | "unknown";
     /** Recorded duration, or null. */
     durationMs: number | null;
+    /** The packet identity the attempt was judged from, or null. */
+    packetSha256?: string | null;
+    /** The machine-readable failure class, when the attempt is unusable. */
+    failureClass?: string | null;
+    /** Whether the capture proves a complete final response, or null. */
+    complete?: boolean | null;
 }
 
 /** The derivation inputs. */
@@ -125,6 +133,10 @@ export interface ClosureReport {
         attempts: number;
         usableJudgements: number;
         unusableJudgements: number;
+        /** Recorded first attempts, one per judged slot at most. */
+        initialAttempts: number;
+        /** Recorded recovery attempts beside a first attempt. */
+        recoveryAttempts: number;
     };
     /** The checkpoint the campaign actually stopped at, or null. */
     stoppedAt: string | null;
@@ -196,6 +208,12 @@ export function unresolvedReservations(
     return (claims ?? []).filter((claim) => claim.state === "reserved");
 }
 
+/** The numeric ordinal of an `attempt-NNN` id, or 0 when malformed. */
+function attemptOrdinal(attemptId: string): number {
+    const match = /^attempt-(\d{3})$/.exec(attemptId);
+    return match === null ? 0 : Number(match[1]);
+}
+
 /**
  * Derive the campaign accounts from durable observations.
  * @param input The schedule, slot observations, claims and ceilings.
@@ -209,6 +227,7 @@ export function deriveClosure(input: ClosureInput): ClosureReport {
         unusableJudgements: 0,
     };
     const observed = input.observations.filter(isObserved);
+    const judgeAttempts = observed.flatMap((slot) => slot.judgeAttempts);
     for (const slot of observed) {
         addTrial(trial, slot);
         for (const attempt of slot.judgeAttempts) addJudge(judge, attempt);
@@ -229,7 +248,15 @@ export function deriveClosure(input: ClosureInput): ClosureReport {
         trialLaunches: trial.attempts,
         recordedTrials,
         trial,
-        judge,
+        judge: {
+            ...judge,
+            initialAttempts: judgeAttempts.filter(
+                (attempt) => attemptOrdinal(attempt.attemptId) === 1,
+            ).length,
+            recoveryAttempts: judgeAttempts.filter(
+                (attempt) => attemptOrdinal(attempt.attemptId) > 1,
+            ).length,
+        },
         stoppedAt: [...observed].at(-1)?.stamp ?? null,
         problems,
     };

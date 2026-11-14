@@ -22,7 +22,7 @@ import {
 import { dirname, join } from "node:path";
 
 /** The spend kinds with independent ceilings. */
-export type BudgetKind = "trial" | "judge";
+export type BudgetKind = "trial" | "judge" | "recovery";
 
 /** The lifecycle of one durable claim. */
 export type ClaimState = "reserved" | "spawned" | "closed";

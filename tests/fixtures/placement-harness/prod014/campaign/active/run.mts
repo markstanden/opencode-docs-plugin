@@ -44,6 +44,16 @@ import {
     type BudgetClaim,
 } from "../runner/budget.ts";
 import { resolveAttemptSelection } from "../runner/selector.ts";
+import {
+    claimRecoveryBudget,
+    parseRecoveryPolicy,
+    recoveryDecision,
+    recoveryPolicySha256,
+    selectionProblems,
+    selectionRecordOf,
+    type RecoveryPolicy,
+    type SelectionAttempt,
+} from "../runner/recovery.ts";
 import { spendFreezeProblem, verifyFreeze } from "../runner/freeze.ts";
 
 const ROOT = process.env.CAMPAIGN_ROOT;
@@ -81,6 +91,16 @@ const judgeKeySource = loadJudgeKey(ROOT);
 
 const readJson = (path: string): unknown =>
     existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
+
+/** Write JSON with a trailing newline. */
+const writeJson = (path: string, value: unknown): void =>
+    writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+
+/** A plain JSON object, or null when the value is not one. */
+const plainRecord = (value: unknown): Record<string, unknown> | null =>
+    typeof value === "object" && value !== null && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : null;
 
 /** The parsed ledger: absence is a state, never an empty trusted ledger. */
 const ledgerParse = (): LedgerParse => {
@@ -144,15 +164,35 @@ if (!selection.ok) {
 }
 const attemptId = selection.selection.attemptId;
 
+// The registered recovery policy is opt-in: with no declaration the campaign
+// keeps its historical behaviour, stopping on the first unusable assessment.
+const recoveryPolicy: RecoveryPolicy | null = (() => {
+    const declared = manifest?.assessment?.recovery;
+    if (declared === undefined) return null;
+    const parsed = parseRecoveryPolicy(declared);
+    if (!parsed.ok) {
+        console.error(
+            `BLOCKER: registered recovery policy is invalid: ${parsed.problems.join("; ")}`,
+        );
+        process.exit(2);
+    }
+    return parsed.policy;
+})();
+
 const frozenValue = readJson(join(EVIDENCE, "FROZEN.json"));
 const freezeRecord = freezeRecordOf(
     frozenValue === null ? null : recordOf(frozenValue, "FROZEN.json").freeze,
 );
-// One authoritative ceiling: the validated freeze record. A missing or legacy
-// record yields zero, which every claim refuses.
+// One authoritative trial ceiling from the validated freeze record. The judge
+// ceiling is the registered policy's explicit total when one is declared: the
+// policy is part of the frozen manifest premise, and its total includes the
+// recoveries, so initial assessments and recoveries share one bound.
 const ceilings = {
     trial: freezeRecord?.ceilings.trial ?? 0,
-    judge: freezeRecord?.ceilings.judge ?? 0,
+    judge:
+        recoveryPolicy === null
+            ? (freezeRecord?.ceilings.judge ?? 0)
+            : recoveryPolicy.totalJudgeAttempts,
 };
 
 /** Capture one external command's trimmed output, or an empty string. */
@@ -303,15 +343,15 @@ const usableRun = (meta: unknown): boolean => {
     );
 };
 
-const hasJudgement = (dir: string): boolean => {
-    const judgement = readJson(join(dir, "ac", attemptId, "judgement.json"));
+const hasJudgement = (attemptDir: string): boolean => {
+    const judgement = readJson(join(attemptDir, "judgement.json"));
     if (
         typeof judgement === "object" &&
         judgement !== null &&
         (judgement as Record<string, unknown>).status === "judged"
     )
         return true;
-    const resolution = readJson(join(dir, "ac", attemptId, "resolution.json"));
+    const resolution = readJson(join(attemptDir, "resolution.json"));
     return (
         typeof resolution === "object" &&
         resolution !== null &&
@@ -622,7 +662,7 @@ const runGate = (slot: ScheduleSlot) => {
 
 /** Record a skipped judge and return true, or false when a call is needed. */
 const judgeSkip = (slot: ScheduleSlot, attemptDir: string) => {
-    if (!hasJudgement(resultDir(slot))) return false;
+    if (!hasJudgement(attemptDir)) return false;
     ledger({
         event: "judge-skipped-existing",
         slot: slot.slot,
@@ -716,8 +756,12 @@ const judgeRefusal = (
     return false;
 };
 
-/** Spawn the real judge wrapper for one slot. */
-const judgeWrapperResult = (slot: ScheduleSlot, base: string) =>
+/** Spawn the real judge wrapper for one slot and attempt. */
+const judgeWrapperResult = (
+    slot: ScheduleSlot,
+    base: string,
+    selectedAttemptId: string = attemptId,
+) =>
     spawnSync(
         process.execPath,
         [
@@ -734,7 +778,7 @@ const judgeWrapperResult = (slot: ScheduleSlot, base: string) =>
             "--spec",
             specPath,
             "--attempt",
-            attemptId,
+            selectedAttemptId,
             "--launcher",
             join(
                 MEASUREMENT,
@@ -820,6 +864,314 @@ const judgeExitOf = (
     };
 };
 
+/** One slot's attempt-directory names, in order. */
+const attemptIdsOf = (acDir: string): string[] =>
+    existsSync(acDir)
+        ? readdirSync(acDir, { withFileTypes: true })
+              .filter(
+                  (entry) =>
+                      entry.isDirectory() && /^attempt-\d{3}$/.test(entry.name),
+              )
+              .map((entry) => entry.name)
+              .sort()
+        : [];
+
+/** One attempt's effective status: a resolved verdict is usable. */
+const attemptStatusOf = (attemptDir: string): string => {
+    const resolution = plainRecord(
+        readJson(join(attemptDir, "resolution.json")),
+    );
+    if (resolution?.status === "judged") return "judged";
+    const judgement = plainRecord(readJson(join(attemptDir, "judgement.json")));
+    return typeof judgement?.status === "string" ? judgement.status : "missing";
+};
+
+/** The recorded facts of every attempt for one slot, in order. */
+const attemptFactsOf = (acDir: string): SelectionAttempt[] =>
+    attemptIdsOf(acDir).map((name) => {
+        const dir = join(acDir, name);
+        const judgement = plainRecord(readJson(join(dir, "judgement.json")));
+        const meta = plainRecord(readJson(join(dir, "meta.json")));
+        const completion = plainRecord(meta?.completion);
+        return {
+            attemptId: name,
+            judgementStatus: attemptStatusOf(dir),
+            packetSha256:
+                typeof meta?.packetSha256 === "string"
+                    ? meta.packetSha256
+                    : null,
+            failureClass:
+                typeof judgement?.failureClass === "string"
+                    ? judgement.failureClass
+                    : null,
+            complete:
+                typeof completion?.complete === "boolean"
+                    ? completion.complete
+                    : null,
+        };
+    });
+
+/**
+ * Write the per-slot selection record, but only when it re-derives cleanly
+ * against the recorded attempts. The record is checked evidence for the
+ * analyser, status and closure, never a trusted pointer.
+ * @param slot The scheduled slot.
+ * @param selectedAttemptId The attempt whose judgement is authoritative.
+ * @returns Whether a verifiable selection was published.
+ */
+const writeSelection = (
+    slot: ScheduleSlot,
+    selectedAttemptId: string,
+): boolean => {
+    const acDir = join(resultDir(slot), "ac");
+    const record = selectionRecordOf({
+        slot: slot.slot,
+        pairId: slot.pairId,
+        stamp: slot.stamp,
+        arm: slot.arm,
+        scenario: slot.scenario,
+        selectedAttemptId,
+        policySha256:
+            recoveryPolicy === null
+                ? null
+                : recoveryPolicySha256(recoveryPolicy),
+        attempts: attemptFactsOf(acDir),
+    });
+    const problems = selectionProblems(record, {
+        slot: slot.slot,
+        pairId: slot.pairId,
+        stamp: slot.stamp,
+        arm: slot.arm,
+        scenario: slot.scenario,
+        attemptIds: attemptIdsOf(acDir),
+        manifestAttemptId: manifest?.assessment?.attemptId ?? null,
+        policy: recoveryPolicy,
+    });
+    if (problems.length > 0) {
+        ledger({
+            event: "selection-invalid",
+            slot: slot.slot,
+            pairId: slot.pairId,
+            stamp: slot.stamp,
+            arm: slot.arm,
+            selectedAttemptId,
+            problems,
+        });
+        console.error(
+            `BLOCKER: ${slot.stamp} selection is not verifiable: ${problems.join("; ")}`,
+        );
+        return false;
+    }
+    writeJson(join(acDir, "selection.json"), record);
+    return true;
+};
+
+/** The facts a recovery decision for one slot is made from. */
+const recoveryFactsOf = (slot: ScheduleSlot) => {
+    const acDir = join(resultDir(slot), "ac");
+    const judgeClaims = readClaims(EVIDENCE, "judge");
+    return {
+        ...attemptRecordFactsOf(join(acDir, attemptId)),
+        attemptIds: attemptIdsOf(acDir),
+        judgedAttemptIds: attemptIdsOf(acDir).filter(
+            (name) => attemptStatusOf(join(acDir, name)) === "judged",
+        ),
+        recoveryClaimsUsed: readClaims(EVIDENCE, "recovery").length,
+        judgeClaimsUsed: judgeClaims.length,
+        ledgerState: ledgerParse().state,
+        freezeProblems: premiseProblems(),
+        unresolvedReservations: unresolvedClaimNamesOf(judgeClaims, slot),
+    };
+};
+
+/** The recorded status, failure class and completion of one attempt. */
+function attemptRecordFactsOf(dir: string): {
+    attemptStatus: string;
+    failureClass: string | null;
+    completionComplete: boolean | null;
+} {
+    const judgement = plainRecord(readJson(join(dir, "judgement.json")));
+    const meta = plainRecord(readJson(join(dir, "meta.json")));
+    const completion = plainRecord(meta?.completion);
+    return {
+        attemptStatus: attemptStatusOf(dir),
+        failureClass:
+            typeof judgement?.failureClass === "string"
+                ? judgement.failureClass
+                : null,
+        completionComplete:
+            typeof completion?.complete === "boolean"
+                ? completion.complete
+                : null,
+    };
+}
+
+/** The unsettled judge claims naming one slot. */
+function unresolvedClaimNamesOf(
+    claims: readonly BudgetClaim[],
+    slot: ScheduleSlot,
+): string[] {
+    return claims
+        .filter(
+            (claim) =>
+                claim.stamp === slot.stamp &&
+                restartDisposition(claim) !== null,
+        )
+        .map((claim) => `${claim.kind}-${String(claim.index)}`);
+}
+
+/**
+ * Dispatch the single authorised recovery attempt for one slot.
+ *
+ * Both ceilings are claimed atomically before the child starts. An uncertain
+ * dispatch keeps its claims: the call may have begun, so it is never silently
+ * repeated. The first attempt is preserved and the recovery is a fresh blind
+ * assessment of the same packet.
+ * @param slot The scheduled slot.
+ * @param base The arm's stage result root.
+ * @param recoveryAttemptId The next attempt id.
+ * @returns Whether a usable recovery judgement landed.
+ */
+const dispatchRecovery = (
+    slot: ScheduleSlot,
+    base: string,
+    recoveryAttemptId: string,
+): boolean => {
+    const acDir = join(resultDir(slot), "ac");
+    const attemptDir = join(acDir, recoveryAttemptId);
+    if (existsSync(attemptDir)) {
+        return recoveryRefusal(
+            slot,
+            recoveryAttemptId,
+            "a recovery attempt directory already exists; it is never reused",
+        );
+    }
+    const claim = claimRecoveryBudget(EVIDENCE, recoveryPolicy!, {
+        stamp: slot.stamp,
+        attemptId: recoveryAttemptId,
+        key: `${slot.stamp}|${recoveryAttemptId}`,
+    });
+    if (!claim.ok) {
+        return recoveryRefusal(slot, recoveryAttemptId, claim.reason);
+    }
+    const closedAfterClaim = spendRefusal();
+    if (closedAfterClaim !== null) {
+        releaseClaim(claim.recovery);
+        releaseClaim(claim.judge);
+        return recoveryRefusal(slot, recoveryAttemptId, closedAfterClaim);
+    }
+    return runRecoveryChild(slot, base, attemptDir, recoveryAttemptId, claim);
+};
+
+/** Record a refused recovery and return false. */
+const recoveryRefusal = (
+    slot: ScheduleSlot,
+    attemptId: string,
+    reason: string,
+): boolean => {
+    ledger({
+        event: "recovery-blocked",
+        slot: slot.slot,
+        pairId: slot.pairId,
+        stamp: slot.stamp,
+        arm: slot.arm,
+        attemptId,
+        reason,
+    });
+    console.error(`BLOCKER: ${slot.stamp} recovery refused: ${reason}`);
+    return false;
+};
+
+/**
+ * Run one claimed recovery child and record its outcome.
+ * @param slot The scheduled slot.
+ * @param base The arm's stage result root.
+ * @param attemptDir The recovery attempt directory.
+ * @param recoveryAttemptId The recovery attempt id.
+ * @param claim The dual claim already taken.
+ * @param claim.recovery The recovery-budget claim.
+ * @param claim.judge The judge-budget claim.
+ * @returns Whether a usable recovery judgement landed.
+ */
+const runRecoveryChild = (
+    slot: ScheduleSlot,
+    base: string,
+    attemptDir: string,
+    recoveryAttemptId: string,
+    claim: { recovery: BudgetClaim; judge: BudgetClaim },
+): boolean => {
+    const result = judgeWrapperResult(slot, base, recoveryAttemptId);
+    if (!existsSync(join(attemptDir, "dispatch.json"))) {
+        // The wrapper refused before dispatch; return both reservations.
+        releaseClaim(claim.recovery);
+        releaseClaim(claim.judge);
+        ledger({
+            event: "recovery-refused",
+            slot: slot.slot,
+            pairId: slot.pairId,
+            stamp: slot.stamp,
+            arm: slot.arm,
+            attemptId: recoveryAttemptId,
+            exit: result.status,
+            reason:
+                String(result.stderr ?? "")
+                    .trim()
+                    .split("\n")
+                    .at(-1) ?? "",
+        });
+        console.error(
+            `BLOCKER: ${slot.stamp} recovery wrapper refused before dispatch`,
+        );
+        return false;
+    }
+    ledger({
+        event: "recovery-launch",
+        slot: slot.slot,
+        pairId: slot.pairId,
+        stamp: slot.stamp,
+        arm: slot.arm,
+        scenario: slot.scenario,
+        attemptId: recoveryAttemptId,
+        attemptDir,
+    });
+    advanceClaim(claim.recovery, "spawned");
+    advanceClaim(claim.judge, "spawned");
+    advanceClaim(claim.recovery, "closed");
+    advanceClaim(claim.judge, "closed");
+    const resolve = resolveJudge(base);
+    const judgement = plainRecord(readJson(join(attemptDir, "judgement.json")));
+    const status = attemptStatusOf(attemptDir);
+    ledger({
+        event: "recovery-exit",
+        slot: slot.slot,
+        pairId: slot.pairId,
+        stamp: slot.stamp,
+        arm: slot.arm,
+        scenario: slot.scenario,
+        attemptId: recoveryAttemptId,
+        status,
+        exit: result.status,
+        resolveExit: resolve.status,
+        outcome: judgement?.documentationOutcome ?? null,
+        failureClass: judgement?.failureClass ?? null,
+    });
+    if (status !== "judged") {
+        ledger({
+            event: "slot-blocked",
+            slot: slot.slot,
+            pairId: slot.pairId,
+            stamp: slot.stamp,
+            arm: slot.arm,
+            reason: "second unusable assessment; campaign stops",
+        });
+        console.error(
+            `BLOCKER: ${slot.stamp} recovery judgement is ${status}; no further attempt is authorised`,
+        );
+        return false;
+    }
+    return true;
+};
+
 /** Dispatch one claimed judge call and record what actually happened. */
 const dispatchJudge = (
     slot: ScheduleSlot,
@@ -858,13 +1210,23 @@ const dispatchJudge = (
 };
 
 /** Run one judge wrapper, record its dispatch truth and its outcome. */
-const runJudge = (slot: ScheduleSlot) => {
+const runJudge = (slot: ScheduleSlot): string | null => {
     const { base } = armPaths(slot.arm);
-    const attemptDir = join(resultDir(slot), "ac", attemptId);
-    if (judgeSkip(slot, attemptDir)) return true;
+    const acDir = join(resultDir(slot), "ac");
+    // A published selection is the authority for a resumed run: a recovered
+    // slot must not re-target the failed first attempt.
+    const selection = plainRecord(readJson(join(acDir, "selection.json")));
+    const selectedAttemptId =
+        typeof selection?.selectedAttemptId === "string"
+            ? selection.selectedAttemptId
+            : attemptId;
+    const attemptDir = join(acDir, selectedAttemptId);
+    if (judgeSkip(slot, attemptDir)) return selectedAttemptId;
     const claimed = judgeClaimOf(slot);
-    if (claimed.claim === undefined) return false;
-    return dispatchJudge(slot, base, attemptDir, claimed.claim);
+    if (claimed.claim === undefined) return null;
+    return dispatchJudge(slot, base, attemptDir, claimed.claim)
+        ? selectedAttemptId
+        : null;
 };
 const finishRecordedSlot = (
     slot: ScheduleSlot,
@@ -883,29 +1245,69 @@ const finishRecordedSlot = (
         return "blocked";
     }
     const judged = runJudge(slot);
-    if (!judged) {
-        ledger({
-            event: "slot-blocked",
-            slot: slot.slot,
-            pairId: slot.pairId,
-            stamp: slot.stamp,
-            arm: slot.arm,
-            reason: "no usable judgement; campaign paused",
-        });
-        console.error(
-            `BLOCKER: ${slot.stamp} has no usable ${attemptId} judgement`,
-        );
-        return "blocked";
+    if (judged !== null) return completeSlot(slot, judged, false);
+    if (recoveryPolicy !== null) {
+        return recoverSlot(slot, recoveryPolicy);
     }
+    return blockSlot(slot, `has no usable ${attemptId} judgement`);
+};
+
+/** Record a completed slot with its selected attempt. */
+const completeSlot = (
+    slot: ScheduleSlot,
+    selectedAttemptId: string,
+    recovered: boolean,
+) => {
+    if (!writeSelection(slot, selectedAttemptId)) return "blocked";
     ledger({
         event: "slot-complete",
         slot: slot.slot,
         pairId: slot.pairId,
         stamp: slot.stamp,
         arm: slot.arm,
-        judged,
+        judged: true,
+        ...(recovered ? { recovered: true, selectedAttemptId } : {}),
     });
     return "complete";
+};
+
+/** Evaluate the registered policy and dispatch the one recovery if eligible. */
+const recoverSlot = (slot: ScheduleSlot, policy: RecoveryPolicy) => {
+    const decision = recoveryDecision(policy, recoveryFactsOf(slot));
+    if (!decision.eligible) {
+        ledger({
+            event: "recovery-blocked",
+            slot: slot.slot,
+            pairId: slot.pairId,
+            stamp: slot.stamp,
+            arm: slot.arm,
+            reason: decision.reason,
+        });
+        return blockSlot(
+            slot,
+            `has no usable ${attemptId} judgement; recovery refused: ${decision.reason}`,
+        );
+    }
+    const { base } = armPaths(slot.arm);
+    const recovered = dispatchRecovery(slot, base, decision.attemptId);
+    if (!recovered) return "blocked";
+    if (!writeSelection(slot, decision.attemptId)) return "blocked";
+    console.log(`${slot.stamp}: recovered with ${decision.attemptId}`);
+    return completeSlot(slot, decision.attemptId, true);
+};
+
+/** Record a blocked slot and return the terminal status. */
+const blockSlot = (slot: ScheduleSlot, detail: string) => {
+    ledger({
+        event: "slot-blocked",
+        slot: slot.slot,
+        pairId: slot.pairId,
+        stamp: slot.stamp,
+        arm: slot.arm,
+        reason: "no usable judgement; campaign paused",
+    });
+    console.error(`BLOCKER: ${slot.stamp} ${detail}`);
+    return "blocked";
 };
 
 const processSlot = (slot: ScheduleSlot) => {
