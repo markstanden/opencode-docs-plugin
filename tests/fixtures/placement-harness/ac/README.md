@@ -82,9 +82,24 @@ the provider proxy needs, and tool-layer rather than namespace-level denial.
 
 - It does not call the harness's semantic judge; `--gate-only` keeps the
   deterministic gate verdict as separate evidence.
-- It does not retry a failed judgement or re-score a recorded one.
+- It does not retry a failed judgement or re-score a recorded one on its own.
+  A campaign that registers a recovery policy in its manifest may take **one**
+  fresh blind assessment of the same evidence after a complete captured
+  response failed with a JSON syntax error; the wrapper itself still never
+  retries, and every other failure remains an explicit stop.
 - It does not verify delivery of a tool description to a session that never
   calls the tool; that limitation is stated in the findings.
+
+## Failure classes
+
+Every attempt records a machine-readable `failureClass` beside its status:
+`transport-or-process`, `empty-or-truncated`, `json-syntax`, `schema` or
+`semantic` (absent when judged). `completion` records whether the capture
+proves a complete final response: exit 0, no signal or timeout, a nonblank
+final text part, and a trail whose last event is a `step_finish` with reason
+`stop`. Only a complete `json-syntax` failure is ever eligible for a registered
+recovery. The raw trail, the extracted final answer, the parsed problems and
+the packet identity are preserved for every attempt.
 
 ## Reproduce the published tables
 

@@ -152,13 +152,22 @@ describe("recovery policy registration", () => {
         const cases = [
             { ...DECLARED, version: 2 },
             { ...DECLARED, recoveryCeiling: 0 },
+            { ...DECLARED, recoveryCeiling: "many" },
             { ...DECLARED, totalJudgeAttempts: 1 },
+            { ...DECLARED, totalJudgeAttempts: 0 },
             { ...DECLARED, providerRequestLimit: 0 },
+            { ...DECLARED, providerRequestLimit: "unbounded" },
             { ...DECLARED, eligibleFailureClasses: [] },
+            null,
+            "policy",
         ].map((value) => parseRecoveryPolicy(value));
 
         // Assert
         for (const parsed of cases) assert.equal(parsed.ok, false);
+        assert.deepEqual(parseRecoveryPolicy(null), {
+            ok: false,
+            problems: ["recovery policy must be an object"],
+        });
     });
 
     it("hashes the normalised policy canonically", () => {
@@ -305,6 +314,24 @@ describe("recovery eligibility", () => {
         assert.match((recovery as { reason: string }).reason, /recovery ceiling/);
         assert.equal(total.eligible, false);
         assert.match((total as { reason: string }).reason, /judge-attempt ceiling/);
+    });
+
+    it("refuses a policy that makes no failure class eligible", () => {
+        // Arrange: a hand-built policy bypassing registration (defence in depth).
+        const handBuilt = {
+            ...policy(),
+            eligibleFailureClasses: [],
+        } as unknown as RecoveryPolicy;
+
+        // Act
+        const decision = recoveryDecision(handBuilt, facts());
+
+        // Assert
+        assert.equal(decision.eligible, false);
+        assert.match(
+            (decision as { reason: string }).reason,
+            /no failure class eligible/,
+        );
     });
 
     it("refuses a non-contiguous attempt sequence and an empty slot", () => {
@@ -485,6 +512,169 @@ describe("selection record as checked evidence", () => {
                 `${label}: ${JSON.stringify(problems)}`,
             );
         }
+    });
+
+    it("refuses malformed selection shapes field by field", () => {
+        // Arrange
+        const actual = {
+            ...identity,
+            attemptIds: ["attempt-001"],
+            manifestAttemptId: "attempt-001",
+            policy: null,
+        };
+        const valid = selectionRecordOf({
+            ...identity,
+            selectedAttemptId: "attempt-001",
+            policySha256: null,
+            attempts: [attempt("attempt-001", "judged")],
+        });
+        const cases: Array<[string, unknown, RegExp]> = [
+            ["not an object", null, /must be an object/],
+            ["scheme", { ...valid, schemeVersion: 2 }, /schemeVersion/],
+            ["slot", { ...valid, slot: 99 }, /slot does not match/],
+            [
+                "selected id",
+                { ...valid, selectedAttemptId: "nope" },
+                /selectedAttemptId/,
+            ],
+            [
+                "attempts array",
+                { ...valid, attempts: "nope" },
+                /attempts must be an array/,
+            ],
+            ["malformed entry", { ...valid, attempts: [null] }, /entry is malformed/],
+            [
+                "bad id",
+                { ...valid, attempts: [{ attemptId: "attempt-1" }] },
+                /entry is malformed/,
+            ],
+            [
+                "duplicate",
+                { ...valid, attempts: [valid.attempts[0], valid.attempts[0]] },
+                /repeats attempt/,
+            ],
+            [
+                "no status",
+                {
+                    ...valid,
+                    attempts: [{ attemptId: "attempt-001", packetSha256: null }],
+                },
+                /no judgement status/,
+            ],
+            [
+                "packet",
+                {
+                    ...valid,
+                    attempts: [
+                        {
+                            attemptId: "attempt-001",
+                            judgementStatus: "judged",
+                            packetSha256: 7,
+                        },
+                    ],
+                },
+                /packetSha256 is malformed/,
+            ],
+            [
+                "class",
+                {
+                    ...valid,
+                    attempts: [
+                        {
+                            attemptId: "attempt-001",
+                            judgementStatus: "judged",
+                            packetSha256: null,
+                            failureClass: 7,
+                            complete: null,
+                        },
+                    ],
+                },
+                /failureClass is malformed/,
+            ],
+            [
+                "complete",
+                {
+                    ...valid,
+                    attempts: [
+                        {
+                            attemptId: "attempt-001",
+                            judgementStatus: "judged",
+                            packetSha256: null,
+                            failureClass: null,
+                            complete: "yes",
+                        },
+                    ],
+                },
+                /complete is malformed/,
+            ],
+            [
+                "absent selection",
+                { ...valid, selectedAttemptId: "attempt-002" },
+                /names an absent attempt/,
+            ],
+        ];
+
+        // Act / Assert
+        for (const [label, value, pattern] of cases) {
+            const problems = selectionProblems(value, actual);
+            assert.ok(
+                problems.some((problem) => pattern.test(problem)),
+                `${label}: ${JSON.stringify(problems)}`,
+            );
+        }
+    });
+
+    it("refuses recalculated facts and a replaced usable first assessment", () => {
+        // Arrange: the record claims facts the evidence does not carry.
+        const valid = selectionRecordOf({
+            ...identity,
+            selectedAttemptId: "attempt-001",
+            policySha256: null,
+            attempts: [attempt("attempt-001", "judged")],
+        });
+        const actual = {
+            ...identity,
+            attemptIds: ["attempt-001"],
+            manifestAttemptId: "attempt-001",
+            policy: null,
+        };
+        const mismatch = selectionProblems(valid, {
+            ...actual,
+            attemptFacts: {
+                "attempt-001": attempt("attempt-001", "judged", {
+                    packetSha256: "different",
+                }),
+            },
+        });
+        const replacement = selectionProblems(
+            selectionRecordOf({
+                ...identity,
+                selectedAttemptId: "attempt-002",
+                policySha256: recoveryPolicySha256(policy()),
+                attempts: [
+                    attempt("attempt-001", "judged"),
+                    attempt("attempt-002", "judged"),
+                ],
+            }),
+            {
+                ...identity,
+                attemptIds: ["attempt-001", "attempt-002"],
+                manifestAttemptId: "attempt-001",
+                policy: policy(),
+            },
+        );
+
+        // Assert
+        assert.ok(
+            mismatch.some((problem) =>
+                /does not match the recorded evidence/.test(problem),
+            ),
+        );
+        assert.ok(
+            replacement.some((problem) =>
+                /replaces the usable first assessment/.test(problem),
+            ),
+        );
     });
 
     it("refuses a recovery selection with no registered policy", () => {
