@@ -31,11 +31,12 @@ Follow-up to campaign `pd-fresh-20261114T082648Z-91c173e` (measurement
   2.2.6 in the frozen image). It does deliver configuration-provided output
   controls: `providers.zai-coding-plan.body.response_format` reaches the
   chat-completion request body (loopback capture).
-- The adapter retries internally: one 429 answered by a subsequent success
-  costs two chat-completion requests for one durable judge attempt. Attempt
-  accounting and HTTP-request accounting are different units; the policy
-  records `providerRequestLimit: null` (not exposed) instead of implying a
-  bound it cannot enforce.
+- The adapter retries internally: **one retry was observed** — a 429 answered
+  by a subsequent success costs two chat-completion requests for one durable
+  judge attempt. The maximum was not established. Attempt accounting and
+  HTTP-request accounting are different units; the policy records
+  `providerRequestLimit: null` (not exposed) instead of implying a bound it
+  cannot enforce.
 - The judge wrapper and launcher are frozen campaign inputs, so the closed
   root cannot be re-judged by repaired code: a retrospective assessment would
   need separate authorisation and provenance and is outside this repair.
@@ -73,6 +74,12 @@ Follow-up to campaign `pd-fresh-20261114T082648Z-91c173e` (measurement
   counting chat vs readiness requests: valid 1 request, malformed 1 request,
   429-then-success 2 requests, response_format delivered; driver scenarios as
   above with 3 requests for valid -> malformed -> recovered -> continuation.
+  The rehearsal now reads completion and packet identity from each attempt's
+  `meta.json` and checks them: judged and malformed attempts both report
+  `completion.complete: true` and a recorded packet hash, and the recovery
+  matches the first attempt's packet. The regenerated report
+  (`reportKind: "regenerated"`, `originalReport` naming the preserved original)
+  kept the original run's request counts unchanged.
 - `npm test` 1337 pass / 0 fail; `npm run typecheck` clean; `recovery.ts`
   coverage 100% lines / 98.7% branches / 100% functions.
 

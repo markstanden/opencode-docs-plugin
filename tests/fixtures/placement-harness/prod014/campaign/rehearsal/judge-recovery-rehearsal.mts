@@ -368,6 +368,33 @@ function judgementAt(dir: string): Record<string, unknown> {
     ) as Record<string, unknown>;
 }
 
+/** One recorded judge attempt's metadata. */
+function metaAt(dir: string): Record<string, unknown> {
+    return JSON.parse(readFileSync(join(dir, "meta.json"), "utf8")) as Record<
+        string,
+        unknown
+    >;
+}
+
+/** Whether a packet identity is a recorded SHA-256. */
+function recordedPacket(meta: Record<string, unknown>): string | null {
+    return typeof meta.packetSha256 === "string" &&
+        /^[0-9a-f]{64}$/.test(meta.packetSha256)
+        ? meta.packetSha256
+        : null;
+}
+
+/** Whether the metadata proves a complete final response. */
+function recordedComplete(meta: Record<string, unknown>): boolean | null {
+    const completion =
+        typeof meta.completion === "object" && meta.completion !== null
+            ? (meta.completion as Record<string, unknown>)
+            : null;
+    return typeof completion?.complete === "boolean"
+        ? completion.complete
+        : null;
+}
+
 /** The trial stub: records one usable trial result per stamp. */
 function trialStub(root: string): string {
     const stub = join(root, "trial-stub.mjs");
@@ -702,7 +729,16 @@ async function launcherOutcome(
             },
             360000,
         );
-        const judgement = judgementAt(join(caseDir, "ac/attempt-001"));
+        const attemptDir = join(caseDir, "ac/attempt-001");
+        const judgement = judgementAt(attemptDir);
+        const meta = metaAt(attemptDir);
+        const complete = recordedComplete(meta);
+        const packetSha256 = recordedPacket(meta);
+        const metaAccurate =
+            complete === true &&
+            packetSha256 !== null &&
+            (scenario.expected === "judged" ||
+                judgement.failureClass === "json-syntax");
         const chat = provider.requests.find((entry) =>
             entry.path.includes("chat/completions"),
         );
@@ -710,13 +746,14 @@ async function launcherOutcome(
             scenario: scenario.name,
             ok:
                 judgement.status === scenario.expected &&
+                metaAccurate &&
                 provider.chatCount() >= 1,
             detail: {
                 judgementStatus: judgement.status,
                 failureClass: judgement.failureClass ?? null,
-                complete:
-                    (judgement.completion as { complete?: boolean } | undefined)
-                        ?.complete ?? null,
+                completion: complete,
+                packetSha256,
+                metaAccurate,
                 chatRequests: provider.chatCount(),
                 otherRequests: provider.otherCount(),
                 exit: result.status,
@@ -755,16 +792,29 @@ async function recoveredOutcome(
         const ledger = ledgerOf(root);
         const events = (name: string): number =>
             ledger.filter((event) => event.event === name).length;
+        const acDir = join(root, "gen/a/results/pd-A-r0-R01/R01/ac");
         const selection = JSON.parse(
-            readFileSync(
-                join(root, "gen/a/results/pd-A-r0-R01/R01/ac/selection.json"),
-                "utf8",
-            ),
+            readFileSync(join(acDir, "selection.json"), "utf8"),
         ) as { selectedAttemptId: string };
+        const firstMeta = metaAt(join(acDir, "attempt-001"));
+        const secondMeta = metaAt(join(acDir, "attempt-002"));
+        const firstPacket = recordedPacket(firstMeta);
+        const secondPacket = recordedPacket(secondMeta);
+        const packetIdentityMatched =
+            firstPacket !== null && firstPacket === secondPacket;
+        const firstComplete = recordedComplete(firstMeta);
+        const secondComplete = recordedComplete(secondMeta);
+        const metaAccurate =
+            packetIdentityMatched &&
+            firstComplete === true &&
+            secondComplete === true &&
+            judgementAt(join(acDir, "attempt-001")).failureClass ===
+                "json-syntax";
         return {
             scenario: "driver-recovered",
             ok:
                 result.status === 0 &&
+                metaAccurate &&
                 events("recovery-launch") === 1 &&
                 events("slot-complete") === 2 &&
                 events("launch") === 2 &&
@@ -776,6 +826,10 @@ async function recoveredOutcome(
                 recoveryLaunches: events("recovery-launch"),
                 slotComplete: events("slot-complete"),
                 selectedAttemptId: selection.selectedAttemptId,
+                packetIdentityMatched,
+                firstComplete,
+                secondComplete,
+                metaAccurate,
                 chatRequests: provider.chatCount(),
                 otherRequests: provider.otherCount(),
             },
@@ -896,7 +950,11 @@ function publish(containing: string, outcomes: Outcome[]): void {
         at: new Date().toISOString(),
         image: IMAGE,
         model: MODEL,
-        note: "Requests are counted at the loopback provider; one durable judge attempt may cost more than one HTTP request when the adapter retries.",
+        reportKind: process.env.REHEARSAL_ORIGINAL_REPORT
+            ? "regenerated"
+            : "original",
+        originalReport: process.env.REHEARSAL_ORIGINAL_REPORT ?? null,
+        note: "Requests are counted at the loopback provider; one durable judge attempt may cost more than one HTTP request when the adapter retries. One retry was observed; the adapter's maximum was not established.",
         outcomes,
     };
     const reportPath = join(containing, "rehearsal-report.json");

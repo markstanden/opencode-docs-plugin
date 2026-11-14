@@ -167,9 +167,10 @@ exactly as before. A campaign may freeze a recovery policy in the manifest's
 - `totalJudgeAttempts` is the single judge-attempt ceiling while a policy is
   registered; the freeze record keeps the historical initial budget.
 - `providerRequestLimit` is `null` (not exposed) unless the adapter can bound
-  HTTP requests. One durable attempt is **not** one HTTP call: the CLI retries
-  a retryable provider error internally, so the durable ledger and the provider
-  request count are different accounting units.
+  HTTP requests. One durable attempt is **not** one HTTP call: one retry was
+  observed after a retryable provider error, so the durable ledger and the
+  provider request count are different accounting units. The adapter's maximum
+  retry count was not established, and no request ceiling is enforced.
 
 Rehearse the launcher and driver against a loopback provider (no model call):
 
