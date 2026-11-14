@@ -127,7 +127,11 @@ export function scheduleOf(path: string): Schedule {
 /** The campaign manifest. */
 export interface Manifest {
     /** The frozen assessment selection. */
-    assessment?: { attemptId?: string };
+    assessment?: {
+        attemptId?: string;
+        /** The optional registered recovery policy, validated by its reader. */
+        recovery?: unknown;
+    };
 }
 
 /**
@@ -148,8 +152,14 @@ export function manifestOf(path: string): Manifest | null {
         if (attemptId !== undefined && typeof attemptId !== "string") {
             fail(`${path}.assessment.attemptId must be a string`);
         }
-        if (attemptId === undefined) return {};
-        return { assessment: { attemptId } };
+        const recovery = assessment?.recovery;
+        if (attemptId === undefined && recovery === undefined) return {};
+        return {
+            assessment: {
+                ...(attemptId === undefined ? {} : { attemptId }),
+                ...(recovery === undefined ? {} : { recovery }),
+            },
+        };
     } catch {
         return null;
     }
