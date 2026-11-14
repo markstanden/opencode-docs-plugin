@@ -354,8 +354,47 @@ export function parseAcJudgement(text: string): {
     }
 }
 
+/**
+ * The machine-readable reason one judge attempt produced no usable verdict.
+ *
+ * A complete-but-malformed answer (`json-syntax`, `schema`, `semantic`) is a
+ * model-output failure; `empty-or-truncated` means the capture itself cannot
+ * establish a final assessed response, so it is never eligible for a
+ * registered recovery. `transport-or-process` is assigned by the caller that
+ * observed the process exit.
+ */
+export type JudgeFailureClass =
+    | "transport-or-process"
+    | "empty-or-truncated"
+    | "json-syntax"
+    | "schema"
+    | "semantic";
+
+/**
+ * Classify a non-usable parsed answer.
+ *
+ * Completion refers to the final assessed response: the caller must establish
+ * that the trail terminated on the final text part and that the text is
+ * nonblank. When completion cannot be established the class is
+ * `empty-or-truncated` regardless of the parse failure, because a recovery
+ * must never be dispatched against unknown capture.
+ * @param input The completion fact, the parsed value (absent on parse failure)
+ *   and the recorded problems.
+ * @returns The failure class.
+ */
+export function judgeFailureClass(input: {
+    complete: boolean;
+    value?: Record<string, unknown> | undefined;
+    problems: string[];
+}): Exclude<JudgeFailureClass, "transport-or-process"> {
+    if (!input.complete) return "empty-or-truncated";
+    if (input.value === undefined) return "json-syntax";
+    if (judgementSchemaProblems(input.value).length > 0) return "schema";
+    return "semantic";
+}
+
 /** Schema problems for one parsed judgement: fields, enums and evidence. */
-function judgementSchemaProblems(value: Record<string, unknown>): string[] {
+export function judgementSchemaProblems(value: Record<string, unknown>): string[] {
     const problems: string[] = [];
     const outcome = value.documentationOutcome;
     if (
