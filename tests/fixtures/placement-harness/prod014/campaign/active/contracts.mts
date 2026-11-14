@@ -144,25 +144,33 @@ export type FrozenRecord = FreezeRecord;
 export function manifestOf(path: string): Manifest | null {
     try {
         const value = recordOf(readJson(path), path);
-        const assessment =
-            value.assessment === undefined
-                ? undefined
-                : recordOf(value.assessment, `${path}.assessment`);
-        const attemptId = assessment?.attemptId;
-        if (attemptId !== undefined && typeof attemptId !== "string") {
-            fail(`${path}.assessment.attemptId must be a string`);
-        }
-        const recovery = assessment?.recovery;
-        if (attemptId === undefined && recovery === undefined) return {};
-        return {
-            assessment: {
-                ...(attemptId === undefined ? {} : { attemptId }),
-                ...(recovery === undefined ? {} : { recovery }),
-            },
-        };
+        return assessmentOf(value, path);
     } catch {
         return null;
     }
+}
+
+/** The validated assessment section of one manifest. */
+function assessmentOf(
+    value: Record<string, unknown>,
+    path: string,
+): Manifest {
+    const assessment =
+        value.assessment === undefined
+            ? undefined
+            : recordOf(value.assessment, `${path}.assessment`);
+    const attemptId = assessment?.attemptId;
+    if (attemptId !== undefined && typeof attemptId !== "string") {
+        fail(`${path}.assessment.attemptId must be a string`);
+    }
+    const recovery = assessment?.recovery;
+    if (attemptId === undefined && recovery === undefined) return {};
+    return {
+        assessment: {
+            ...(attemptId === undefined ? {} : { attemptId }),
+            ...(recovery === undefined ? {} : { recovery }),
+        },
+    };
 }
 
 /** One frozen single-file input. */

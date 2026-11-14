@@ -17,7 +17,11 @@ import {
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { parseCampaignLedger, type LedgerParse } from "../runner/ledger.ts";
-import { readClaims, restartDisposition } from "../runner/budget.ts";
+import {
+    readClaims,
+    restartDisposition,
+    type BudgetClaim,
+} from "../runner/budget.ts";
 import {
     closeCampaign,
     deriveClosure,
@@ -27,7 +31,6 @@ import {
 } from "../runner/closure.ts";
 import {
     parseRecoveryPolicy,
-    recoveryPolicySha256,
     selectionProblems,
     type RecoveryPolicy,
     type SelectionAttempt,
@@ -40,6 +43,7 @@ import {
     readText,
     recordOf,
     scheduleOf,
+    type ScheduleSlot,
 } from "./contracts.mts";
 
 const ROOT = process.env.CAMPAIGN_ROOT;
@@ -250,9 +254,35 @@ function judgeAttemptOf(dir: string): JudgeAttempt & { readProblem?: string } {
     const resolution = objectOrNull(join(dir, "resolution.json"));
     const usage = usageOf(join(dir, "output.jsonl"));
     const usable = isUsableJudgement(judgement, resolution);
-    const status: AttemptStatus = usable
-        ? "judged"
-        : attemptStatus(judgement, meta);
+    return {
+        attemptId: basename(dir),
+        spawned: meta !== null || usage.steps !== null,
+        reachedInference: (usage.steps ?? 0) > 0,
+        steps: usage.steps,
+        tokens: usage.tokens,
+        status: usable ? "judged" : attemptStatus(judgement, meta),
+        durationMs: durationOf(meta),
+        ...attemptEvidenceOf(meta, judgement),
+        ...(usage.problem === undefined ? {} : { readProblem: usage.problem }),
+    };
+}
+
+/** One attempt's recorded duration, or null. */
+function durationOf(meta: Record<string, unknown> | null): number | null {
+    return meta !== null && typeof meta.durationMs === "number"
+        ? meta.durationMs
+        : null;
+}
+
+/** The selection facts one attempt records: packet, class and completion. */
+function attemptEvidenceOf(
+    meta: Record<string, unknown> | null,
+    judgement: Record<string, unknown> | null,
+): {
+    packetSha256: string | null;
+    failureClass: string | null;
+    complete: boolean | null;
+} {
     const completion =
         meta !== null &&
         typeof meta.completion === "object" &&
@@ -260,16 +290,6 @@ function judgeAttemptOf(dir: string): JudgeAttempt & { readProblem?: string } {
             ? (meta.completion as Record<string, unknown>)
             : null;
     return {
-        attemptId: basename(dir),
-        spawned: meta !== null || usage.steps !== null,
-        reachedInference: (usage.steps ?? 0) > 0,
-        steps: usage.steps,
-        tokens: usage.tokens,
-        status,
-        durationMs:
-            meta !== null && typeof meta.durationMs === "number"
-                ? meta.durationMs
-                : null,
         packetSha256:
             meta !== null && typeof meta.packetSha256 === "string"
                 ? meta.packetSha256
@@ -282,7 +302,6 @@ function judgeAttemptOf(dir: string): JudgeAttempt & { readProblem?: string } {
             completion !== null && typeof completion.complete === "boolean"
                 ? completion.complete
                 : null,
-        ...(usage.problem === undefined ? {} : { readProblem: usage.problem }),
     };
 }
 
@@ -500,6 +519,116 @@ const judgeCeiling =
         ? (frozen?.ceilings.judge ?? 0)
         : recoveryPolicy.totalJudgeAttempts;
 
+/** Every recorded attempt for one slot, collecting unreadable trails. */
+function attemptsOfSlot(
+    acDir: string,
+    readProblems: string[],
+): JudgeAttempt[] {
+    if (!existsSync(acDir)) return [];
+    return readdirSync(acDir)
+        .filter((name) => /^attempt-\d{3}$/.test(name))
+        .sort()
+        .map((name) => {
+            const attempt = judgeAttemptOf(join(acDir, name));
+            if (attempt.readProblem !== undefined) {
+                readProblems.push(attempt.readProblem);
+            }
+            return attempt;
+        });
+}
+
+/** The published selection for one slot, checked against its attempts. */
+function selectedAttemptOf(
+    slot: ScheduleSlot,
+    attempts: readonly JudgeAttempt[],
+    readProblems: string[],
+): string | null {
+    const selection = objectOrNull(
+        join(caseDir(slot), "ac", "selection.json"),
+    );
+    if (selection === null) return null;
+    const attemptFacts: Record<string, SelectionAttempt> = {};
+    for (const attempt of attempts) {
+        attemptFacts[attempt.attemptId] = {
+            attemptId: attempt.attemptId,
+            judgementStatus: attempt.status,
+            packetSha256: attempt.packetSha256 ?? null,
+            failureClass: attempt.failureClass ?? null,
+            complete: attempt.complete ?? null,
+        };
+    }
+    for (const problem of selectionProblems(selection, {
+        slot: slot.slot,
+        pairId: slot.pairId ?? "",
+        stamp: slot.stamp,
+        arm: slot.arm,
+        scenario: slot.scenario,
+        attemptIds: attempts.map((attempt) => attempt.attemptId),
+        manifestAttemptId: manifest?.assessment?.attemptId ?? null,
+        policy: recoveryPolicy,
+        attemptFacts,
+    })) {
+        readProblems.push(`${slot.stamp}: ${problem}`);
+    }
+    return typeof selection.selectedAttemptId === "string"
+        ? selection.selectedAttemptId
+        : null;
+}
+
+/** One slot's observation, derived from its durable evidence. */
+function observationOf(
+    slot: ScheduleSlot,
+    trialClaims: readonly BudgetClaim[],
+    readProblems: string[],
+): SlotObservation {
+    const dir = caseDir(slot);
+    const attempts = attemptsOfSlot(join(dir, "ac"), readProblems);
+    const selectedAttemptId = selectedAttemptOf(slot, attempts, readProblems);
+    const meta = objectOrNull(join(dir, "meta.json"));
+    const timings =
+        meta !== null &&
+        typeof meta.timings === "object" &&
+        meta.timings !== null
+            ? (meta.timings as Record<string, unknown>)
+            : {};
+    const usage = usageOf(join(dir, "stdout.jsonl"));
+    if (usage.problem !== undefined) readProblems.push(usage.problem);
+    return {
+        slot: slot.slot,
+        pairId: slot.pairId ?? null,
+        stamp: slot.stamp,
+        arm: slot.arm,
+        scenario: slot.scenario,
+        launched: launchedOf(slot, dir, trialClaims),
+        recorded: meta !== null,
+        trialSteps: usage.steps,
+        trialTokens: usage.tokens,
+        trialDurationMs:
+            typeof timings.totalMs === "number" ? timings.totalMs : null,
+        judgeAttempts: attempts,
+        selectedAttemptId,
+    };
+}
+
+/** Whether one slot's trial reached a launch, from any durable source. */
+function launchedOf(
+    slot: ScheduleSlot,
+    dir: string,
+    trialClaims: readonly BudgetClaim[],
+): boolean {
+    return (
+        existsSync(dir) ||
+        trialClaims.some(
+            (claim) =>
+                claim.stamp === slot.stamp && claim.state !== "reserved",
+        ) ||
+        ledgerParse.events.some(
+            (event) =>
+                event.event === "launch" && event.stamp === slot.stamp,
+        )
+    );
+}
+
 let lockHeld = false;
 try {
     writeFileSync(LOCK, `${String(process.pid)}\n`, {
@@ -528,86 +657,9 @@ try {
     }
 
     const readProblems: string[] = [];
-    const observations: SlotObservation[] = slots.map((slot) => {
-        const dir = caseDir(slot);
-        const acDir = join(dir, "ac");
-        const attempts = existsSync(acDir)
-            ? readdirSync(acDir)
-                  .filter((name) => /^attempt-\d{3}$/.test(name))
-                  .sort()
-                  .map((name) => {
-                      const attempt = judgeAttemptOf(join(acDir, name));
-                      if (attempt.readProblem !== undefined)
-                          readProblems.push(attempt.readProblem);
-                      return attempt;
-                  })
-            : [];
-        const selection = objectOrNull(join(acDir, "selection.json"));
-        let selectedAttemptId: string | null = null;
-        if (selection !== null) {
-            selectedAttemptId =
-                typeof selection.selectedAttemptId === "string"
-                    ? selection.selectedAttemptId
-                    : null;
-            const attemptFacts: Record<string, SelectionAttempt> = {};
-            for (const attempt of attempts) {
-                attemptFacts[attempt.attemptId] = {
-                    attemptId: attempt.attemptId,
-                    judgementStatus: attempt.status,
-                    packetSha256: attempt.packetSha256 ?? null,
-                    failureClass: attempt.failureClass ?? null,
-                    complete: attempt.complete ?? null,
-                };
-            }
-            for (const problem of selectionProblems(selection, {
-                slot: slot.slot,
-                pairId: slot.pairId ?? "",
-                stamp: slot.stamp,
-                arm: slot.arm,
-                scenario: slot.scenario,
-                attemptIds: attempts.map((attempt) => attempt.attemptId),
-                manifestAttemptId: manifest?.assessment?.attemptId ?? null,
-                policy: recoveryPolicy,
-                attemptFacts,
-            })) {
-                readProblems.push(`${slot.stamp}: ${problem}`);
-            }
-        }
-        const meta = objectOrNull(join(dir, "meta.json"));
-        const timings =
-            meta !== null &&
-            typeof meta.timings === "object" &&
-            meta.timings !== null
-                ? (meta.timings as Record<string, unknown>)
-                : {};
-        const usage = usageOf(join(dir, "stdout.jsonl"));
-        if (usage.problem !== undefined) readProblems.push(usage.problem);
-        const launched =
-            existsSync(dir) ||
-            trialClaims.some(
-                (claim) =>
-                    claim.stamp === slot.stamp && claim.state !== "reserved",
-            ) ||
-            ledgerParse.events.some(
-                (event) =>
-                    event.event === "launch" && event.stamp === slot.stamp,
-            );
-        return {
-            slot: slot.slot,
-            pairId: slot.pairId ?? null,
-            stamp: slot.stamp,
-            arm: slot.arm,
-            scenario: slot.scenario,
-            launched,
-            recorded: meta !== null,
-            trialSteps: usage.steps,
-            trialTokens: usage.tokens,
-            trialDurationMs:
-                typeof timings.totalMs === "number" ? timings.totalMs : null,
-            judgeAttempts: attempts,
-            selectedAttemptId,
-        };
-    });
+    const observations: SlotObservation[] = slots.map((slot) =>
+        observationOf(slot, trialClaims, readProblems),
+    );
 
     const report = deriveClosure({
         scheduledSlots: slots.length,

@@ -134,7 +134,8 @@ describe("recovery policy registration", () => {
 
     it("requires an explicit provider-request capability", () => {
         // Arrange
-        const { providerRequestLimit: _omitted, ...missing } = DECLARED;
+        const missing: Record<string, unknown> = { ...DECLARED };
+        delete missing.providerRequestLimit;
 
         // Act
         const parsed = parseRecoveryPolicy(missing);

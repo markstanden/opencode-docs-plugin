@@ -24,6 +24,7 @@ import {
     selectionProblems,
     type RecoveryPolicy,
     type SelectionAttempt,
+    type SelectionFacts,
 } from "./recovery.ts";
 import {
     answerIdentityProblem,
@@ -890,28 +891,20 @@ function attemptFactOf(
     attemptId: string,
 ): SelectionAttempt {
     const base = joinPath(acDir, attemptId);
-    const judgement = loadJson(reader, joinPath(base, "judgement.json"));
-    const resolution = loadJson(reader, joinPath(base, "resolution.json"));
-    const meta = loadJson(reader, joinPath(base, "meta.json"));
-    const recorded = (loadedValue: Loaded<unknown>): Record<string, unknown> | null =>
-        loadedValue.state === "available" && isRecord(loadedValue.value)
-            ? loadedValue.value
-            : null;
-    const judge = recorded(judgement);
-    const resolved = recorded(resolution);
-    const metadata = recorded(meta);
+    const judge = loadedRecordOf(
+        loadJson(reader, joinPath(base, "judgement.json")),
+    );
+    const resolved = loadedRecordOf(
+        loadJson(reader, joinPath(base, "resolution.json")),
+    );
+    const metadata = loadedRecordOf(loadJson(reader, joinPath(base, "meta.json")));
     const completion =
         metadata !== null && isRecord(metadata.completion)
             ? metadata.completion
             : null;
     return {
         attemptId,
-        judgementStatus:
-            resolved?.status === "judged"
-                ? "judged"
-                : typeof judge?.status === "string"
-                  ? judge.status
-                  : "missing",
+        judgementStatus: attemptStatusOf(judge, resolved),
         packetSha256:
             typeof metadata?.packetSha256 === "string"
                 ? metadata.packetSha256
@@ -925,6 +918,24 @@ function attemptFactOf(
                 ? completion.complete
                 : null,
     };
+}
+
+/** The recorded object of one loaded JSON file, or null. */
+function loadedRecordOf(
+    loaded: Loaded<unknown>,
+): Record<string, unknown> | null {
+    return loaded.state === "available" && isRecord(loaded.value)
+        ? loaded.value
+        : null;
+}
+
+/** One attempt's effective status: a resolved verdict is usable. */
+function attemptStatusOf(
+    judge: Record<string, unknown> | null,
+    resolved: Record<string, unknown> | null,
+): string {
+    if (resolved?.status === "judged") return "judged";
+    return typeof judge?.status === "string" ? judge.status : "missing";
 }
 
 /** The outcome of reading one slot's published selection. */
@@ -983,17 +994,10 @@ function loadSelection(
     for (const attemptId of attemptIds) {
         attemptFacts[attemptId] = attemptFactOf(reader, acDir, attemptId);
     }
-    const problems = selectionProblems(loaded.value, {
-        ...(options.slot === undefined ? {} : { slot: options.slot }),
-        ...(options.pairId === undefined ? {} : { pairId: options.pairId }),
-        stamp: options.stamp,
-        ...(options.arm === undefined ? {} : { arm: options.arm }),
-        scenario: options.scenario,
-        attemptIds,
-        manifestAttemptId: options.attemptId ?? "attempt-001",
-        policy: options.recoveryPolicy ?? null,
-        attemptFacts,
-    });
+    const problems = selectionProblems(
+        loaded.value,
+        selectionFactsOf(options, attemptIds, attemptFacts),
+    );
     const record = isRecord(loaded.value) ? loaded.value : null;
     const selected =
         record !== null && typeof record.selectedAttemptId === "string"
@@ -1011,6 +1015,25 @@ function loadSelection(
         };
     }
     return { attemptId: selected, present: true, invalid: false, problems: [] };
+}
+
+/** The facts a recorded selection is checked against here. */
+function selectionFactsOf(
+    options: TrialRecordOptions,
+    attemptIds: readonly string[],
+    attemptFacts: Record<string, SelectionAttempt>,
+): SelectionFacts {
+    return {
+        ...(options.slot === undefined ? {} : { slot: options.slot }),
+        ...(options.pairId === undefined ? {} : { pairId: options.pairId }),
+        stamp: options.stamp,
+        ...(options.arm === undefined ? {} : { arm: options.arm }),
+        scenario: options.scenario,
+        attemptIds,
+        manifestAttemptId: options.attemptId ?? "attempt-001",
+        policy: options.recoveryPolicy ?? null,
+        attemptFacts,
+    };
 }
 
 /**
@@ -1032,13 +1055,30 @@ function loadAssessment(
     if (selection.invalid) {
         return unassessedResult("unassessed", acDir, selection.problems);
     }
-    const attemptId =
-        selection.attemptId ?? options.attemptId ?? "attempt-001";
+    const attemptId = selection.attemptId ?? options.attemptId ?? "attempt-001";
     const problems = unselectedAttemptProblems(reader, acDir, attemptId);
-    const selectedField =
-        selection.present && selection.attemptId !== null
-            ? { selectedAttemptId: selection.attemptId }
-            : {};
+    const assessment = attemptAssessmentOf(
+        reader,
+        acDir,
+        attempt,
+        attemptId,
+        options,
+        problems,
+    );
+    return selection.present && selection.attemptId !== null
+        ? { ...assessment, selectedAttemptId: selection.attemptId }
+        : assessment;
+}
+
+/** The assessment of one selected attempt directory. */
+function attemptAssessmentOf(
+    reader: EvidenceReader,
+    acDir: string,
+    attempt: AttemptState,
+    attemptId: string,
+    options: TrialRecordOptions,
+    problems: string[],
+): TrialAssessment {
     if (attempt === "absent") {
         return unassessedResult("not-run", acDir, problems);
     }
@@ -1053,10 +1093,7 @@ function loadAssessment(
     ) {
         return unassessedResult("unassessed", selected, problems);
     }
-    const assessment = selectedAssessment(reader, selected, options, problems);
-    return selection.present
-        ? { ...assessment, ...selectedField }
-        : assessment;
+    return selectedAssessment(reader, selected, options, problems);
 }
 
 /**

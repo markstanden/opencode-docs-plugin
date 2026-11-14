@@ -188,6 +188,26 @@ function completionEvidence(
     signal: string | null,
     timedOut: boolean,
 ): CompletionEvidence {
+    const finalTextPresent = answer.trim() !== "";
+    const trailTerminated = trailTerminatedOf(stdout);
+    return {
+        exit,
+        signal,
+        timedOut,
+        finalTextPresent,
+        trailTerminated,
+        complete: captureComplete(
+            exit,
+            signal,
+            timedOut,
+            finalTextPresent,
+            trailTerminated,
+        ),
+    };
+}
+
+/** Whether a trail ends on a `step_finish` with reason `stop`. */
+function trailTerminatedOf(stdout: string): boolean {
     const lines = stdout
         .split("\n")
         .map((line) => line.trim())
@@ -195,25 +215,29 @@ function completionEvidence(
     const event =
         lines.length === 0 ? undefined : trailEvent(lines[lines.length - 1]!);
     const part = event?.part;
-    const trailTerminated =
+    return (
         event?.type === "step_finish" &&
         typeof part === "object" &&
         part !== null &&
-        (part as Record<string, unknown>).reason === "stop";
-    const finalTextPresent = answer.trim() !== "";
-    return {
-        exit,
-        signal,
-        timedOut,
-        finalTextPresent,
-        trailTerminated,
-        complete:
-            exit === 0 &&
-            signal === null &&
-            !timedOut &&
-            finalTextPresent &&
-            trailTerminated,
-    };
+        (part as Record<string, unknown>).reason === "stop"
+    );
+}
+
+/** Whether the capture proves a complete final response. */
+function captureComplete(
+    exit: number | null,
+    signal: string | null,
+    timedOut: boolean,
+    finalTextPresent: boolean,
+    trailTerminated: boolean,
+): boolean {
+    return (
+        exit === 0 &&
+        signal === null &&
+        !timedOut &&
+        finalTextPresent &&
+        trailTerminated
+    );
 }
 
 /** The final text part of a JSONL trail. */
@@ -698,43 +722,15 @@ function recordJudgement(
         timedOut,
     );
     const processOk = judgeProcessOk(result, answer);
-    const parsed = processOk ? parseAcJudgement(answer) : undefined;
-    const processFailure =
-        result.error !== undefined ||
-        result.signal !== null ||
-        result.status !== 0;
-    let judgement: Record<string, unknown>;
-    let failureClass: JudgeFailureClass | null;
-    if (!processOk) {
-        failureClass = processFailure
-            ? "transport-or-process"
-            : "empty-or-truncated";
-        judgement = {
-            status: "judge-error",
-            failureClass,
-            completion,
-            problems: [`process not ok (exit ${result.status})`],
-        };
-    } else {
-        const payload = judgementPayload(
-            parsed!,
-            state,
-            caseId,
-            scoringSpec,
-        );
-        failureClass =
-            payload.problems.length === 0
-                ? null
-                : judgeFailureClass({
-                      complete: completion.complete,
-                      value: parsed!.value,
-                      problems: payload.problems,
-                  });
-        judgement =
-            payload.problems.length === 0
-                ? payload.value
-                : { ...payload.value, failureClass, completion };
-    }
+    const outcome = processOk
+        ? verdictOutcome(
+              parseAcJudgement(answer),
+              state,
+              caseId,
+              scoringSpec,
+              completion,
+          )
+        : processFailureOutcome(result, completion);
     writeFinishedMeta(
         attemptDir,
         state,
@@ -744,11 +740,57 @@ function recordJudgement(
         started,
         result.status,
         completion,
-        failureClass,
+        outcome.failureClass,
         packetSha256,
     );
-    writeJson(join(attemptDir, "judgement.json"), judgement);
-    return judgement.status === "judged" ? 0 : 1;
+    writeJson(join(attemptDir, "judgement.json"), outcome.judgement);
+    return outcome.judgement.status === "judged" ? 0 : 1;
+}
+
+/** The judgement payload for one parsed verdict. */
+function verdictOutcome(
+    parsed: ReturnType<typeof parseAcJudgement>,
+    state: DocState,
+    caseId: string,
+    scoringSpec: unknown,
+    completion: CompletionEvidence,
+): { failureClass: JudgeFailureClass | null; judgement: Record<string, unknown> } {
+    const payload = judgementPayload(parsed, state, caseId, scoringSpec);
+    if (payload.problems.length === 0) {
+        return { failureClass: null, judgement: payload.value };
+    }
+    const failureClass = judgeFailureClass({
+        complete: completion.complete,
+        value: parsed.value,
+        problems: payload.problems,
+    });
+    return {
+        failureClass,
+        judgement: { ...payload.value, failureClass, completion },
+    };
+}
+
+/** The judgement payload for a process that produced no usable capture. */
+function processFailureOutcome(
+    result: ReturnType<typeof spawnSync>,
+    completion: CompletionEvidence,
+): { failureClass: JudgeFailureClass; judgement: Record<string, unknown> } {
+    const processFailure =
+        result.error !== undefined ||
+        result.signal !== null ||
+        result.status !== 0;
+    const failureClass = processFailure
+        ? "transport-or-process"
+        : "empty-or-truncated";
+    return {
+        failureClass,
+        judgement: {
+            status: "judge-error",
+            failureClass,
+            completion,
+            problems: [`process not ok (exit ${result.status})`],
+        },
+    };
 }
 
 /**
@@ -1119,13 +1161,7 @@ function resolveAttempt(
     judgement: Record<string, unknown>,
     scoringSpec: unknown,
 ): string {
-    const reported = judgement.problems;
-    if (
-        !Array.isArray(reported) ||
-        !reported.includes("verdict is not valid JSON")
-    ) {
-        return "refused";
-    }
+    if (!isParseFailure(judgement)) return "refused";
     if (existsSync(join(attemptDir, "resolution.json"))) return "skipped";
     const output = readText(join(attemptDir, "output.jsonl"));
     const meta = recordOf(
@@ -1140,62 +1176,93 @@ function resolveAttempt(
         typeof meta.signal === "string" ? meta.signal : null,
         meta.timedOut === true,
     );
-    const extracted = firstBalancedObject(answer);
-    const record: {
-        status: string;
-        method: string;
-        parsed?: unknown;
-        problems?: string[];
-        reason?: string;
-        failureClass?: JudgeFailureClass | null;
-        completion?: CompletionEvidence;
-    } = {
-        status: "unresolved",
-        method: "first-balanced-object",
+    const record = resolutionRecordOf(
+        firstBalancedObject(answer),
+        meta,
+        scoringSpec,
         completion,
-    };
-    const unfinished = completion.complete
-        ? "json-syntax"
-        : "empty-or-truncated";
-    if (extracted !== undefined) {
-        try {
-            const parsed = JSON.parse(extracted);
-            if (typeof meta.caseId !== "string") {
-                throw new Error("meta.json has no caseId");
-            }
-            const state = recordOf(
-                meta.state,
-                "meta.json state",
-            ) as unknown as DocState;
-            const problems = validateAcJudgement(
-                parsed,
-                state,
-                judgementOptions(meta.caseId, scoringSpec),
-            );
-            if (problems.length === 0) {
-                record.status = "judged";
-                record.parsed = parsed;
-            } else {
-                record.problems = problems;
-                record.failureClass = judgeFailureClass({
-                    complete: completion.complete,
-                    value: parsed,
-                    problems,
-                });
-            }
-        } catch (error) {
-            record.reason = String(error);
-            record.failureClass = unfinished;
-        }
-    } else {
-        record.failureClass = unfinished;
-    }
+    );
     writeJson(join(attemptDir, "resolution.json"), {
         ...record,
         originalOutputSha256: sha256(output),
         originalJudgement: judgement,
     });
     return record.status === "judged" ? "resolved" : "refused";
+}
+
+/** Whether a recorded judgement is a parse failure the resolver may re-read. */
+function isParseFailure(judgement: Record<string, unknown>): boolean {
+    const problems = judgement.problems;
+    return (
+        Array.isArray(problems) &&
+        problems.includes("verdict is not valid JSON")
+    );
+}
+
+/** The resolution record for one re-read capture. */
+function resolutionRecordOf(
+    extracted: string | undefined,
+    meta: Record<string, unknown>,
+    scoringSpec: unknown,
+    completion: CompletionEvidence,
+): {
+    status: string;
+    method: string;
+    parsed?: unknown;
+    problems?: string[];
+    reason?: string;
+    failureClass?: JudgeFailureClass | null;
+    completion: CompletionEvidence;
+} {
+    const method = "first-balanced-object";
+    const unfinished = completion.complete
+        ? "json-syntax"
+        : "empty-or-truncated";
+    if (extracted === undefined) {
+        return {
+            status: "unresolved",
+            method,
+            completion,
+            failureClass: unfinished,
+        };
+    }
+    try {
+        const parsed = JSON.parse(extracted);
+        if (typeof meta.caseId !== "string") {
+            throw new Error("meta.json has no caseId");
+        }
+        const state = recordOf(
+            meta.state,
+            "meta.json state",
+        ) as unknown as DocState;
+        const problems = validateAcJudgement(
+            parsed,
+            state,
+            judgementOptions(meta.caseId, scoringSpec),
+        );
+        if (problems.length === 0) {
+            return { status: "judged", method, parsed, completion };
+        }
+        return {
+            status: "unresolved",
+            method,
+            completion,
+            problems,
+            failureClass: judgeFailureClass({
+                complete: completion.complete,
+                value: parsed,
+                problems,
+            }),
+        };
+    } catch (error) {
+        return {
+            status: "unresolved",
+            method,
+            completion,
+            reason: String(error),
+            failureClass: unfinished,
+        };
+    }
 }
 
 /**

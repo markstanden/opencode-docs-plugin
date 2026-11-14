@@ -40,9 +40,6 @@ const POLICY = {
     providerRequestLimit: null,
 };
 
-const sha256 = (body: string | Buffer): string =>
-    createHash("sha256").update(body).digest("hex");
-
 /** The malformed judge text from the observed campaign. */
 function malformedText(): string {
     const line = readFileSync(OBSERVED, "utf8").trim().split("\n")[1]!;
@@ -541,7 +538,7 @@ function analyserManifest(): Record<string, unknown> {
 describe("recovery accounting across surfaces", () => {
     it("agrees between the analyser, status, reconciliation and reports", () => {
         // Arrange: one recovered slot and one clean slot.
-        const { root, captures, plan, source } = campaign({
+        const { root, plan, source } = campaign({
             manifest: analyserManifest(),
             measurement: { retrievalOpportunities: [], scenarios: {} },
         });
@@ -929,7 +926,7 @@ describe("registered recovery through the real driver", () => {
 
     it("refuses a closed campaign before any dispatch", () => {
         // Arrange
-        const { root, captures, plan } = campaign({ recovery: POLICY });
+        const { root, captures } = campaign({ recovery: POLICY });
         write(
             join(root, "evidence/ATTEMPTS.jsonl"),
             `${JSON.stringify({

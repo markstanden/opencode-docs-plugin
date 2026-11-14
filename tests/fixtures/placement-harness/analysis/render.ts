@@ -677,6 +677,11 @@ function selectionSection(result: AnalysisResult): string {
     ].join("\n");
 }
 
+/**
+ * Render the full analysis report.
+ * @param result The analysis result.
+ * @returns Markdown.
+ */
 export function renderReport(result: AnalysisResult): string {
     const screenHeadline =
         result.measures.status === "available"

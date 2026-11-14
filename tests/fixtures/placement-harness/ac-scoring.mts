@@ -378,8 +378,10 @@ export type JudgeFailureClass =
  * nonblank. When completion cannot be established the class is
  * `empty-or-truncated` regardless of the parse failure, because a recovery
  * must never be dispatched against unknown capture.
- * @param input The completion fact, the parsed value (absent on parse failure)
- *   and the recorded problems.
+ * @param input The recorded facts and problems.
+ * @param input.complete Whether the capture proves a complete final response.
+ * @param input.value The parsed value, absent on a parse failure.
+ * @param input.problems The recorded problems.
  * @returns The failure class.
  */
 export function judgeFailureClass(input: {
