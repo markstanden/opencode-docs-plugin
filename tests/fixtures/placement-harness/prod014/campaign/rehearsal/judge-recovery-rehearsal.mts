@@ -776,6 +776,34 @@ function rmTree(root: string): void {
     rmSync(root, { recursive: true, force: true });
 }
 
+/** The metadata facts a recovered slot must prove. */
+function recoveryMetaFacts(acDir: string): {
+    packetIdentityMatched: boolean;
+    firstComplete: boolean | null;
+    secondComplete: boolean | null;
+    metaAccurate: boolean;
+} {
+    const firstMeta = metaAt(join(acDir, "attempt-001"));
+    const secondMeta = metaAt(join(acDir, "attempt-002"));
+    const firstPacket = recordedPacket(firstMeta);
+    const secondPacket = recordedPacket(secondMeta);
+    const packetIdentityMatched =
+        firstPacket !== null && firstPacket === secondPacket;
+    const firstComplete = recordedComplete(firstMeta);
+    const secondComplete = recordedComplete(secondMeta);
+    return {
+        packetIdentityMatched,
+        firstComplete,
+        secondComplete,
+        metaAccurate:
+            packetIdentityMatched &&
+            firstComplete === true &&
+            secondComplete === true &&
+            judgementAt(join(acDir, "attempt-001")).failureClass ===
+                "json-syntax",
+    };
+}
+
 /** The driver scenario: valid -> malformed -> recovered -> continuation. */
 async function recoveredOutcome(
     containing: string,
@@ -796,25 +824,12 @@ async function recoveredOutcome(
         const selection = JSON.parse(
             readFileSync(join(acDir, "selection.json"), "utf8"),
         ) as { selectedAttemptId: string };
-        const firstMeta = metaAt(join(acDir, "attempt-001"));
-        const secondMeta = metaAt(join(acDir, "attempt-002"));
-        const firstPacket = recordedPacket(firstMeta);
-        const secondPacket = recordedPacket(secondMeta);
-        const packetIdentityMatched =
-            firstPacket !== null && firstPacket === secondPacket;
-        const firstComplete = recordedComplete(firstMeta);
-        const secondComplete = recordedComplete(secondMeta);
-        const metaAccurate =
-            packetIdentityMatched &&
-            firstComplete === true &&
-            secondComplete === true &&
-            judgementAt(join(acDir, "attempt-001")).failureClass ===
-                "json-syntax";
+        const facts = recoveryMetaFacts(acDir);
         return {
             scenario: "driver-recovered",
             ok:
                 result.status === 0 &&
-                metaAccurate &&
+                facts.metaAccurate &&
                 events("recovery-launch") === 1 &&
                 events("slot-complete") === 2 &&
                 events("launch") === 2 &&
@@ -826,10 +841,7 @@ async function recoveredOutcome(
                 recoveryLaunches: events("recovery-launch"),
                 slotComplete: events("slot-complete"),
                 selectedAttemptId: selection.selectedAttemptId,
-                packetIdentityMatched,
-                firstComplete,
-                secondComplete,
-                metaAccurate,
+                ...facts,
                 chatRequests: provider.chatCount(),
                 otherRequests: provider.otherCount(),
             },
