@@ -21,21 +21,26 @@ Per-case wrappers live in `~/tmp/docs-placement/E01.sh`…`E18.sh`.
 
 ## Models
 
+- **Registered campaigns take precedence:** when a campaign root carries
+  `prepare/manifest.json` or `evidence/FROZEN.json`, its frozen trial/judge
+  models, ceilings and attempt selection are authoritative. Never apply this
+  skill's defaults — session-model or otherwise — to a registered campaign;
+  follow its run card and `status.mts` instead.
 - **Trials — the behaviour under test:** the workhorse default
-  `opencode-go/deepseek-v4.1-flash`. Change it only when the Guv requests a
-  model (`--model provider/model`); the trial model is the variable being
+  `opencode-go/deepseek-v4.1-flash`. Change it only when the task prompt names
+  a model (`--model provider/model`); the trial model is the variable being
   compared, so hold it constant within a comparison.
-- **Judging — the reasoning:** the **current session model**, passed
-  explicitly as `--judge-model <this session's provider/model>` — but only
-  when that model is free-tier; otherwise fall back to the trial's free
-  workhorse tier. Judging with yourself makes the default UX sense; say
-  which model judged when reporting. Judges run **host-side**
-  (`node …/harness.mts judge …`): provider keys live with the host session,
-  and judging reads local result artefacts, so it needs no sandbox.
-- **Cost policy — free by default:** trials and judging must stay on
-  free/flash-tier models unless the Guv explicitly names a paid one. The
-  strong-model pass is always deliberate: `--judge-model <paid model>`, or
-  the exported `dossier.md` handed to an external frontier account.
+- **Judging — the reasoning:** judging uses the current session model when the
+  task prompt names it, else the workhorse default; say which model judged
+  when reporting. Judges run **host-side** (`node …/harness.mts judge …`):
+  provider keys live with the host session, and judging reads local result
+  artefacts, so it needs no sandbox.
+- **Cost policy:** trials and judging make real provider calls; model
+  selection, budgets and recovery come from the task prompt or the registered
+  campaign's frozen configuration — never from this skill. The strong-model
+  pass is always deliberate: `--judge-model <model>`, or the exported
+  `dossier.md` handed to an external frontier account. Name any non-default
+  model in the report.
 - **Deep scan:** `export` writes `results/<stamp>/dossier.md`; hand it to a
   frontier model (in OpenCode or external) when the Guv wants a second,
   stronger opinion on a whole sweep.
@@ -81,8 +86,11 @@ verified docs use. This is not a behavioural gate for the other cases.
 - `summary.md` per stamp: verdict, destination, writes, docs-tool call count,
   and the trail `Exposure` classification (guidance / case list / rubric-case
   / repo cases).
-- `writes.txt` must say `none`; anything else is a trial-integrity finding
-  before it is a guidance finding.
+- On decision-only cases `writes.txt` must say `none`; policy-bearing cases
+  are judged by their declared `mutationPolicy` and `expectedDocs` — an
+  out-of-policy write (or any write in a decision-only trial without
+  `--allow-writes`) is the trial-integrity finding before it is a guidance
+  finding.
 - Borderline cases (E05, E07, E16) flicker between sweeps — the model is the
   uncontrolled variable; compare distributions, not single runs.
 - A guidance wording that keeps failing is durable knowledge: record it under
