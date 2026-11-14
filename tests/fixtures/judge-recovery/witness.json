@@ -1,0 +1,13 @@
+{
+    "campaign": "pd-fresh-20261114T082648Z-91c173e",
+    "slot": 9,
+    "pairId": "P05",
+    "stamp": "pd-A-r0-S05",
+    "scenario": "S05",
+    "attempt": "attempt-001",
+    "judgeModel": "zai-coding-plan/glm-5.3-flash",
+    "originalOutputSha256": "90e06045cc7d5e6cace645dab1a8818dafb98df8a7b6e1e726757bd9f35bf0d4",
+    "observedClass": "json-syntax",
+    "defect": "the captured response ends with a transposed closing sequence: the last three characters are '\"} ]' where valid JSON requires '\"] }'; the evidence array is never closed",
+    "note": "Raw capture copied byte-identical; no scrubbing was required (synthetic scenario content and neutral session ids only)."
+}

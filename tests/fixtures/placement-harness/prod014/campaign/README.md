@@ -133,6 +133,57 @@ If a run is interrupted, preserve the root. An unresolved reservation blocks a
 repeat and a later range until the evidence is inspected; the runner never
 retries a spend whose outcome is unknown.
 
+## Registered recovery (opt-in)
+
+With no registration the campaign stops on the first unusable assessment,
+exactly as before. A campaign may freeze a recovery policy in the manifest's
+`assessment.recovery`:
+
+```json
+"recovery": {
+  "version": 1,
+  "eligibleFailureClasses": ["json-syntax"],
+  "requiresCompletionEvidence": true,
+  "maxRecoveriesPerSlot": 1,
+  "recoveryCeiling": 2,
+  "totalJudgeAttempts": 18,
+  "providerRequestLimit": null
+}
+```
+
+- Only a **complete captured response** whose sole defect is a JSON syntax
+  failure is eligible. Transport uncertainty, truncation, schema failure,
+  semantic inconsistency, a changed freeze, a closed ledger and an unresolved
+  reservation all remain explicit stops.
+- A valid first assessment is never replaced. The recovery is a fresh blind
+  assessment of the **same packet** (matching packet hashes), written to
+  `attempt-002` beside the preserved `attempt-001`.
+- The recovery and total judge ceilings are claimed atomically before dispatch;
+  a second unusable assessment stops the campaign.
+- Each slot publishes `ac/selection.json`: the selected attempt and every
+  attempt's status, failure class, completion and packet identity. The
+  analyser, closure and status re-derive those facts and refuse a selection
+  they cannot check.
+- `totalJudgeAttempts` is the single judge-attempt ceiling while a policy is
+  registered; the freeze record keeps the historical initial budget.
+- `providerRequestLimit` is `null` (not exposed) unless the adapter can bound
+  HTTP requests. One durable attempt is **not** one HTTP call: one retry was
+  observed after a retryable provider error, so the durable ledger and the
+  provider request count are different accounting units. The adapter's maximum
+  retry count was not established, and no request ceiling is enforced.
+
+Rehearse the launcher and driver against a loopback provider (no model call):
+
+```sh
+node tests/fixtures/placement-harness/prod014/campaign/rehearsal/judge-recovery-rehearsal.mts /tmp/pd-rehearsal
+```
+
+It counts chat-completion requests separately from readiness/model-list
+requests, measures the adapter's retry count after a 429, proves whether
+`providers.<id>.body.response_format` reaches the provider request, and runs
+the driver through valid → malformed → recovered → continuation, an exhausted
+recovery budget and a post-close refusal.
+
 ## Historical replay
 
 ```sh

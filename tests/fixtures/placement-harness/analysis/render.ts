@@ -176,6 +176,21 @@ export interface AnalysisResult {
     cost: CostSummary;
     /** The reconciled attempt ledger, when the campaign declared one. */
     ledger: LedgerSummary | null;
+    /** Per-slot assessment selection, from checked selection records. */
+    assessmentSelection: {
+        /** Every scheduled slot's selected attempt, or null when unrecorded. */
+        slots: Array<{
+            stamp: string;
+            selectedAttemptId: string | null;
+            recovered: boolean;
+        }>;
+        /** Slots whose selection is the frozen first attempt. */
+        initial: number;
+        /** Slots whose selection is a recovery attempt. */
+        recovered: number;
+        /** Slots with no selection record (historical evidence). */
+        unrecorded: number;
+    };
     /** Explicit limitations, rendered verbatim. */
     limitations: string[];
 }
@@ -636,6 +651,41 @@ function limitationSection(result: AnalysisResult): string {
  * @param result The analysis result.
  * @returns The complete report.
  */
+/**
+ * Render the assessment-selection section.
+ * @param result The analysis result.
+ * @returns Markdown.
+ */
+function selectionSection(result: AnalysisResult): string {
+    const selection = result.assessmentSelection;
+    const recovered = selection.slots.filter((slot) => slot.recovered);
+    const rows = selection.slots.map((slot) => [
+        slot.stamp,
+        slot.selectedAttemptId ?? "unrecorded (manifest selector)",
+        slot.recovered
+            ? "recovered"
+            : slot.selectedAttemptId === null
+              ? "manifest"
+              : "initial",
+    ]);
+    return [
+        "## Assessment selection",
+        "",
+        `${String(selection.recovered)} recovered, ${String(selection.initial)} initial, ${String(selection.unrecorded)} unrecorded.`,
+        "",
+        recovered.length === 0
+            ? "No slot used a recovery attempt."
+            : `Recovered: ${recovered.map((slot) => `${slot.stamp} → ${slot.selectedAttemptId}`).join(", ")}.`,
+        "",
+        table(["Slot", "Selected attempt", "Kind"], rows),
+    ].join("\n");
+}
+
+/**
+ * Render the full analysis report.
+ * @param result The analysis result.
+ * @returns Markdown.
+ */
 export function renderReport(result: AnalysisResult): string {
     const screenHeadline =
         result.measures.status === "available"
@@ -657,6 +707,7 @@ export function renderReport(result: AnalysisResult): string {
         measuresSection(result),
         scenarioSection(result),
         pairSection(result),
+        selectionSection(result),
         guardrailSection(result),
         screeningSection(result),
         sensitivitySection(result),

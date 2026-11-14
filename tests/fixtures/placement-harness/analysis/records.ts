@@ -21,6 +21,12 @@ import type { LakeDocument } from "../ac/campaign.mts";
 import type { SelectionPolicy } from "./model.ts";
 import { parseCampaignLedger } from "./ledger.ts";
 import {
+    selectionProblems,
+    type RecoveryPolicy,
+    type SelectionAttempt,
+    type SelectionFacts,
+} from "./recovery.ts";
+import {
     answerIdentityProblem,
     hostDispatchesFromTrail,
     journalIdentityFromTrail,
@@ -137,6 +143,8 @@ export interface TrialAssessment {
     preservation: Loaded<PreservationByFact>;
     /** The judge's retrieval-application finding, when one was recorded. */
     retrieval: Loaded<RetrievalObservation>;
+    /** The published selection's attempt, when a selection record exists. */
+    selectedAttemptId?: string;
     /** Every problem found while loading or validating the assessment. */
     problems: string[];
 }
@@ -200,10 +208,18 @@ export interface TrialRecordOptions {
     stamp: string;
     /** The scenario the slot declared. */
     scenario: string;
+    /** The scheduled slot number, when the caller knows it. */
+    slot?: number;
+    /** The pair id, when the caller knows it. */
+    pairId?: string;
+    /** The arm id, when the caller knows it. */
+    arm?: string;
     /** The scenario's inventory fact ids, for per-fact preservation loading. */
     inventoryFactIds: string[];
     /** The manifest's recorded judgement-layer selection policy. */
     selectionPolicy: SelectionPolicy;
+    /** The registered recovery policy, when the manifest declares one. */
+    recoveryPolicy?: RecoveryPolicy | undefined;
     /** Whether legacy evidence without an answer hash is accepted. */
     allowUnboundAnswer?: boolean;
 }
@@ -863,6 +879,178 @@ function retrievalOf(
 }
 
 /**
+ * Re-derive one attempt's recorded facts from the evidence.
+ * @param reader The evidence reader.
+ * @param acDir The trial's ac directory.
+ * @param attemptId The attempt directory name.
+ * @returns The attempt facts the selection check compares against.
+ */
+function attemptFactOf(
+    reader: EvidenceReader,
+    acDir: string,
+    attemptId: string,
+): SelectionAttempt {
+    const base = joinPath(acDir, attemptId);
+    const judge = loadedRecordOf(
+        loadJson(reader, joinPath(base, "judgement.json")),
+    );
+    const resolved = loadedRecordOf(
+        loadJson(reader, joinPath(base, "resolution.json")),
+    );
+    const metadata = loadedRecordOf(
+        loadJson(reader, joinPath(base, "meta.json")),
+    );
+    const completion =
+        metadata !== null && isRecord(metadata.completion)
+            ? metadata.completion
+            : null;
+    return {
+        attemptId,
+        judgementStatus: attemptStatusOf(judge, resolved),
+        packetSha256:
+            typeof metadata?.packetSha256 === "string"
+                ? metadata.packetSha256
+                : null,
+        failureClass:
+            typeof judge?.failureClass === "string" ? judge.failureClass : null,
+        complete:
+            typeof completion?.complete === "boolean"
+                ? completion.complete
+                : null,
+    };
+}
+
+/** The recorded object of one loaded JSON file, or null. */
+function loadedRecordOf(
+    loaded: Loaded<unknown>,
+): Record<string, unknown> | null {
+    return loaded.state === "available" && isRecord(loaded.value)
+        ? loaded.value
+        : null;
+}
+
+/** One attempt's effective status: a resolved verdict is usable. */
+function attemptStatusOf(
+    judge: Record<string, unknown> | null,
+    resolved: Record<string, unknown> | null,
+): string {
+    if (resolved?.status === "judged") return "judged";
+    return typeof judge?.status === "string" ? judge.status : "missing";
+}
+
+/** The outcome of reading one slot's published selection. */
+interface LoadedSelection {
+    /** The selected attempt, when the record is absent or valid. */
+    attemptId: string | null;
+    /** Whether a record existed at all. */
+    present: boolean;
+    /** Whether the record exists but cannot be trusted. */
+    invalid: boolean;
+    /** Every problem found. */
+    problems: string[];
+}
+
+/**
+ * Read and check one slot's published selection against the evidence.
+ *
+ * Absence keeps the historical behaviour (the manifest selector). A present
+ * record is checked evidence: a tampered or ineligible selection is refused,
+ * never silently replaced by the manifest selector.
+ * @param reader The evidence reader.
+ * @param acDir The trial's ac directory.
+ * @param options The load options.
+ * @returns The selection outcome.
+ */
+function loadSelection(
+    reader: EvidenceReader,
+    acDir: string,
+    options: TrialRecordOptions,
+): LoadedSelection {
+    const loaded = loadJson(reader, joinPath(acDir, "selection.json"));
+    if (loaded.state !== "available") return unavailableSelection(loaded);
+    const dirs = reader.readDirectoryEntries(acDir);
+    if (dirs.state !== "available") {
+        return invalidSelection(
+            `selection record cannot be checked: ${acDir} is ${dirs.state}`,
+        );
+    }
+    const attemptIds = dirs.value.filter((name) =>
+        /^attempt-\d{3}$/.test(name),
+    );
+    const attemptFacts: Record<string, SelectionAttempt> = {};
+    for (const attemptId of attemptIds) {
+        attemptFacts[attemptId] = attemptFactOf(reader, acDir, attemptId);
+    }
+    return selectionOutcome(
+        selectionProblems(
+            loaded.value,
+            selectionFactsOf(options, attemptIds, attemptFacts),
+        ),
+        selectedIdOf(loaded.value),
+    );
+}
+
+/** A missing or unreadable selection record. */
+function unavailableSelection(loaded: Loaded<unknown>): LoadedSelection {
+    if (loaded.state === "missing") {
+        return {
+            attemptId: null,
+            present: false,
+            invalid: false,
+            problems: [],
+        };
+    }
+    return invalidSelection(
+        `selection record is ${loaded.state}: ${loaded.source}`,
+    );
+}
+
+/** An untrustworthy selection record. */
+function invalidSelection(...problems: string[]): LoadedSelection {
+    return { attemptId: null, present: true, invalid: true, problems };
+}
+
+/** The selected attempt, or null when the record names none. */
+function selectedIdOf(value: unknown): string | null {
+    return isRecord(value) && typeof value.selectedAttemptId === "string"
+        ? value.selectedAttemptId
+        : null;
+}
+
+/** The final selection outcome. */
+function selectionOutcome(
+    problems: string[],
+    selected: string | null,
+): LoadedSelection {
+    return problems.length === 0 && selected !== null
+        ? { attemptId: selected, present: true, invalid: false, problems: [] }
+        : invalidSelection(
+              ...(problems.length > 0
+                  ? problems
+                  : ["selection record names no selected attempt"]),
+          );
+}
+
+/** The facts a recorded selection is checked against here. */
+function selectionFactsOf(
+    options: TrialRecordOptions,
+    attemptIds: readonly string[],
+    attemptFacts: Record<string, SelectionAttempt>,
+): SelectionFacts {
+    return {
+        ...(options.slot === undefined ? {} : { slot: options.slot }),
+        ...(options.pairId === undefined ? {} : { pairId: options.pairId }),
+        stamp: options.stamp,
+        ...(options.arm === undefined ? {} : { arm: options.arm }),
+        scenario: options.scenario,
+        attemptIds,
+        manifestAttemptId: options.attemptId ?? "attempt-001",
+        policy: options.recoveryPolicy ?? null,
+        attemptFacts,
+    };
+}
+
+/**
  * Load one trial's assessment through the recorded selection policy.
  * @param reader The evidence reader.
  * @param dir The trial directory, relative to the evidence root.
@@ -877,8 +1065,34 @@ function loadAssessment(
     options: TrialRecordOptions,
 ): TrialAssessment {
     const acDir = joinPath(dir, "ac");
-    const attemptId = options.attemptId ?? "attempt-001";
+    const selection = loadSelection(reader, acDir, options);
+    if (selection.invalid) {
+        return unassessedResult("unassessed", acDir, selection.problems);
+    }
+    const attemptId = selection.attemptId ?? options.attemptId ?? "attempt-001";
     const problems = unselectedAttemptProblems(reader, acDir, attemptId);
+    const assessment = attemptAssessmentOf(
+        reader,
+        acDir,
+        attempt,
+        attemptId,
+        options,
+        problems,
+    );
+    return selection.present && selection.attemptId !== null
+        ? { ...assessment, selectedAttemptId: selection.attemptId }
+        : assessment;
+}
+
+/** The assessment of one selected attempt directory. */
+function attemptAssessmentOf(
+    reader: EvidenceReader,
+    acDir: string,
+    attempt: AttemptState,
+    attemptId: string,
+    options: TrialRecordOptions,
+    problems: string[],
+): TrialAssessment {
     if (attempt === "absent") {
         return unassessedResult("not-run", acDir, problems);
     }
@@ -1097,6 +1311,7 @@ export function loadTrialRecord(
             : null;
     const problems = [...attempt.problems, ...usability.problems];
     if (answerProblem !== null) problems.push(answerProblem);
+    const assessment = loadAssessment(reader, dir, attempt.state, options);
     return {
         identity: {
             resultRoot: options.resultRoot,
@@ -1113,11 +1328,11 @@ export function loadTrialRecord(
         primary: primaryOf(
             loadJson(reader, joinPath(dir, "primary-check.json")),
         ),
-        assessment: loadAssessment(reader, dir, attempt.state, options),
+        assessment,
         judgeModel: loadJudgeModel(
             reader,
             dir,
-            options.attemptId ?? "attempt-001",
+            assessment.selectedAttemptId ?? options.attemptId ?? "attempt-001",
         ),
         tokens: loadTokens(reader, joinPath(dir, "stdout.jsonl")),
         artefacts: {
