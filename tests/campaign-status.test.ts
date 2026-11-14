@@ -54,6 +54,20 @@ const repo = here.endsWith("/tests") ? dirname(here) : here;
 
 const IMAGE_ID = "sha256:fake-image-id-for-status-tests";
 const PODMAN_VERSION = "podman version 6.1.4-fake";
+
+/** Run git in a fixture repo with ambient config and signing walled off. */
+function git(cwd: string, args: string[]): string {
+    return execFileSync("git", ["-C", cwd, ...args], {
+        encoding: "utf8",
+        env: {
+            ...process.env,
+            GIT_CONFIG_GLOBAL: "/dev/null",
+            GIT_CONFIG_SYSTEM: "/dev/null",
+            GIT_CONFIG_NOSYSTEM: "1",
+        },
+    });
+}
+
 // A source repo independent of the test checkout: a read-only gate verify runs
 // against a scratch copy of the git scope, which carries no .git metadata.
 const sourceRepo = mkdtempSync(join(tmpdir(), "pd-status-source-"));
@@ -65,12 +79,10 @@ for (const args of [
     ["add", "-A"],
     ["commit", "-qm", "source"],
 ]) {
-    execFileSync("git", ["-C", sourceRepo, ...args], { encoding: "utf8" });
+    git(sourceRepo, args);
 }
 /** The fixture source repo's HEAD: every freeze's sourceRevision. */
-const BASE = execFileSync("git", ["-C", sourceRepo, "rev-parse", "HEAD"], {
-    encoding: "utf8",
-}).trim();
+const BASE = git(sourceRepo, ["rev-parse", "HEAD"]).trim();
 
 /** Write one file, creating parents. */
 function write(path: string, body: string): void {
@@ -619,7 +631,7 @@ describe("status checkout mode", () => {
             ["add", "-A"],
             ["commit", "-qm", "one"],
         ]) {
-            execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+            git(dir, args);
         }
         return dir;
     }
@@ -664,9 +676,7 @@ describe("status checkout mode", () => {
         // Arrange: status uses the process cwd for checkout mode; emulate it
         // by invoking the CLI with cwd set to the scratch repo.
         const dir = gitRepo();
-        const head = execFileSync("git", ["-C", dir, "rev-parse", "HEAD"], {
-            encoding: "utf8",
-        }).trim();
+        const head = git(dir, ["rev-parse", "HEAD"]).trim();
         const { bin } = fakePodmanBin();
         const run = spawnSync(
             process.execPath,
@@ -1607,7 +1617,7 @@ describe("status findings regressions", () => {
             ["add", "-A"],
             ["commit", "-qm", "tooling"],
         ]) {
-            execFileSync("git", ["-C", scratch, ...args], { encoding: "utf8" });
+            git(scratch, args);
         }
         const { bin } = fakePodmanBin();
 
