@@ -967,54 +967,61 @@ function loadSelection(
     options: TrialRecordOptions,
 ): LoadedSelection {
     const loaded = loadJson(reader, joinPath(acDir, "selection.json"));
-    if (loaded.state === "missing") {
-        return { attemptId: null, present: false, invalid: false, problems: [] };
-    }
-    if (loaded.state !== "available") {
-        return {
-            attemptId: null,
-            present: true,
-            invalid: true,
-            problems: [`selection record is ${loaded.state}: ${loaded.source}`],
-        };
-    }
+    if (loaded.state !== "available") return unavailableSelection(loaded);
     const dirs = reader.readDirectoryEntries(acDir);
     if (dirs.state !== "available") {
-        return {
-            attemptId: null,
-            present: true,
-            invalid: true,
-            problems: [
-                `selection record cannot be checked: ${acDir} is ${dirs.state}`,
-            ],
-        };
+        return invalidSelection(
+            `selection record cannot be checked: ${acDir} is ${dirs.state}`,
+        );
     }
     const attemptIds = dirs.value.filter((name) => /^attempt-\d{3}$/.test(name));
     const attemptFacts: Record<string, SelectionAttempt> = {};
     for (const attemptId of attemptIds) {
         attemptFacts[attemptId] = attemptFactOf(reader, acDir, attemptId);
     }
-    const problems = selectionProblems(
-        loaded.value,
-        selectionFactsOf(options, attemptIds, attemptFacts),
+    return selectionOutcome(
+        selectionProblems(
+            loaded.value,
+            selectionFactsOf(options, attemptIds, attemptFacts),
+        ),
+        selectedIdOf(loaded.value),
     );
-    const record = isRecord(loaded.value) ? loaded.value : null;
-    const selected =
-        record !== null && typeof record.selectedAttemptId === "string"
-            ? record.selectedAttemptId
-            : null;
-    if (problems.length > 0 || selected === null) {
-        return {
-            attemptId: null,
-            present: true,
-            invalid: true,
-            problems:
-                problems.length > 0
-                    ? problems
-                    : ["selection record names no selected attempt"],
-        };
+}
+
+/** A missing or unreadable selection record. */
+function unavailableSelection(loaded: Loaded<unknown>): LoadedSelection {
+    if (loaded.state === "missing") {
+        return { attemptId: null, present: false, invalid: false, problems: [] };
     }
-    return { attemptId: selected, present: true, invalid: false, problems: [] };
+    return invalidSelection(
+        `selection record is ${loaded.state}: ${loaded.source}`,
+    );
+}
+
+/** An untrustworthy selection record. */
+function invalidSelection(...problems: string[]): LoadedSelection {
+    return { attemptId: null, present: true, invalid: true, problems };
+}
+
+/** The selected attempt, or null when the record names none. */
+function selectedIdOf(value: unknown): string | null {
+    return isRecord(value) && typeof value.selectedAttemptId === "string"
+        ? value.selectedAttemptId
+        : null;
+}
+
+/** The final selection outcome. */
+function selectionOutcome(
+    problems: string[],
+    selected: string | null,
+): LoadedSelection {
+    return problems.length === 0 && selected !== null
+        ? { attemptId: selected, present: true, invalid: false, problems: [] }
+        : invalidSelection(
+              ...(problems.length > 0
+                  ? problems
+                  : ["selection record names no selected attempt"]),
+          );
 }
 
 /** The facts a recorded selection is checked against here. */

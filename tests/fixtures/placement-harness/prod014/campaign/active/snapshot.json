@@ -1,5 +1,5 @@
 {
-    "close-campaign.mts": "ec90306f2dee63907c78f2c03c1b78dab7b6b14a538cec4e203b4473c930948c",
+    "close-campaign.mts": "70fb764709f96917551ba3685a8875f126e527823add163843bcb7412699cbbe",
     "contracts.mts": "7ffcebff73dc3a7d6a03bc609081df522caef622f8950433f21d8197d765f208",
     "delivery-probe.mts": "1dfb921fde4e3d6bfc3592db57eb6c0c8a1bd2e6402a0e481f207013b5d58af7",
     "env.mts": "28d2db23875ae873d938d2f584636760d877cac168c9dbb9baaa8138391e105f",
@@ -7,7 +7,7 @@
     "generate.sh": "378c163d7ee15e764a260e5ae7bcc750d6c378c92a802fbae72b214e2ecd7a9e",
     "manifest.json": "2b4b90912fd72974940c47558c1dbdaeda9f9b96a64080026abdbef6f8650191",
     "rejudge.mts": "1b77b7c146d357fa48c72bab25d20b9ee3c7a901dfeb0ef3e54b1f895087021d",
-    "run.mts": "5c92791b48d1abbf84c8e30476af12da91d67abaa2d75432011a6f0547467d61",
+    "run.mts": "e07a5f399324240a1a46afd5bc27db98de9861814fa35624c4919ec2177c03c8",
     "runner-regression.mts": "ee7ff213549244db3566543f87d8bfaa7b47b11868a1a89b67a9729b5c629dad",
     "schedule.mts": "91bb264a1ba42ce50555adbad46c6490a434df21179cd6e0567953a5fad42f07",
     "shim/podman": "375b2a23e69070fe362e2f73be23b2bf5e4e3327644882b46baf532679dff364",

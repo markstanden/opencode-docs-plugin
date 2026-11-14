@@ -1042,19 +1042,11 @@ const dispatchRecovery = (
     const acDir = join(resultDir(slot), "ac");
     const attemptDir = join(acDir, recoveryAttemptId);
     if (existsSync(attemptDir)) {
-        ledger({
-            event: "recovery-blocked",
-            slot: slot.slot,
-            pairId: slot.pairId,
-            stamp: slot.stamp,
-            arm: slot.arm,
-            attemptId: recoveryAttemptId,
-            reason: "a recovery attempt directory already exists; it is never reused",
-        });
-        console.error(
-            `BLOCKER: ${slot.stamp} already holds ${recoveryAttemptId}; preserve and report`,
+        return recoveryRefusal(
+            slot,
+            recoveryAttemptId,
+            "a recovery attempt directory already exists; it is never reused",
         );
-        return false;
     }
     const claim = claimRecoveryBudget(EVIDENCE, recoveryPolicy!, {
         stamp: slot.stamp,
@@ -1062,34 +1054,52 @@ const dispatchRecovery = (
         key: `${slot.stamp}|${recoveryAttemptId}`,
     });
     if (!claim.ok) {
-        ledger({
-            event: "recovery-blocked",
-            slot: slot.slot,
-            pairId: slot.pairId,
-            stamp: slot.stamp,
-            arm: slot.arm,
-            attemptId: recoveryAttemptId,
-            reason: claim.reason,
-        });
-        console.error(`BLOCKER: ${claim.reason}`);
-        return false;
+        return recoveryRefusal(slot, recoveryAttemptId, claim.reason);
     }
     const closedAfterClaim = spendRefusal();
     if (closedAfterClaim !== null) {
         releaseClaim(claim.recovery);
         releaseClaim(claim.judge);
-        ledger({
-            event: "recovery-blocked",
-            slot: slot.slot,
-            pairId: slot.pairId,
-            stamp: slot.stamp,
-            arm: slot.arm,
-            attemptId: recoveryAttemptId,
-            reason: closedAfterClaim,
-        });
-        console.error(`BLOCKER: ${closedAfterClaim}`);
-        return false;
+        return recoveryRefusal(slot, recoveryAttemptId, closedAfterClaim);
     }
+    return runRecoveryChild(slot, base, attemptDir, recoveryAttemptId, claim);
+};
+
+/** Record a refused recovery and return false. */
+const recoveryRefusal = (
+    slot: ScheduleSlot,
+    attemptId: string,
+    reason: string,
+): boolean => {
+    ledger({
+        event: "recovery-blocked",
+        slot: slot.slot,
+        pairId: slot.pairId,
+        stamp: slot.stamp,
+        arm: slot.arm,
+        attemptId,
+        reason,
+    });
+    console.error(`BLOCKER: ${slot.stamp} recovery refused: ${reason}`);
+    return false;
+};
+
+/**
+ * Run one claimed recovery child and record its outcome.
+ * @param slot The scheduled slot.
+ * @param base The arm's stage result root.
+ * @param attemptDir The recovery attempt directory.
+ * @param recoveryAttemptId The recovery attempt id.
+ * @param claim The dual claim already taken.
+ * @returns Whether a usable recovery judgement landed.
+ */
+const runRecoveryChild = (
+    slot: ScheduleSlot,
+    base: string,
+    attemptDir: string,
+    recoveryAttemptId: string,
+    claim: { recovery: BudgetClaim; judge: BudgetClaim },
+): boolean => {
     const result = judgeWrapperResult(slot, base, recoveryAttemptId);
     if (!existsSync(join(attemptDir, "dispatch.json"))) {
         // The wrapper refused before dispatch; return both reservations.

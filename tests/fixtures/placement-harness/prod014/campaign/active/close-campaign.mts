@@ -547,17 +547,21 @@ function selectedAttemptOf(
         join(caseDir(slot), "ac", "selection.json"),
     );
     if (selection === null) return null;
-    const attemptFacts: Record<string, SelectionAttempt> = {};
-    for (const attempt of attempts) {
-        attemptFacts[attempt.attemptId] = {
-            attemptId: attempt.attemptId,
-            judgementStatus: attempt.status,
-            packetSha256: attempt.packetSha256 ?? null,
-            failureClass: attempt.failureClass ?? null,
-            complete: attempt.complete ?? null,
-        };
+    for (const problem of selectionProblemTexts(selection, slot, attempts)) {
+        readProblems.push(`${slot.stamp}: ${problem}`);
     }
-    for (const problem of selectionProblems(selection, {
+    return typeof selection.selectedAttemptId === "string"
+        ? selection.selectedAttemptId
+        : null;
+}
+
+/** The checked-evidence problems one recorded selection carries. */
+function selectionProblemTexts(
+    selection: Record<string, unknown>,
+    slot: ScheduleSlot,
+    attempts: readonly JudgeAttempt[],
+): string[] {
+    return selectionProblems(selection, {
         slot: slot.slot,
         pairId: slot.pairId ?? "",
         stamp: slot.stamp,
@@ -566,13 +570,25 @@ function selectedAttemptOf(
         attemptIds: attempts.map((attempt) => attempt.attemptId),
         manifestAttemptId: manifest?.assessment?.attemptId ?? null,
         policy: recoveryPolicy,
-        attemptFacts,
-    })) {
-        readProblems.push(`${slot.stamp}: ${problem}`);
+        attemptFacts: attemptFactsOf(attempts),
+    });
+}
+
+/** The selection facts each recorded attempt carries. */
+function attemptFactsOf(
+    attempts: readonly JudgeAttempt[],
+): Record<string, SelectionAttempt> {
+    const facts: Record<string, SelectionAttempt> = {};
+    for (const attempt of attempts) {
+        facts[attempt.attemptId] = {
+            attemptId: attempt.attemptId,
+            judgementStatus: attempt.status,
+            packetSha256: attempt.packetSha256 ?? null,
+            failureClass: attempt.failureClass ?? null,
+            complete: attempt.complete ?? null,
+        };
     }
-    return typeof selection.selectedAttemptId === "string"
-        ? selection.selectedAttemptId
-        : null;
+    return facts;
 }
 
 /** One slot's observation, derived from its durable evidence. */

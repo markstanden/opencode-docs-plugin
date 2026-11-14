@@ -396,10 +396,15 @@ export function selectionRecordOf(input: SelectionInput): SelectionRecord {
 
 /** The facts a recorded selection is checked against. */
 export interface SelectionFacts {
+    /** The scheduled slot, when the caller knows it. */
     slot?: number;
+    /** The pair id, when the caller knows it. */
     pairId?: string;
+    /** The trial stamp. */
     stamp?: string;
+    /** The arm letter, when the caller knows it. */
     arm?: string;
+    /** The scenario id. */
     scenario?: string;
     /** Attempt directories actually present for the slot. */
     attemptIds: readonly string[];
@@ -473,6 +478,28 @@ function attemptEntryOf(entry: unknown): {
     attempt?: SelectionAttempt;
     problem?: string;
 } {
+    const identity = entryIdentityOf(entry);
+    if (identity.problem !== undefined) return { problem: identity.problem };
+    const attemptId = identity.attemptId as string;
+    const problem = entryFieldProblem(entry, `selection attempt ${attemptId}`);
+    if (problem !== undefined) return { problem };
+    const value = entry as Record<string, unknown>;
+    return {
+        attempt: {
+            attemptId,
+            judgementStatus: value.judgementStatus as string,
+            packetSha256: value.packetSha256 as string | null,
+            failureClass: (value.failureClass ?? null) as string | null,
+            complete: (value.complete ?? null) as boolean | null,
+        },
+    };
+}
+
+/** One entry's attempt id, or the shape problem. */
+function entryIdentityOf(entry: unknown): {
+    attemptId?: string;
+    problem?: string;
+} {
     if (
         !isRecord(entry) ||
         typeof entry.attemptId !== "string" ||
@@ -480,30 +507,29 @@ function attemptEntryOf(entry: unknown): {
     ) {
         return { problem: "selection attempt entry is malformed" };
     }
-    const label = `selection attempt ${entry.attemptId}`;
-    if (typeof entry.judgementStatus !== "string") {
-        return { problem: `${label} has no judgement status` };
+    return { attemptId: entry.attemptId };
+}
+
+/** The first malformed field of one attempt entry, or undefined. */
+function entryFieldProblem(
+    entry: unknown,
+    label: string,
+): string | undefined {
+    const value = entry as Record<string, unknown>;
+    if (typeof value.judgementStatus !== "string") {
+        return `${label} has no judgement status`;
     }
-    if (entry.packetSha256 !== null && typeof entry.packetSha256 !== "string") {
-        return { problem: `${label} packetSha256 is malformed` };
+    if (value.packetSha256 !== null && typeof value.packetSha256 !== "string") {
+        return `${label} packetSha256 is malformed`;
     }
-    const failureClass = entry.failureClass ?? null;
+    const failureClass = value.failureClass ?? null;
     if (failureClass !== null && typeof failureClass !== "string") {
-        return { problem: `${label} failureClass is malformed` };
+        return `${label} failureClass is malformed`;
     }
-    const complete = entry.complete ?? null;
-    if (complete !== null && typeof complete !== "boolean") {
-        return { problem: `${label} complete is malformed` };
-    }
-    return {
-        attempt: {
-            attemptId: entry.attemptId,
-            judgementStatus: entry.judgementStatus,
-            packetSha256: entry.packetSha256,
-            failureClass: failureClass as string | null,
-            complete: complete as boolean | null,
-        },
-    };
+    const complete = value.complete ?? null;
+    return complete !== null && typeof complete !== "boolean"
+        ? `${label} complete is malformed`
+        : undefined;
 }
 
 /** Parse every recorded attempt entry, reporting malformed and repeated ones. */
@@ -649,20 +675,7 @@ function baseEligibilityProblems(
     manifest: string,
     facts: SelectionFacts,
 ): string[] {
-    const problems: string[] = [];
-    if (base.judgementStatus === "judged") {
-        problems.push(`selection replaces the usable first assessment ${manifest}`);
-    }
-    if (
-        base.failureClass === null ||
-        !facts.policy?.eligibleFailureClasses.includes(
-            base.failureClass as EligibleFailureClass,
-        )
-    ) {
-        problems.push(
-            `selection recovers from an ineligible failure class ${JSON.stringify(base.failureClass)}`,
-        );
-    }
+    const problems = baseClassProblems(base, facts);
     if (
         facts.policy?.requiresCompletionEvidence === true &&
         base.complete !== true
@@ -674,6 +687,30 @@ function baseEligibilityProblems(
         base.packetSha256 !== selected?.packetSha256
     ) {
         problems.push("selection attempts were judged from different packets");
+    }
+    return problems;
+}
+
+/** Problems with the superseded attempt's status and failure class. */
+function baseClassProblems(
+    base: SelectionAttempt,
+    facts: SelectionFacts,
+): string[] {
+    const problems: string[] = [];
+    if (base.judgementStatus === "judged") {
+        problems.push(
+            `selection replaces the usable first assessment`,
+        );
+    }
+    if (
+        base.failureClass === null ||
+        !facts.policy?.eligibleFailureClasses.includes(
+            base.failureClass as EligibleFailureClass,
+        )
+    ) {
+        problems.push(
+            `selection recovers from an ineligible failure class ${JSON.stringify(base.failureClass)}`,
+        );
     }
     return problems;
 }
