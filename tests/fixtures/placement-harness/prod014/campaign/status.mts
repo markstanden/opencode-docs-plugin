@@ -2441,7 +2441,7 @@ function dryRunNextAction(root: string, gaps: Gap[]): ActionResult {
     };
 }
 
-/** The analysis-then-close action for a fully completed campaign. */
+/** The close-then-analysis action for a fully completed campaign. */
 function closureNextAction(
     root: string,
     pairCount: number,
@@ -2457,8 +2457,8 @@ function closureNextAction(
         headline: `all ${pairCount} pairs complete; campaign not closed`,
         nextAction: {
             kind: "offline-preparation",
-            why: "run card step 5: final analysis then close-campaign reconciles counts and writes the closure record",
-            command: `${analyseCommand(root, sourceRepo)} && ${closeEnv}CAMPAIGN_ROOT=${shellQuote(root)} node ${shellQuote(join(root, "prepare/close-campaign.mts"))}`,
+            why: "run card step 5: close-campaign reconciles counts and writes the closure record first (verifying its own prerequisites and refusing unsafe states); the analysis then renders the final report into a fresh directory, which a pre-closure render could never be",
+            command: `${closeEnv}CAMPAIGN_ROOT=${shellQuote(root)} node ${shellQuote(join(root, "prepare/close-campaign.mts"))} && ${analyseCommand(root, sourceRepo)}`,
             envNames: ["CAMPAIGN_ROOT", "CAMPAIGN_SOURCE_REPO"],
         },
         gaps,
