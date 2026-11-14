@@ -1120,6 +1120,29 @@ describe("status campaign mode: live position", () => {
         assert.equal(position.usableAssessments, 2);
     });
 
+    it("counts a judged status even when outcome names the documentation outcome", () => {
+        // Arrange: the live runner records status=judged and outcome=none on
+        // the same event; the historical fixture recorded outcome=judged.
+        const root = liveRoot("pd-status-judged-status");
+        completePair(root, "P01");
+        ledgerEvent(root, {
+            event: "judge-exit",
+            slot: 3,
+            pairId: "P02",
+            stamp: "pd-B-r0-S02",
+            arm: "B",
+            status: "judged",
+            outcome: "none",
+        });
+
+        // Act
+        const result = statusJson(["--root", root]);
+
+        // Assert
+        const position = result.position as { usableAssessments: number };
+        assert.equal(position.usableAssessments, 3);
+    });
+
     it("suppresses the paid suggestion when a ceiling is exhausted", () => {
         // Arrange
         const root = liveRoot("pd-status-ceiling");
@@ -1352,6 +1375,39 @@ describe("status campaign mode: checkpoints and reports", () => {
         ).reports[0];
         assert.equal(report?.wrongCampaign, true);
         assert.equal(result.phase, "checkpoint-report-missing");
+    });
+
+    it("accepts the frozen manifest's campaign family label", () => {
+        // Arrange: the run id is timestamped, while the frozen manifest names
+        // the campaign family. The manifest hash still binds the report.
+        const root = materialisedRoot("pd-status-p04-family");
+        completePreparation(root);
+        writeSchedule(root, "pd-status-run-20261113");
+        writeFrozen(root);
+        for (const pair of ["P01", "P02", "P03", "P04"])
+            completePair(root, pair);
+        const manifest = JSON.parse(
+            readFileSync(join(root, "prepare/manifest.json"), "utf8"),
+        ) as { campaign: { id: string } };
+        const reportRoot = mkdtempSync(join(tmpdir(), "pd-status-reportroot-"));
+        writeReport(join(reportRoot, "p04"), {
+            campaignId: manifest.campaign.id,
+            manifestPath: join(root, "prepare/manifest.json"),
+        });
+
+        // Act
+        const result = statusJson([
+            "--root",
+            root,
+            "--report-root",
+            reportRoot,
+        ]);
+
+        // Assert
+        const report = (
+            result.checkpoint as { reports: { wrongCampaign?: boolean }[] }
+        ).reports[0];
+        assert.notEqual(report?.wrongCampaign, true);
     });
 
     it("hands a current P04 report to the operator as a decision", () => {

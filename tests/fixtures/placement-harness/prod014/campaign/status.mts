@@ -1482,7 +1482,11 @@ function completedPairsOf(lines: readonly RawLedgerLine[]): string[] {
 function usableAssessmentsOf(lines: readonly RawLedgerLine[]): number {
     let judged = 0;
     for (const line of lines) {
-        if (line.event === "judge-exit" && line.record.outcome === "judged") {
+        if (
+            line.event === "judge-exit" &&
+            (line.record.status === "judged" ||
+                line.record.outcome === "judged")
+        ) {
             judged += 1;
         }
     }
@@ -2094,7 +2098,20 @@ function identityMatches(root: string, campaignId: string): boolean {
     const read = readJsonFile(join(root, "evidence/schedule.json"));
     if (read.value === undefined || !isRecord(read.value)) return true;
     const own = str(read.value, "campaign");
-    return own === undefined ? true : own === campaignId;
+    if (own === undefined || own === campaignId) return true;
+    // The analyser names the campaign from the frozen manifest, which may
+    // carry the campaign family label rather than the run's timestamped id.
+    // The report is still bound to this root by its manifest hash; accepting
+    // the manifest's own label avoids a false "wrong campaign" on a valid
+    // report without weakening that binding.
+    const manifest = readJsonFile(join(root, "prepare/manifest.json"));
+    if (manifest.value === undefined || !isRecord(manifest.value)) return false;
+    const declared = manifest.value.campaign;
+    return (
+        isRecord(declared) &&
+        str(declared, "id") !== undefined &&
+        str(declared, "id") === campaignId
+    );
 }
 
 // ---------------------------------------------------------------------------
