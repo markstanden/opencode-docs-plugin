@@ -228,6 +228,28 @@ describe("recovery eligibility", () => {
         assert.match((decision as { reason: string }).reason, /completion/);
     });
 
+    it("requires affirmative completion evidence, never an unknown value", () => {
+        // Arrange: a syntax failure whose completion could not be established
+        // (the field is absent, so it reads as null, not as a pass).
+        const unknown = recoveryDecision(
+            policy(),
+            facts({ completionComplete: null }),
+        );
+        const absent = recoveryDecision(
+            policy(),
+            facts({ completionComplete: null, failureClass: "json-syntax" }),
+        );
+
+        // Act / Assert: null is not affirmative, so no dispatch is permitted.
+        for (const decision of [unknown, absent]) {
+            assert.equal(decision.eligible, false);
+            assert.match(
+                (decision as { reason: string }).reason,
+                /completion of the final assessed response cannot be established/,
+            );
+        }
+    });
+
     it("never replaces a usable first assessment", () => {
         // Act
         const judged = recoveryDecision(
