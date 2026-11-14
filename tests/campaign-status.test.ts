@@ -1551,7 +1551,10 @@ describe("status campaign mode: checkpoints and reports", () => {
 
         // Assert: it reconciles and appends the closure record.
         assert.equal(closed.status, 0, closed.stderr);
-        assert.equal(existsSync(join(root, "evidence/RECONCILIATION.json")), true);
+        assert.equal(
+            existsSync(join(root, "evidence/RECONCILIATION.json")),
+            true,
+        );
         assert.equal(closeEvents().length, 1);
 
         // Act: execute the same close command again.
@@ -1594,12 +1597,7 @@ describe("status campaign mode: checkpoints and reports", () => {
         }
 
         // Act: observe the closed campaign with its final report root.
-        const after = statusJson([
-            "--root",
-            root,
-            "--report-root",
-            parent,
-        ]);
+        const after = statusJson(["--root", root, "--report-root", parent]);
 
         // Assert: closing first left a current final report.
         assert.equal(after.phase, "closed");

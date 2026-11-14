@@ -74,7 +74,7 @@ testable.
   read dies there invisibly under the lcov-only reporter
   (docs/testing/prod014-campaign-status-2026-11-12.md).
 - Fixture commits are hermetic: identity inline (`git -c user.email=t@t -c
-  user.name=t`), signing and ambient config walled off
+user.name=t`), signing and ambient config walled off
   (`GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_SYSTEM=/dev/null`,
   `GIT_CONFIG_NOSYSTEM=1`); never touch the user's global git config.
 - The ordinary suite needs no credentials and makes no provider calls;
