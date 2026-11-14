@@ -65,16 +65,42 @@ testable.
   (invented paths, summaries, identifiers); edit it directly when the ranking
   harness needs a new shape — never snapshot a real tree into it.
 
+## Test isolation
+
+- Tests own their world: `mkdtempSync` directories, fixture git repos built
+  inside them, test-owned ports and child processes closed by the test.
+- No import-time read of the enclosing checkout's `.git` or `HEAD`: the gate
+  copies tracked sources into a `.git`-less scratch, and an import-time git
+  read dies there invisibly under the lcov-only reporter
+  (docs/testing/prod014-campaign-status-2026-11-12.md).
+- Fixture commits are hermetic: identity inline (`git -c user.email=t@t -c
+user.name=t`), signing and ambient config walled off
+  (`GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_SYSTEM=/dev/null`,
+  `GIT_CONFIG_NOSYSTEM=1`); never touch the user's global git config.
+- The ordinary suite needs no credentials and makes no provider calls;
+  model-facing work has its own entry points (TESTING.md routes them).
+
+## Routing
+
+- Routine test operation, task selector, troubleshooting: TESTING.md.
+- Registered prod014 campaigns: the campaign README under
+  tests/fixtures/placement-harness/prod014/campaign/ and its read-only
+  status.mts. `/placement` and the placement-trials skill are for
+  unregistered sweeps only and never override a registered campaign's frozen
+  models, ceilings or attempt selection.
+- Handbacks and trial reports: templates/agent-handback.md and
+  templates/trial-feedback-report.md — output contracts, not authority.
+
 ## Trial harness
 
 - Decision-bearing campaign code is strict TypeScript under
   `tests/fixtures/placement-harness/analysis/`; `npm test` runs its contract
   and materialised-CLI regressions on CPU with no provider calls. Keep
   filesystem, process, clock and provider effects in thin adapters.
-- `prod014/campaign/scripts.json` is frozen historical data for replay.
-  `materialise.mjs` verifies it, and also copies the pinned runner modules
-  listed in `prod014/campaign/runner.json` — regenerate that file whenever a
-  pinned module changes.
+- `tests/fixtures/placement-harness/prod014/campaign/scripts.json` is frozen
+  historical data for replay. `materialise.mts` verifies it and also copies
+  the pinned runner modules listed in `runner.json`; regenerate the snapshot
+  and pins (`materialise.mts --snapshot`) whenever a pinned module changes.
 - Parse external evidence as `unknown` at the boundary and keep missing,
   malformed and unknown as distinct states. A journal line, ledger event or
   answer earns credit only through the checked evidence boundary.

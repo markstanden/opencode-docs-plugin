@@ -29,6 +29,20 @@ function write(path: string, body: string): void {
     writeFileSync(path, body, "utf8");
 }
 
+/** Run git in a fixture repo with ambient config and signing walled off. */
+function git(cwd: string, args: string[]): string {
+    return execFileSync("git", args, {
+        cwd,
+        encoding: "utf8",
+        env: {
+            ...process.env,
+            GIT_CONFIG_GLOBAL: "/dev/null",
+            GIT_CONFIG_SYSTEM: "/dev/null",
+            GIT_CONFIG_NOSYSTEM: "1",
+        },
+    });
+}
+
 /** A minimal git arm worktree with the corpus and truth files. */
 function arm(dir: string): void {
     mkdirSync(join(dir, "src"), { recursive: true });
@@ -73,13 +87,17 @@ exit 0
         join(dir, "tests/fixtures/placement-harness/container-run.sh"),
         0o755,
     );
-    execFileSync("git", ["init", "-q"], { cwd: dir });
-    execFileSync("git", ["add", "-A"], { cwd: dir });
-    execFileSync(
-        "git",
-        ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "arm"],
-        { cwd: dir },
-    );
+    git(dir, ["init", "-q"]);
+    git(dir, ["add", "-A"]);
+    git(dir, [
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "user.name=t",
+        "commit",
+        "-qm",
+        "arm",
+    ]);
 }
 
 /** A campaign root with every immutable input freeze reads. */
@@ -177,13 +195,17 @@ function fixture(): {
     ]) {
         write(join(measurement, path), "// measurement\n");
     }
-    execFileSync("git", ["init", "-q"], { cwd: measurement });
-    execFileSync("git", ["add", "-A"], { cwd: measurement });
-    execFileSync(
-        "git",
-        ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "m"],
-        { cwd: measurement },
-    );
+    git(measurement, ["init", "-q"]);
+    git(measurement, ["add", "-A"]);
+    git(measurement, [
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "user.name=t",
+        "commit",
+        "-qm",
+        "m",
+    ]);
 
     // Fake external tools: podman reports the image identity from a file, so a
     // rebuilt image is one file edit away.
@@ -209,13 +231,17 @@ exit 0
     // scope needs no .git metadata.
     const source = join(root, "source");
     write(join(source, "README.md"), "source\n");
-    execFileSync("git", ["init", "-q"], { cwd: source });
-    execFileSync("git", ["add", "-A"], { cwd: source });
-    execFileSync(
-        "git",
-        ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "s"],
-        { cwd: source },
-    );
+    git(source, ["init", "-q"]);
+    git(source, ["add", "-A"]);
+    git(source, [
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "user.name=t",
+        "commit",
+        "-qm",
+        "s",
+    ]);
     return { root, bin, imageFile, source };
 }
 

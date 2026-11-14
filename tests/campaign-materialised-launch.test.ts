@@ -34,6 +34,20 @@ function write(path: string, body: string): void {
     writeFileSync(path, body, "utf8");
 }
 
+/** Run git in a fixture repo with ambient config and signing walled off. */
+function git(cwd: string, args: string[]): string {
+    return execFileSync("git", args, {
+        cwd,
+        encoding: "utf8",
+        env: {
+            ...process.env,
+            GIT_CONFIG_GLOBAL: "/dev/null",
+            GIT_CONFIG_SYSTEM: "/dev/null",
+            GIT_CONFIG_NOSYSTEM: "1",
+        },
+    });
+}
+
 /** SHA-256 of one file. */
 function hashFile(path: string): string {
     return createHash("sha256").update(readFileSync(path)).digest("hex");
@@ -114,17 +128,18 @@ exit 0
     // scope needs no .git metadata.
     const sourceDir = join(root, "source");
     write(join(sourceDir, "README.md"), "source\n");
-    execFileSync("git", ["init", "-q"], { cwd: sourceDir });
-    execFileSync("git", ["add", "-A"], { cwd: sourceDir });
-    execFileSync(
-        "git",
-        ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "s"],
-        { cwd: sourceDir },
-    );
-    const source = execFileSync("git", ["rev-parse", "HEAD"], {
-        cwd: sourceDir,
-        encoding: "utf8",
-    }).trim();
+    git(sourceDir, ["init", "-q"]);
+    git(sourceDir, ["add", "-A"]);
+    git(sourceDir, [
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "user.name=t",
+        "commit",
+        "-qm",
+        "s",
+    ]);
+    const source = git(sourceDir, ["rev-parse", "HEAD"]).trim();
     write(
         join(root, "prepare/manifest.json"),
         JSON.stringify({ assessment: { attemptId: "attempt-001" } }),

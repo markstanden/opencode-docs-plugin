@@ -54,6 +54,20 @@ const repo = here.endsWith("/tests") ? dirname(here) : here;
 
 const IMAGE_ID = "sha256:fake-image-id-for-status-tests";
 const PODMAN_VERSION = "podman version 6.1.4-fake";
+
+/** Run git in a fixture repo with ambient config and signing walled off. */
+function git(cwd: string, args: string[]): string {
+    return execFileSync("git", ["-C", cwd, ...args], {
+        encoding: "utf8",
+        env: {
+            ...process.env,
+            GIT_CONFIG_GLOBAL: "/dev/null",
+            GIT_CONFIG_SYSTEM: "/dev/null",
+            GIT_CONFIG_NOSYSTEM: "1",
+        },
+    });
+}
+
 // A source repo independent of the test checkout: a read-only gate verify runs
 // against a scratch copy of the git scope, which carries no .git metadata.
 const sourceRepo = mkdtempSync(join(tmpdir(), "pd-status-source-"));
@@ -65,12 +79,10 @@ for (const args of [
     ["add", "-A"],
     ["commit", "-qm", "source"],
 ]) {
-    execFileSync("git", ["-C", sourceRepo, ...args], { encoding: "utf8" });
+    git(sourceRepo, args);
 }
 /** The fixture source repo's HEAD: every freeze's sourceRevision. */
-const BASE = execFileSync("git", ["-C", sourceRepo, "rev-parse", "HEAD"], {
-    encoding: "utf8",
-}).trim();
+const BASE = git(sourceRepo, ["rev-parse", "HEAD"]).trim();
 
 /** Write one file, creating parents. */
 function write(path: string, body: string): void {
@@ -619,7 +631,7 @@ describe("status checkout mode", () => {
             ["add", "-A"],
             ["commit", "-qm", "one"],
         ]) {
-            execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+            git(dir, args);
         }
         return dir;
     }
@@ -664,9 +676,7 @@ describe("status checkout mode", () => {
         // Arrange: status uses the process cwd for checkout mode; emulate it
         // by invoking the CLI with cwd set to the scratch repo.
         const dir = gitRepo();
-        const head = execFileSync("git", ["-C", dir, "rev-parse", "HEAD"], {
-            encoding: "utf8",
-        }).trim();
+        const head = git(dir, ["rev-parse", "HEAD"]).trim();
         const { bin } = fakePodmanBin();
         const run = spawnSync(
             process.execPath,
@@ -1451,6 +1461,191 @@ describe("status campaign mode: checkpoints and reports", () => {
         assert.equal(report?.recommendation, "inconclusive");
         assert.equal(report?.pairedDelta, 0);
     });
+
+    it("closes before the final report, and that report reads current", () => {
+        // Arrange: a disposable root with all eight pairs complete. Paths carry
+        // spaces so the emitted command's quoting is exercised end to end.
+        const parent = mkdtempSync(join(tmpdir(), "pd status final "));
+        const reportsRoot = join(parent, "fresh reports");
+        mkdirSync(reportsRoot, { recursive: true });
+        const root = materialisedRoot(join(parent, "campaign root"));
+        completePreparation(root);
+        for (const pair of [
+            "P01",
+            "P02",
+            "P03",
+            "P04",
+            "P05",
+            "P06",
+            "P07",
+            "P08",
+        ]) {
+            completePair(root, pair);
+        }
+        // The emitted analysis changes into CAMPAIGN_SOURCE_REPO, so the
+        // measurement checkout carries the real analyser, committed clean.
+        const measurement = join(parent, "measurement checkout");
+        cpSync(
+            join(repo, "tests/fixtures/placement-harness"),
+            join(measurement, "tests/fixtures/placement-harness"),
+            { recursive: true },
+        );
+        git(measurement, ["init", "-q"]);
+        git(measurement, ["add", "-A"]);
+        git(measurement, [
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-qm",
+            "measurement",
+        ]);
+        writeFrozen(root, {
+            sourceRevision: git(measurement, ["rev-parse", "HEAD"]).trim(),
+        });
+        // Closure reads the declared retrieval opportunities; keep it empty.
+        write(
+            join(root, "evidence/measurement-spec.json"),
+            `${JSON.stringify({ campaign: "pd-status-test", retrievalOpportunities: [] })}\n`,
+        );
+        // Closure refuses a launched slot without a recorded result.
+        const schedule = JSON.parse(
+            readFileSync(join(root, "evidence/schedule.json"), "utf8"),
+        ) as {
+            slots: { arm: string; stamp: string; scenario: string }[];
+        };
+        for (const slot of schedule.slots) {
+            write(
+                join(
+                    root,
+                    "gen",
+                    slot.arm.toLowerCase(),
+                    "results",
+                    slot.stamp,
+                    slot.scenario,
+                    "meta.json",
+                ),
+                `${JSON.stringify({ timings: { totalMs: 1000 } })}\n`,
+            );
+        }
+        const unrelated = join(parent, "unrelated cwd");
+        mkdirSync(unrelated, { recursive: true });
+        const hermetic = {
+            ...process.env,
+            GIT_CONFIG_GLOBAL: "/dev/null",
+            GIT_CONFIG_SYSTEM: "/dev/null",
+            GIT_CONFIG_NOSYSTEM: "1",
+        };
+        const bash = (command: string, cwd: string): StatusRun => {
+            const run = spawnSync("bash", ["-c", command], {
+                encoding: "utf8",
+                cwd,
+                timeout: 120_000,
+                env: hermetic,
+            });
+            return {
+                status: run.status ?? -1,
+                stdout: run.stdout ?? "",
+                stderr: run.stderr ?? "",
+            };
+        };
+        const closeEvents = (): string[] =>
+            readFileSync(join(root, "evidence/ATTEMPTS.jsonl"), "utf8")
+                .trim()
+                .split("\n")
+                .map((line) => String(JSON.parse(line).event))
+                .filter((event) => event === "campaign-closed");
+        const artefacts = [
+            "analysis.json",
+            "REPORT.md",
+            "SCREENING.json",
+            "analysis-receipt.json",
+        ];
+
+        // Act: the suggestion for a completed campaign.
+        const before = statusJson(["--root", root], {
+            CAMPAIGN_SOURCE_REPO: measurement,
+        });
+
+        // Assert: closure is suggested first, the final render second.
+        assert.equal(before.phase, "awaiting-closure");
+        const next = before.nextAction as { command: string };
+        const emit = (out: string): string =>
+            next.command.replace("<fresh-report-dir>", shellQuote(out));
+        const closeAt = next.command.indexOf("close-campaign.mts");
+        const analyseAt = next.command.indexOf("analyse.mts");
+        assert.ok(closeAt >= 0);
+        assert.ok(analyseAt > closeAt);
+        assert.equal(closeEvents().length, 0);
+
+        // Act: execute the whole emitted command from an unrelated directory.
+        const firstReport = join(reportsRoot, "final report");
+        const first = bash(emit(firstReport), unrelated);
+
+        // Assert: it reconciles, records the closure and renders the report.
+        assert.equal(first.status, 0, first.stdout + first.stderr);
+        assert.equal(
+            existsSync(join(root, "evidence/RECONCILIATION.json")),
+            true,
+        );
+        assert.equal(closeEvents().length, 1);
+        for (const artefact of artefacts) {
+            assert.equal(
+                existsSync(join(firstReport, artefact)),
+                true,
+                artefact,
+            );
+        }
+
+        // Act: execute the whole command again into a second fresh directory.
+        const reconciliationBytes = readFileSync(
+            join(root, "evidence/RECONCILIATION.json"),
+            "utf8",
+        );
+        const ledgerBytes = readFileSync(
+            join(root, "evidence/ATTEMPTS.jsonl"),
+            "utf8",
+        );
+        const secondReport = join(reportsRoot, "final report again");
+        const again = bash(emit(secondReport), unrelated);
+
+        // Assert: closure stayed idempotent and the render still completes.
+        assert.equal(again.status, 0, again.stdout + again.stderr);
+        assert.equal(
+            readFileSync(join(root, "evidence/RECONCILIATION.json"), "utf8"),
+            reconciliationBytes,
+        );
+        assert.equal(
+            readFileSync(join(root, "evidence/ATTEMPTS.jsonl"), "utf8"),
+            ledgerBytes,
+        );
+        for (const artefact of artefacts) {
+            assert.equal(
+                existsSync(join(secondReport, artefact)),
+                true,
+                artefact,
+            );
+        }
+
+        // Act: observe the closed campaign with its final report root.
+        const after = statusJson(
+            ["--root", root, "--report-root", reportsRoot],
+            { CAMPAIGN_SOURCE_REPO: measurement },
+        );
+
+        // Assert: closing first left every report current.
+        assert.equal(after.phase, "closed");
+        const reports = (
+            after.checkpoint as {
+                reports: { freshness: string }[];
+            }
+        ).reports;
+        assert.equal(reports.length, 2);
+        for (const report of reports) {
+            assert.equal(report.freshness, "current");
+        }
+    });
 });
 
 describe("status projections and safety", () => {
@@ -1607,7 +1802,7 @@ describe("status findings regressions", () => {
             ["add", "-A"],
             ["commit", "-qm", "tooling"],
         ]) {
-            execFileSync("git", ["-C", scratch, ...args], { encoding: "utf8" });
+            git(scratch, args);
         }
         const { bin } = fakePodmanBin();
 

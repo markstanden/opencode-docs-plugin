@@ -17,8 +17,9 @@ hashes in `runner.json` from the checked sources.
 ## Run card
 
 This is the one executable recipe. It is offline through arm/measurement
-preparation, then makes paid calls only at the delivery probe, P04 and the
-continuation.
+preparation and the delivery probes (a loopback fake provider — no model
+spend); paid calls happen only at P04 dispatch, the P05–P08 continuation,
+and any separately authorised rejudge.
 
 ```sh
 # Before setup, during a block, or after an interruption, observe one campaign
@@ -46,12 +47,32 @@ node tests/fixtures/placement-harness/prod014/campaign/materialise.mts "$CAMPAIG
   > "$CAMPAIGN_ROOT/.env")
 chmod 600 "$CAMPAIGN_ROOT/.env"
 
-# 2. Arms: A is the campaign base commit (unmodified 0.14.0 description); B is
-#    base + replication/patch.mjs with assets/b-prod014.txt; measurement is an
-#    independent worktree at the same base (gate, judge, analyser). Install
-#    node_modules in each.
+# 2. Arms and measurement — three worktrees at the pinned base. For THIS
+#    campaign the intervention is the native-description candidate: B is
+#    base + the candidate asset applied by replication/patch.mjs. A different
+#    intervention replaces the patch step; this block is not a general
+#    recipe. Arms must be committed and clean at freeze; each needs its own
+#    node_modules (surfaces.mts resolves the arm's own deps); per-arm
+#    package.json and package-lock.json are frozen inputs — install with
+#    npm ci and never edit them.
+git worktree add "$CAMPAIGN_ROOT/arms/a" "$REV"
+git worktree add "$CAMPAIGN_ROOT/arms/b" "$REV"
+git worktree add "$CAMPAIGN_ROOT/measurement" "$REV"
+node tests/fixtures/placement-harness/replication/patch.mjs \
+  "$CAMPAIGN_ROOT/arms/b/src/index.ts" \
+  tests/fixtures/placement-harness/prod014/assets/b-prod014.txt "b"
+git -C "$CAMPAIGN_ROOT/arms/b" add src/index.ts
+git -C "$CAMPAIGN_ROOT/arms/b" -c user.email=campaign@local \
+  -c user.name=campaign -c commit.gpgsign=false \
+  commit -qm "apply the candidate B description"
+export CAMPAIGN_SOURCE_REPO="$CAMPAIGN_ROOT/measurement"
+for d in "$CAMPAIGN_ROOT/arms/a" "$CAMPAIGN_ROOT/arms/b" \
+  "$CAMPAIGN_SOURCE_REPO"; do (cd "$d" && npm ci); done
+# A NEW candidate wording means a new asset + updated active/manifest.json
+# labels: regenerate and commit the snapshot (materialise.mts --snapshot)
+# and start a fresh root. Arm setup alone never touches the snapshot.
 
-# 3. Generate both arms and freeze the experiment. schedule.mjs names the
+# 3. Generate both arms and freeze the experiment. schedule.mts names the
 #    campaign from CAMPAIGN_ID; no historical stamp is reused.
 CAMPAIGN_ROOT="$CAMPAIGN_ROOT" CAMPAIGN_ID="$CAMPAIGN_ID" \
   node "$CAMPAIGN_ROOT/prepare/schedule.mts"
@@ -70,7 +91,7 @@ node "$CAMPAIGN_ROOT/prepare/delivery-probe.mts" \
   opencode-go/deepseek-v4.1-flash "Hello." 8802
 cp "$CAMPAIGN_ROOT/arms/a/tests/fixtures/placement-harness/prod014/measurement.json" \
   "$CAMPAIGN_ROOT/evidence/measurement-spec.json"
-# freeze.mjs builds/resolves the image first and records its immutable id.
+# freeze.mts builds/resolves the image first and records its immutable id.
 CAMPAIGN_ROOT="$CAMPAIGN_ROOT" CAMPAIGN_SOURCE_REPO="$CAMPAIGN_SOURCE_REPO" \
   node "$CAMPAIGN_ROOT/prepare/freeze.mts"
 
@@ -85,15 +106,18 @@ node "$CAMPAIGN_SOURCE_REPO/tests/fixtures/placement-harness/analysis/analyse.mt
 # Continue only if P04 has no blocker, no unusable judge and no premise change;
 # otherwise stop, preserve the root and report.
 
-# 5. P08 remainder, then the final analysis and closure.
+# 5. P08 remainder, then closure, then the FINAL fresh report. A report
+#    rendered before closure is permanently stale by design: closure appends
+#    ledger events after its render time. An interim pre-close report is
+#    optional and will read stale.
 CAMPAIGN_ROOT="$CAMPAIGN_ROOT" CAMPAIGN_SOURCE_REPO="$CAMPAIGN_SOURCE_REPO" \
   node "$CAMPAIGN_ROOT/prepare/run.mts" --pair-from 5 --pair-to 8
+CAMPAIGN_ROOT="$CAMPAIGN_ROOT" CAMPAIGN_SOURCE_REPO="$CAMPAIGN_SOURCE_REPO" \
+  node "$CAMPAIGN_ROOT/prepare/close-campaign.mts"
 node "$CAMPAIGN_SOURCE_REPO/tests/fixtures/placement-harness/analysis/analyse.mts" \
   --campaign "$CAMPAIGN_ROOT/prepare/manifest.json" \
   --evidence-root "$CAMPAIGN_ROOT" \
-  --out "$REPORT_ROOT/p08"
-CAMPAIGN_ROOT="$CAMPAIGN_ROOT" CAMPAIGN_SOURCE_REPO="$CAMPAIGN_SOURCE_REPO" \
-  node "$CAMPAIGN_ROOT/prepare/close-campaign.mts"
+  --out "$REPORT_ROOT/final"
 ```
 
 Recovery is a separately authorised, separately identified attempt. It writes
@@ -136,8 +160,8 @@ never reuse a stamp, overwrite a recorded attempt or edit a frozen input.
 ## Provenance
 
 `active/` is the source of truth for fresh runs; `scripts.json` is the
-2026-11-11 frozen snapshot retained for replay. `surfaces.mjs`,
-`delivery-probe.mjs`, `freeze.mjs`, `run.mjs`, `schedule.mjs` and `shim/podman`
+2026-11-11 frozen snapshot retained for replay. `surfaces.mts`,
+`delivery-probe.mts`, `freeze.mts`, `run.mts`, `schedule.mts` and `shim/podman`
 are adapted from the 2026-11-10 confirmation campaign's
 `/home/mark/tmp/recording-confirm-20261110/prepare/` scripts; `env.mts`,
 `rejudge.mts`, `dry-check.mjs` and `cli-measures.mjs` are new for this screen.
