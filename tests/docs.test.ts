@@ -627,6 +627,22 @@ describe("collectReadmes", () => {
         assert.deepEqual(entries, []);
     });
 
+    it("drops a tracked nested README whose directory no longer exists", () => {
+        // Arrange – git still lists the path while the parent is gone, so
+        // containment must fail closed rather than treat it as a file.
+        const root = tempDir();
+        git(root, ["init", "-q"]);
+        readme(root, "packages/api/README.md", "Gone");
+        git(root, ["add", "packages/api/README.md"]);
+        rmSync(join(root, "packages"), { recursive: true });
+
+        // Act
+        const entries = collectReadmes(root, () => new Map());
+
+        // Assert
+        assert.deepEqual(entries, []);
+    });
+
     it("walks outside git, skipping dependency, build and dot directories", () => {
         // Arrange – no repository, so the fallback walk applies.
         const root = tempDir();
@@ -2792,6 +2808,23 @@ describe("tool read", () => {
         );
 
         assert.match(String(result.content), /^No doc at api\/nope\.md\.$/);
+        assert.equal(result.metadata?.read, null);
+    });
+
+    it("refuses a doc below a directory the lake does not hold", async () => {
+        // Arrange: the leaf is unreachable because its parent is absent, so
+        // containment must fail closed rather than treat the path as a file.
+        // Act
+        const result = await readTool().execute(
+            { read: "absent-dir/nope.md" },
+            {} as never,
+        );
+
+        // Assert
+        assert.match(
+            String(result.content),
+            /^No doc at absent-dir\/nope\.md\.$/,
+        );
         assert.equal(result.metadata?.read, null);
     });
 });

@@ -29,31 +29,36 @@ const manifest = readJson("evaluations/docs-placement/manifest.json");
 const suite = readJson("evaluations/docs-placement/suite.json");
 const campaign = readJson("evaluations/docs-placement/campaign.json");
 
-test("every manifest asset resolves inside the checkout", () => {
-    // Arrange: the manifest is the index a fresh evaluator reads first. Only
-    // its path-bearing members are checked; provenance fields are data.
+/** Manifest keys whose string values are provenance, not repository paths. */
+const PROVENANCE_KEYS = new Set([
+    "repository",
+    "sourceSha",
+    "bundleId",
+    "description",
+    "pinnedSha",
+    "resumableByOtc",
+]);
+
+test("every manifest path member resolves inside the checkout", () => {
+    // Arrange: traverse every string in the manifest, so a new path-bearing
+    // member cannot escape the check by not being in a hand-kept key list.
     const paths: string[] = [];
-    for (const key of [
-        "corpora",
-        "seeds",
-        "truth",
-        "primaryChecks",
-        "measurement",
-        "candidateAssets",
-        "otcSuite",
-        "otcCampaign",
-    ] as const) {
-        const value = manifest[key];
+    const visit = (value: unknown, key: string): void => {
         if (typeof value === "string") {
-            paths.push(value);
-        } else if (typeof value === "object" && value !== null) {
-            for (const child of Object.values(value)) {
-                if (typeof child === "string") paths.push(child);
+            if (!PROVENANCE_KEYS.has(key)) paths.push(value);
+            return;
+        }
+        if (Array.isArray(value)) {
+            for (const item of value) visit(item, key);
+            return;
+        }
+        if (typeof value === "object" && value !== null) {
+            for (const [childKey, child] of Object.entries(value)) {
+                visit(child, childKey);
             }
         }
-    }
-    const legacy = manifest.legacyRoute as { path: string };
-    paths.push(legacy.path);
+    };
+    visit(manifest, "");
 
     // Act
     const observed = paths.map((relativePath) => ({
@@ -66,6 +71,23 @@ test("every manifest asset resolves inside the checkout", () => {
     for (const { relativePath, exists } of observed) {
         assert.ok(exists, `${relativePath} exists`);
     }
+});
+
+test("the manifest points at the suite and campaign the checks read", () => {
+    // Arrange
+    const expected = {
+        otcSuite: "evaluations/docs-placement/suite.json",
+        otcCampaign: "evaluations/docs-placement/campaign.json",
+    };
+
+    // Act
+    const observed = {
+        otcSuite: manifest.otcSuite,
+        otcCampaign: manifest.otcCampaign,
+    };
+
+    // Assert
+    assert.deepEqual(observed, expected);
 });
 
 test("every OTC case declares a prompt and an existing seed", () => {
@@ -86,7 +108,6 @@ test("every OTC case declares a prompt and an existing seed", () => {
     }));
 
     // Assert
-    assert.equal(manifest.otcSuite, "evaluations/docs-placement/suite.json");
     assert.ok(observed.length >= 2);
     for (const item of observed) {
         assert.equal(typeof item.caseId, "string");
@@ -113,7 +134,7 @@ test("every OTC case declares its expected outcome", () => {
     assert.deepEqual(missing, []);
 });
 
-test("the campaign schedules exactly the suite's cases on the plugin arm", () => {
+test("the campaign schedules every suite case in an explicit slot", () => {
     // Arrange
     const cases = new Set(
         (suite.cases as Array<{ caseId: string }>).map((item) => item.caseId),
@@ -122,21 +143,35 @@ test("the campaign schedules exactly the suite's cases on the plugin arm", () =>
         kind: string;
         slots: Array<{ caseId: string; armId: string }>;
     };
+
+    // Act
+    const scheduled = new Set(schedule.slots.map((slot) => slot.caseId));
+    const unknown = [...scheduled].filter((caseId) => !cases.has(caseId));
+    const unscheduled = [...cases].filter((caseId) => !scheduled.has(caseId));
+
+    // Assert
+    assert.equal(schedule.kind, "explicit");
+    assert.deepEqual(
+        { unknown, unscheduled },
+        { unknown: [], unscheduled: [] },
+    );
+});
+
+test("the campaign stages the shipped product on its single plugin arm", () => {
+    // Arrange
+    const schedule = campaign.schedule as {
+        slots: Array<{ armId: string }>;
+    };
     const subjects = campaign.subjects as Array<{
         armId: string;
         plugins: Array<{ path: string; include: string[] }>;
     }>;
 
-    // Act
-    const missing = schedule.slots
-        .map((slot) => slot.caseId)
-        .filter((caseId) => !cases.has(caseId));
+    // Act: read the single declared arm and the plugin members it stages.
+    const [subject] = subjects;
 
     // Assert
-    assert.equal(schedule.kind, "explicit");
-    assert.deepEqual(missing, []);
     assert.equal(subjects.length, 1);
-    const subject = subjects[0];
     assert.ok(subject);
     assert.ok(schedule.slots.every((slot) => slot.armId === subject.armId));
     assert.equal(subject.plugins.length, 1);

@@ -1144,6 +1144,69 @@ describe("missing lake roots", () => {
         assert.doesNotMatch(String(result.content), /does not exist/);
     });
 
+    it("refuses a direct write to a lake whose root is absent", () => {
+        // Arrange – a mistyped root must never be bootstrapped by a seam call.
+        const root = join(tempDir(), "absent");
+        const lake = createLake({
+            name: "doclake",
+            class: "machine",
+            root,
+            profile: "knowledge",
+            writable: true,
+        });
+
+        // Act / Assert
+        assert.throws(
+            () => lake.write("aa/note.md", "# Note\n"),
+            /does not exist/,
+        );
+        assert.equal(existsSync(root), false);
+    });
+
+    it("refuses a direct publish to a lake whose root is absent", () => {
+        // Arrange
+        const root = join(tempDir(), "absent");
+        const lake = createLake({
+            name: "doclake",
+            class: "machine",
+            root,
+            profile: "knowledge",
+            writable: true,
+        });
+
+        // Act
+        const outcome = lake.publish?.("aa/note.md", "# Note\n", {
+            mode: "create",
+            label: "doclake:aa/note.md",
+        });
+
+        // Assert
+        assert.ok(outcome);
+        assert.match((outcome as { reason: string }).reason, /does not exist/);
+        assert.equal(existsSync(root), false);
+    });
+
+    it("writes through the direct seam beneath an existing root", () => {
+        // Arrange
+        const root = tempDir();
+        const lake = createLake({
+            name: "doclake",
+            class: "repo",
+            root,
+            profile: "knowledge",
+            writable: true,
+        });
+
+        // Act
+        lake.write("aa/note.md", "# Note\n");
+
+        // Assert
+        assert.equal(
+            readFileSync(join(root, "aa/note.md"), "utf8"),
+            "# Note\n",
+        );
+    });
+
     it("refuses an add to a missing root without creating it", async () => {
         const { tool, root } = toolOf();
 
@@ -2046,6 +2109,17 @@ describe("summary and target edges", () => {
             markdownTargets(body).filter((target) => target.endsWith(".md")),
             ["inline.md", "ref.md"],
         );
+    });
+
+    it("ignores an unterminated inline link instead of guessing a target", () => {
+        // Arrange: the destination never closes, so no target exists to check.
+        const body = "### Facts\n\n- [broken](missing.md\n- [whole](kept.md)\n";
+
+        // Act
+        const targets = markdownTargets(body);
+
+        // Assert
+        assert.deepEqual(targets, ["kept.md"]);
     });
 
     it("refuses a target with no stem and a trailing slash", () => {

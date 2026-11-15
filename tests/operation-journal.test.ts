@@ -66,6 +66,55 @@ test("journal: unset means silence, not an empty file", async () => {
     journal.cleanup();
 });
 
+/** Run one call with both journal variables set as given, restoring them after. */
+async function withJournalValues<T>(
+    path: string,
+    key: string,
+    action: () => Promise<T>,
+): Promise<T> {
+    const previousPath = process.env[OPERATION_JOURNAL_ENV];
+    const previousKey = process.env[OPERATION_JOURNAL_KEY_ENV];
+    process.env[OPERATION_JOURNAL_ENV] = path;
+    process.env[OPERATION_JOURNAL_KEY_ENV] = key;
+    try {
+        return await action();
+    } finally {
+        if (previousPath === undefined) {
+            delete process.env[OPERATION_JOURNAL_ENV];
+        } else {
+            process.env[OPERATION_JOURNAL_ENV] = previousPath;
+        }
+        if (previousKey === undefined) {
+            delete process.env[OPERATION_JOURNAL_KEY_ENV];
+        } else {
+            process.env[OPERATION_JOURNAL_KEY_ENV] = previousKey;
+        }
+    }
+}
+
+for (const [label, configure] of [
+    ["a blank path", (_journal: string) => ({ path: "", key: KEY })],
+    ["a blank key", (journal: string) => ({ path: journal, key: "" })],
+] as const) {
+    test(`journal: ${label} is silence, and the tool still serves`, async () => {
+        // Arrange: an empty environment variable is half-finished config, not
+        // a request to write an unsigned or empty-keyed record.
+        const journal = journalPath();
+        const tool = createDocsTool({ lakes: [] });
+        const values = configure(journal.path);
+
+        // Act
+        const result = await withJournalValues(values.path, values.key, () =>
+            tool.execute({ search: "help" }, {} as never),
+        );
+
+        // Assert
+        assert.equal(existsSync(journal.path), false);
+        assert.match(String(result.content), /Configured lakes/);
+        journal.cleanup();
+    });
+}
+
 test("journal: a served Code Mode twin call records signed tool, input and result", async () => {
     // Arrange
     const journal = journalPath();

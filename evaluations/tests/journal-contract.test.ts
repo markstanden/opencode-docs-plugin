@@ -168,6 +168,10 @@ async function serve(
             messageID: MESSAGE,
             id: CALL,
         });
+        assert.ok(
+            existsSync(path),
+            "the plugin wrote a journal line for the served call",
+        );
         return {
             lines: readFileSync(path, "utf8").split("\n"),
             result,
@@ -204,7 +208,7 @@ function verify(
 }
 
 /** The signed result's metadata from the one credited record. */
-function creditedMetadata(
+function assertCreditedMetadata(
     verification: ReturnType<typeof verifyOperationsJournal>,
 ): { written: boolean; lake: string } {
     const record = verification.credited[0]?.record;
@@ -213,6 +217,19 @@ function creditedMetadata(
         metadata: { written: boolean; lake: string };
     };
     return result.metadata;
+}
+
+/** The write facts the plugin served, asserting the write actually happened. */
+function assertServedWrite(result: unknown): void {
+    const metadata = (
+        result as { metadata?: { written?: boolean; lake?: string } }
+    ).metadata;
+    assert.equal(
+        metadata?.written,
+        true,
+        "the add wrote before credit was refused",
+    );
+    assert.equal(metadata?.lake, "docs");
 }
 
 before(async () => {
@@ -243,8 +260,8 @@ test("credits a packed-plugin native add whose host trail kept the JSON string",
     assert.equal(verification.state, "verified");
     assert.equal(verification.credited.length, 1);
     assert.deepEqual(verification.rejected, []);
-    assert.equal(creditedMetadata(verification).written, true);
-    assert.equal(creditedMetadata(verification).lake, "docs");
+    assert.equal(assertCreditedMetadata(verification).written, true);
+    assert.equal(assertCreditedMetadata(verification).lake, "docs");
 });
 
 for (const [behaviour, nestedLake] of [
@@ -279,7 +296,7 @@ for (const [behaviour, nestedLake] of [
         assert.equal(verification.state, "verified");
         assert.equal(verification.credited.length, 1);
         assert.deepEqual(verification.rejected, []);
-        assert.equal(creditedMetadata(verification).lake, "docs");
+        assert.equal(assertCreditedMetadata(verification).lake, "docs");
     });
 }
 
@@ -291,10 +308,11 @@ test("refuses credit for a successful write corroborated only by a nested lake",
     const add = addInput();
 
     // Act
-    const { lines } = await serve(lakes, { add });
+    const { lines, result } = await serve(lakes, { add });
     const verification = verify(lines, { add: { ...add, lake: "docs" } });
 
     // Assert
+    assertServedWrite(result);
     assert.equal(verification.state, "verified");
     assert.deepEqual(verification.credited, []);
     assert.deepEqual(verification.rejected, [

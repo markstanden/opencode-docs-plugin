@@ -5,10 +5,12 @@
 - Splits `src/index.ts` (5,270 lines) into focused modules without changing
   the public entry point. The public surface is listed explicitly and is
   identical to the pre-split one (99 names); moving code did not widen the
-  package API. Tool/command/skill descriptions, prose, journal bytes, locking
-  behaviour, package identity and Node support are unchanged.
-  `src/index.ts` is now ~355 lines; modules: `metadata`, `ranking`,
-  `collection`, `convention`, `lakes`, `journal`.
+  package API. A `tests/public-api.test.ts` guard freezes both the 74 runtime
+  exports and the 25 type exports, so an accidental leak is a red test and an
+  intended addition is a deliberate edit. Tool/command/skill descriptions,
+  prose, journal bytes, locking behaviour, package identity and Node support
+  are unchanged. `src/index.ts` is now ~355 lines; modules: `metadata`,
+  `ranking`, `collection`, `convention`, `lakes`, `journal`.
 - Classifies the tests by behaviour. `npm test` runs the 517 product contract
   tests (2.5s); the 827 tests that exercise the frozen prod014 engine move to
   `tests/legacy/` behind `npm run test:legacy`. Product coverage instruments
@@ -37,9 +39,9 @@
 ## Proof
 
 - `npm ci`, `npm run typecheck`.
-- `npm test`: 517 pass.
+- `npm test`: 527 pass.
 - `npm run test:legacy`: 827 pass.
-- `npm --prefix evaluations ci && npm --prefix evaluations test`: 9 pass,
+- `npm --prefix evaluations ci && npm --prefix evaluations test`: 11 pass,
   including the packed-plugin journal contract and `otc validate`.
 - Installed pinned artifact from an unrelated cwd: `otc validate`, `prepare`,
   `freeze`, `run --dry-run` and `status --json` all succeed; freeze resolved
