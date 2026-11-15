@@ -54,7 +54,8 @@ publishing (GitHub OIDC) instead of a local `npm publish`.
 
 ## Open questions
 
-- Tag protection on `v*` is unset, so nothing but the environment stops a
-  mistaken tag from publishing. See [releasing.md](releasing.md).
+- The `v*` tag ruleset was added after this release, on 2026-11-15: published
+  tags are now immutable, but a fresh mistaken tag still publishes. See
+  [releasing.md](releasing.md).
 - `npm-publish` carried no required reviewer for this first publish, so it did
   not pause for approval.
