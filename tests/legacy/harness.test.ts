@@ -33,8 +33,20 @@ import {
 } from "../fixtures/placement-harness/scenario-names.mts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const HARNESS = join(HERE, "..", "fixtures", "placement-harness", "harness.mts");
-const WRAPPER = join(HERE, "..", "fixtures", "placement-harness", "container-run.sh");
+const HARNESS = join(
+    HERE,
+    "..",
+    "fixtures",
+    "placement-harness",
+    "harness.mts",
+);
+const WRAPPER = join(
+    HERE,
+    "..",
+    "fixtures",
+    "placement-harness",
+    "container-run.sh",
+);
 
 /** Extra env for a harness or wrapper invocation; undefined values deleted. */
 type Env = Record<string, string | undefined>;
@@ -5889,9 +5901,9 @@ test("M05: mutation evidence edited after the run is refused, not graded", () =>
 
 /** The actual corpus case, so the regressions exercise the shipped shapes. */
 const corpusCaseById = (id: string): Record<string, unknown> => {
-    const cases = readJson(join(HERE, "..", "fixtures", "trial-cases.json")) as Array<
-        Record<string, unknown>
-    >;
+    const cases = readJson(
+        join(HERE, "..", "fixtures", "trial-cases.json"),
+    ) as Array<Record<string, unknown>>;
     const found = cases.find((entry) => entry.id === id);
     if (found === undefined) throw new Error(`no corpus case ${id}`);
     return found;
@@ -6869,7 +6881,12 @@ test("CONTROL: the explicit read variant keeps its authored prompt and seed", ()
  * CONTROL — declared read criterion evaluated in diagnostic reporting
  * ------------------------------------------------------------------ */
 
-const READ_CONTROL_FILE = join(HERE, "..", "fixtures", "read-control-cases.json");
+const READ_CONTROL_FILE = join(
+    HERE,
+    "..",
+    "fixtures",
+    "read-control-cases.json",
+);
 
 /** The checked-in explicit read control, as its frozen definition. */
 const readControlCase = () =>

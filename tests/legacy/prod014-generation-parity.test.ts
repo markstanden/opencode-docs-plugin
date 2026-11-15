@@ -7,7 +7,13 @@ import { join } from "node:path";
 
 const here = import.meta.dirname;
 const fixture = join(here, "..", "fixtures", "placement-harness", "prod014");
-const replication = join(here, "..", "fixtures", "placement-harness", "replication");
+const replication = join(
+    here,
+    "..",
+    "fixtures",
+    "placement-harness",
+    "replication",
+);
 
 const read = <T>(path: string): T =>
     JSON.parse(readFileSync(path, "utf8")) as T;

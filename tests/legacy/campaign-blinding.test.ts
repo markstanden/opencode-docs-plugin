@@ -69,7 +69,13 @@ describe("trial-child blinding", () => {
     it("keeps the trial container environment free of provenance fields", () => {
         // Arrange
         const script = readFileSync(
-            join(here, "..", "fixtures", "placement-harness", "container-run.sh"),
+            join(
+                here,
+                "..",
+                "fixtures",
+                "placement-harness",
+                "container-run.sh",
+            ),
             "utf8",
         );
         const envBlock = /CONTAINER_ENV=\(([\s\S]*?)\n {4}\)/.exec(script)?.[1];

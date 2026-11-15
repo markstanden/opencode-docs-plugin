@@ -1,5 +1,13 @@
 # Productivity-screen campaign runner
 
+> **Frozen historical route.** This campaign root is the 2026-11-11 record. It
+> is read-only evidence and a reproduction recipe, never a template for a new
+> campaign: fresh campaigns are OTC campaigns
+> ([evaluations/README.md](../../../../../evaluations/README.md)). The only
+> supported fresh operation here is the read-only `status.mts` observation.
+> The retained files, their classifications and removal conditions:
+> [legacy-inventory.md](../../../../../evaluations/legacy-inventory.md).
+
 Two source modes:
 
 - **fresh (default)**: checked sources under `active/`, verified against

@@ -8,7 +8,13 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const replication = join(here, "..", "fixtures", "placement-harness", "replication");
+const replication = join(
+    here,
+    "..",
+    "fixtures",
+    "placement-harness",
+    "replication",
+);
 const inventoryModule = join(
     here,
     "..",

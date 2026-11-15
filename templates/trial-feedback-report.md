@@ -24,6 +24,9 @@ plan define those decisions. Omit modules that do not apply.
   establish content access while failing a plugin-specific criterion.
 - Preserve historical verdicts. A new weighting or assessment of old evidence
   is a separately labelled retrospective analysis, not a fresh result.
+- Name the engine that produced the evidence: the pinned OTC version and
+  source revision for fresh campaigns, or the frozen historical harness at its
+  pinned revision for a reproduction. Never mix the two populations.
 
 ## Acceptance criteria and weighted utility
 

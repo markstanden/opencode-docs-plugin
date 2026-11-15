@@ -17,7 +17,13 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixtureDir = join(here, "..", "fixtures", "placement-harness", "prod014");
-const checksDir = join(here, "..", "fixtures", "placement-harness", "primary-checks");
+const checksDir = join(
+    here,
+    "..",
+    "fixtures",
+    "placement-harness",
+    "primary-checks",
+);
 const readJson = <T>(name: string): T =>
     JSON.parse(readFileSync(join(fixtureDir, name), "utf8")) as T;
 

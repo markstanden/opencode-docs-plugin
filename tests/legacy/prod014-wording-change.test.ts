@@ -14,7 +14,13 @@ import { join } from "node:path";
 
 const here = import.meta.dirname;
 const fixture = join(here, "..", "fixtures", "placement-harness", "prod014");
-const replication = join(here, "..", "fixtures", "placement-harness", "replication");
+const replication = join(
+    here,
+    "..",
+    "fixtures",
+    "placement-harness",
+    "replication",
+);
 const repo = join(here, "..", "..");
 
 const sha = (path: string): string =>
@@ -63,7 +69,9 @@ describe("B-only wording change", () => {
                     "analysis/analyse.mts",
                     "prod014/campaign/scripts.json",
                 ].map((path) =>
-                    sha(join(here, "..", "fixtures", "placement-harness", path)),
+                    sha(
+                        join(here, "..", "fixtures", "placement-harness", path),
+                    ),
                 ),
                 code,
             );

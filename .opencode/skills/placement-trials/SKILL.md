@@ -1,6 +1,6 @@
 ---
 name: placement-trials
-description: Run and score the behavioural placement-guidance trials (tests/fixtures/placement-cases.json) through tests/fixtures/placement-harness/harness.mts. Use for /placement, "placement trials", or when asked to evaluate the placement guidance against real model sessions.
+description: Run and score the frozen (historical) behavioural placement-guidance trials (tests/fixtures/placement-cases.json) through tests/fixtures/placement-harness/harness.mts. Use for /placement, "placement trials", or when asked to reproduce the historical placement sweep. Fresh product evaluation uses OTC under evaluations/.
 ---
 
 Names are display-only: fixture ids remain the selectors, and new run
@@ -9,11 +9,24 @@ descriptions snapshot their display identity. Glossary and map:
 
 # Placement trials
 
-This skill covers **unregistered** sweeps. It never overrides a registered
-campaign's frozen models, ceilings or attempt selection; follow that campaign's
-run card and read-only `status.mts` instead. New campaigns are prepared through
-`otc` (see `evaluations/README.md`); the prod014 roots are frozen historical
-records, not templates.
+This skill documents the **frozen historical route**. Fresh product evaluation
+goes through OTC ([evaluations/README.md](../../evaluations/README.md)); new
+campaigns are OTC campaigns, never new prod014 roots.
+
+When reproducing a past result, prefer the pinned revision rather than the
+working tree:
+
+```sh
+git worktree add /tmp/docs-pinned 76ed331e5d3e80fd3467ede987b7412a8d58f9d5
+# run the harness from /tmp/docs-pinned; do not treat today's tree as the
+# active engine.
+```
+
+The in-tree copy is retained for the frozen route and for the one
+compatibility bridge OTC still reaches (`harness.mts`). Its engine tests are
+`npm run test:legacy`; `npm test` is product-only. Never override a registered
+campaign's frozen models, ceilings or attempt selection — follow that
+campaign's run card and read-only `status.mts` instead.
 
 `tests/fixtures/placement-harness/harness.mts` runs the cases in
 `tests/fixtures/placement-cases.json` (E01–E18) through real headless

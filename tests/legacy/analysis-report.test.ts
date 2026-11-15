@@ -26,7 +26,14 @@ const cli = join(
     "analysis",
     "analyse.mts",
 );
-const manifest = join(here, "..", "fixtures", "analysis", "manifests", "mini.json");
+const manifest = join(
+    here,
+    "..",
+    "fixtures",
+    "analysis",
+    "manifests",
+    "mini.json",
+);
 const corpus = join(here, "..", "fixtures", "analysis", "mini-corpus");
 
 const runCli = (args: readonly string[]) =>
