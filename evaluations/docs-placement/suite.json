@@ -1,0 +1,38 @@
+{
+    "schemaVersion": 1,
+    "suiteId": "docs-placement-recording",
+    "description": "Recording slice of the docs placement suite, consumed through OTC.",
+    "assessment": "docs-recording",
+    "cases": [
+        {
+            "caseId": "useful-write",
+            "kind": "docs-task",
+            "fixture": "fixtures/useful-write",
+            "lakeRoot": "docs",
+            "prompt": "Record the OpenTelemetry span convention in the repo lake.",
+            "expectedDocs": {
+                "kind": "create",
+                "target": "notes/otel.md",
+                "retains": ["OpenTelemetry"]
+            },
+            "criterion": {
+                "minVerifiedCalls": 1,
+                "verbs": ["add"]
+            }
+        },
+        {
+            "caseId": "gate-blocked",
+            "kind": "docs-task",
+            "fixture": "fixtures/gate-blocked",
+            "lakeRoot": "docs",
+            "prompt": "Attempt the invalid docs write with a blank summary.",
+            "expectedDocs": {
+                "kind": "none"
+            },
+            "criterion": {
+                "minVerifiedCalls": 1,
+                "verbs": ["add"]
+            }
+        }
+    ]
+}

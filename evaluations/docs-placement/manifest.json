@@ -1,0 +1,27 @@
+{
+    "schemaVersion": 1,
+    "bundleId": "docs-placement",
+    "description": "Placement-guidance behavioural evaluation for the docs plugin.",
+    "origin": {
+        "repository": "markstanden/opencode-docs-plugin",
+        "sourceSha": "76ed331e5d3e80fd3467ede987b7412a8d58f9d5"
+    },
+    "corpora": {
+        "placement": "tests/fixtures/placement-cases.json",
+        "trialFamilies": "tests/fixtures/trial-cases.json",
+        "diagnostic": "tests/fixtures/diagnostic-cases.json",
+        "syntheticRanking": "tests/fixtures/docs-corpus.json"
+    },
+    "truth": {
+        "heldOut": "tests/fixtures/held-out-truth.json"
+    },
+    "primaryChecks": "tests/fixtures/placement-harness/primary-checks",
+    "measurement": "tests/fixtures/placement-harness/prod014/measurement.json",
+    "otcSuite": "evaluations/docs-placement/suite.json",
+    "otcCampaign": "evaluations/docs-placement/campaign.json",
+    "legacyRoute": {
+        "path": "tests/fixtures/placement-harness/prod014/campaign",
+        "pinnedSha": "76ed331e5d3e80fd3467ede987b7412a8d58f9d5",
+        "resumableByOtc": false
+    }
+}

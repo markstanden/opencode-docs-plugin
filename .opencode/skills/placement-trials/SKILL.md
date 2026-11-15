@@ -9,6 +9,12 @@ descriptions snapshot their display identity. Glossary and map:
 
 # Placement trials
 
+This skill covers **unregistered** sweeps. It never overrides a registered
+campaign's frozen models, ceilings or attempt selection; follow that campaign's
+run card and read-only `status.mts` instead. New campaigns are prepared through
+`otc` (see `evaluations/README.md`); the prod014 roots are frozen historical
+records, not templates.
+
 `tests/fixtures/placement-harness/harness.mts` runs the cases in
 `tests/fixtures/placement-cases.json` (E01–E18) through real headless
 OpenCode sessions against pristine fixture trees.
