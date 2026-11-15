@@ -22,7 +22,7 @@ import {
     render,
     termsOf,
 } from "./ranking.ts";
-import { compareText, resolvedTargetOf } from "./collection.ts";
+import { compareText, uncollectedSegment } from "./collection.ts";
 
 /**
  * Kebab-case a doc title into a file-name slug: lower-cased word characters,
@@ -167,6 +167,35 @@ export function targetOf(add: DocsAdd): { path: string } | { reason: string } {
         return { reason: "The H1 does not yield a usable file name." };
     }
     return { path: `${add.metadata.Area}/${slug}.md` };
+}
+
+/**
+ * Resolve an `add` request's target path and apply the collection-visibility
+ * rule: the resolved path (derived or explicit) must be a path the target
+ * lake would actually collect, or the refusal explains why.
+ * @param add The typed request.
+ * @param profile The target lake's writing convention.
+ * @returns The target path, or the refusal reason.
+ */
+export function resolvedTargetOf(
+    add: DocsAdd,
+    profile: LakeProfile,
+): { path: string } | { reason: string } {
+    const target = targetOf(add);
+    if ("reason" in target) {
+        return target;
+    }
+    const invisible = uncollectedSegment(target.path, profile);
+    if (invisible !== null) {
+        return {
+            reason:
+                `'${invisible}' in ${target.path} is never collected by a ` +
+                `${profile} lake — the write would succeed yet stay ` +
+                "invisible to search, read and check. Choose a visible " +
+                "Area or path.",
+        };
+    }
+    return target;
 }
 
 /**

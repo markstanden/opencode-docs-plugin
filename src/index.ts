@@ -151,10 +151,7 @@ export {
     unversionedNote,
     writeFullBytes,
 } from "./lakes.ts";
-export {
-    OPERATION_JOURNAL_ENV,
-    OPERATION_JOURNAL_KEY_ENV,
-} from "./journal.ts";
+export { OPERATION_JOURNAL_ENV, OPERATION_JOURNAL_KEY_ENV } from "./journal.ts";
 
 /**
  * Build the `docs` tool from its dependencies.

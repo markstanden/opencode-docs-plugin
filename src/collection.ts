@@ -21,10 +21,8 @@ import {
     toEntry,
     type DocClass,
     type DocEntry,
-    type DocsAdd,
     type LakeProfile,
 } from "./metadata.ts";
-import { targetOf } from "./convention.ts";
 import type { Dirent } from "node:fs";
 
 /**
@@ -338,35 +336,6 @@ export function realPathOf(path: string): string {
 /** Whether a file name is a README in any case (`README.md`, `readme.md`). */
 export function isReadme(name: string): boolean {
     return name.toLowerCase() === "readme.md";
-}
-
-/**
- * Resolve an `add` request's target path and apply the collection-visibility
- * rule: the resolved path (derived or explicit) must be a path the target
- * lake would actually collect, or the refusal explains why.
- * @param add The typed request.
- * @param profile The target lake's writing convention.
- * @returns The target path, or the refusal reason.
- */
-export function resolvedTargetOf(
-    add: DocsAdd,
-    profile: LakeProfile,
-): { path: string } | { reason: string } {
-    const target = targetOf(add);
-    if ("reason" in target) {
-        return target;
-    }
-    const invisible = uncollectedSegment(target.path, profile);
-    if (invisible !== null) {
-        return {
-            reason:
-                `'${invisible}' in ${target.path} is never collected by a ` +
-                `${profile} lake — the write would succeed yet stay ` +
-                "invisible to search, read and check. Choose a visible " +
-                "Area or path.",
-        };
-    }
-    return target;
 }
 
 /**
