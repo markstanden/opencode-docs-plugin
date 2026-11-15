@@ -98,7 +98,10 @@ user.name=t`), signing and ambient config walled off
 - Routine test operation, task selector, troubleshooting: TESTING.md.
 - Product evaluation bundle and the pinned OTC development tooling:
   evaluations/README.md. It is separate from ordinary tests and runtime
-  dependencies; never install it into the shipped product.
+  dependencies; never install it into the shipped product. Recorded-evidence
+  analysis and new campaigns use OTC; the copy under
+  `tests/fixtures/placement-harness/analysis/` is the frozen compatibility
+  route, not active code to extend.
 - Registered prod014 campaigns: the campaign README under
   tests/fixtures/placement-harness/prod014/campaign/ and its read-only
   status.mts. `/placement` and the placement-trials skill are for

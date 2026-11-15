@@ -11,12 +11,15 @@ of the shipped npm product and it is **not** run by `npm test`.
   route consume them. `docs-placement/manifest.json` indexes that bundle.
 - The reusable lifecycle, sandbox adapters, evidence boundary and evaluators
   belong to `@markstanden/opencode-test-container` (`otc`).
-- The old prod014 driver in `tests/fixtures/placement-harness/` is a frozen,
-  pinned compatibility route. It is not a second active engine: new campaigns
-  use OTC only. Owner: this repository. Removal condition: after one OTC
-  campaign reaches parity on the same frozen evidence, with its report and
-  semantic comparison recorded. Until then, old roots are never resumed by
-  OTC and historical bytes are never rewritten.
+- The old prod014 driver and the analysis modules under
+  `tests/fixtures/placement-harness/analysis/` are a frozen, pinned
+  compatibility route. They are not a second active engine: new campaigns and
+  recorded-evidence analysis use OTC (`otc replay`). Owner: this repository.
+  Removal condition: after the OTC equivalents have passed offline semantic
+  parity on the recorded fixtures and the remaining docs-only harness pieces
+  (corpus generation and primary-check execution) have an OTC home, with the
+  parity record retained. Until then, old roots are never resumed by OTC and
+  historical bytes are never rewritten.
 
 ## Pinned OTC tooling
 
@@ -35,6 +38,9 @@ The campaign is an executable recipe, but `run`/`freeze` dispatch real
 OpenCode and may make paid provider calls. Ask before doing that; the offline
 proof is the OTC rehearsal (`npm run rehearse:offline` in the OTC checkout),
 which uses a scripted loopback provider and zero paid calls.
+
+The OTC capability matrix and parity record live in the OTC repository at
+`docs/capability-matrix.md`; it is the authority for what has moved.
 
 ## Bundle index
 
