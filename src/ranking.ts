@@ -113,7 +113,7 @@ export const QUALITY = {
     miss: 0,
 } as const;
 
-/** Handles export function quality. */
+/** The match quality of one query term in one text field; values are {@link QUALITY}. */
 export function quality(term: string, text: string): number {
     const haystack = text.toLowerCase();
     if (haystack === term) {

@@ -24,7 +24,12 @@ import {
 } from "./ranking.ts";
 import { compareText, resolvedTargetOf } from "./collection.ts";
 
-/** Handles export function slugify. */
+/**
+ * Kebab-case a doc title into a file-name slug: lower-cased word characters,
+ * everything else collapsed to single dashes, dashes trimmed.
+ * @param text The H1 text.
+ * @returns The slug, empty when no word characters remain.
+ */
 export function slugify(text: string): string {
     return text
         .toLowerCase()

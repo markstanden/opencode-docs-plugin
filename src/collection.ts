@@ -27,7 +27,15 @@ import {
 import { targetOf } from "./convention.ts";
 import type { Dirent } from "node:fs";
 
-/** Handles export function gitDates. */
+/**
+ * The newest commit date per path, in one `git log` pass over all paths.
+ * `git log` lists commits newest first, so the first date seen for a path is
+ * its latest edit; paths absent from history are absent from the map.
+ * @param cwd Directory inside the lake root's work tree; git resolves the
+ * work-tree root itself.
+ * @param paths Root-relative paths.
+ * @returns A `YYYY-MM-DD` per known path.
+ */
 export function gitDates(
     cwd: string,
     paths: readonly string[],
@@ -104,15 +112,6 @@ export interface CollectOptions {
     skip?: readonly string[];
 }
 
-/**
- * Walk a lake root, returning its `.md` paths relative to the root. Dot
- * directories are skipped (which drops `.git` and `.attachments`), as are
- * symlinked directories and any other configured lake root nested inside.
- * Knowledge lakes also skip the scratch and mirror areas.
- * @param root The lake root.
- * @param options Collection rules.
- * @returns Root-relative paths, ordered by path.
- */
 /** Read a directory, returning no entries when it is unreadable. */
 export function readDirectory(directory: string): Dirent[] {
     try {

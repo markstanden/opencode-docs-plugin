@@ -3,19 +3,11 @@ import { AbsolutePath } from "@opencode/schema/schema";
 import type { CommandDefinition } from "@opencode/plugin/promise/command";
 import type { Info, Result } from "@opencode/plugin/promise/tool";
 import { readFileSync } from "node:fs";
-import {} from "node:path";
 import { fileURLToPath } from "node:url";
 import { DOCS_INPUT } from "./metadata.ts";
 import { DEFAULT_PER_LAKE_QUOTA, helpText, isHelp } from "./ranking.ts";
-
-export * from "./metadata.ts";
-export * from "./ranking.ts";
 import { collectReadmes, fallbackDates } from "./collection.ts";
 import { DEFAULT_MAX_DOC_LINES } from "./convention.ts";
-export * from "./collection.ts";
-export * from "./convention.ts";
-export * from "./lakes.ts";
-export * from "./journal.ts";
 import { journalOperation } from "./journal.ts";
 import {
     checkLakes,
@@ -52,7 +44,138 @@ import {
  * be exercised directly against Node's built-in test runner without OpenCode.
  */
 
-/** The doc classes the plugin serves. `instructions` is the implicit README source. */
+// The public surface is the pre-split one. Module helpers are exported for
+// cross-module use only; re-exporting them wholesale would quietly widen the
+// package API, so each public name is listed once here.
+export {
+    type AddMode,
+    CLASS_LABELS,
+    DOCS_INPUT,
+    type DocClass,
+    type DocEntry,
+    type DocMetadata,
+    type DocsAdd,
+    type DocsInput,
+    EXCLUDED_AREAS,
+    FRONT_MATTER_FIELDS,
+    type LakeClass,
+    type LakeProfile,
+    REVISION_PATTERN,
+    classGuidance,
+    identifiersOf,
+    parseFrontMatter,
+    proseOf,
+    revisionOf,
+    serializeDoc,
+    summaryOf,
+    titleOf,
+    toEntry,
+} from "./metadata.ts";
+export {
+    type AddOutcome,
+    CLAIM_SECTIONS,
+    DEFAULT_MAX_DOC_LINES,
+    checkDocs,
+    docNotes,
+    hasClaimSection,
+    linkFindings,
+    markdownTargets,
+    nearTwins,
+    prepareAdd,
+    reconcileQuery,
+    slugify,
+    validateDoc,
+} from "./convention.ts";
+export {
+    CLASS_RANK,
+    DEFAULT_PER_LAKE_QUOTA,
+    type DocsRequest,
+    FIELD_WEIGHTS,
+    type LakeInfo,
+    MAX_CHECK_CHARS,
+    MAX_RESULTS,
+    MIN_TERM_LENGTH,
+    QUALITY,
+    type RankedDocs,
+    explainRanking,
+    helpText,
+    isHelp,
+    matches,
+    rankDocs,
+    render,
+    resolveRequest,
+    score,
+} from "./ranking.ts";
+export {
+    type CollectOptions,
+    README_EXCLUDED_DIRS,
+    collectDocPaths,
+    collectDocs,
+    collectReadmes,
+    fallbackDates,
+    gitDates,
+    readmePaths,
+    uncollectedSegment,
+} from "./collection.ts";
+export {
+    type Containment,
+    type DocsCommandDeps,
+    type DocsPluginOptions,
+    type DocsToolDeps,
+    LAKE_CLASSES,
+    type Lake,
+    type LakeSpec,
+    MAX_TEMP_ATTEMPTS,
+    NUDGED_TOOLS,
+    type NudgeCall,
+    type PromptSender,
+    type PublicationSeams,
+    type PublicationStage,
+    RECORD_NUDGE,
+    REPO_LAKES_FILE,
+    type RuntimeInput,
+    type TempFactory,
+    createLake,
+    createLakes,
+    isSearchMiss,
+    missNudge,
+    missNudgeFor,
+    missingRootNote,
+    physicalTargetKey,
+    resolveLakes,
+    resolveNonNegativeInt,
+    resolveNudge,
+    resolveRoot,
+    targetLockDirectory,
+    targetLockPath,
+    unversionedNote,
+    writeFullBytes,
+} from "./lakes.ts";
+export {
+    OPERATION_JOURNAL_ENV,
+    OPERATION_JOURNAL_KEY_ENV,
+} from "./journal.ts";
+
+/**
+ * Build the `docs` tool from its dependencies.
+ *
+ * By default the tool is registered with `codemode: false` so it stays on the
+ * provider's native tool list. That option is exclusive: a tool defaults into
+ * Code Mode (`codemode` defaults true) and is dropped from the native list;
+ * only `codemode: false` keeps it natively callable — and `codemode: true`
+ * with a `namespace` is how the host's own plugins expose tools to `execute`
+ * (the catalog renders `tools.<namespace>.<name>(…)`). Pass a distinct
+ * `name` and `codemode: true` to register a Code Mode twin of the same core;
+ * the registry is name-keyed, so the twin cannot also be called `docs`.
+ * @param deps Runtime seams used on each call.
+ * @param options Registration shape.
+ * @param options.name The tool name (default `"docs"`); a Code Mode twin
+ * passes a distinct name — the registry is name-keyed, so two tools cannot
+ * share one.
+ * @param options.codemode True to register for the `execute` catalog under
+ * the `docs` namespace (default `false` — the native tool list).
+ * @returns The tool the host registers.
+ */
 export function createDocsTool(
     deps: DocsToolDeps,
     options: { name?: string; codemode?: boolean } = {},
@@ -198,19 +321,7 @@ export function createDocsCommand(deps: DocsCommandDeps): CommandDefinition {
     };
 }
 
-/**
- * Resolve a lake root from its `root` option. Unset → the
- * location's `docs/` directory — a blank string counts as unset, since it is
- * almost always an empty environment variable or half-finished config rather
- * than a deliberate path; `~` or `~/…` expands against the home
- * directory; absolute paths pass through; anything else resolves against the
- * plugin location. The resolved value is the knowledge tree itself — no
- * segment is appended. A non-string value throws: a mistyped option
- * must fail loudly, not silently fall back to the wrong tree.
- * @param configured The raw option value as the host delivers it.
- * @param locationDirectory The directory the plugin instance loaded in.
- * @returns The lake root.
- */
+/** The registered tool names that count as using the lake. */
 const DOCS_TOOL_NAMES = new Set(["docs", "docs_search"]);
 
 /**

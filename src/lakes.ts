@@ -55,6 +55,7 @@ import {
     slugify,
 } from "./convention.ts";
 
+/** The built-in tools the miss-nudge watches: content searches, both miss-prone. */
 export const NUDGED_TOOLS = ["grep", "glob"] as const;
 
 /**
@@ -716,36 +717,6 @@ export function publicationErrorRefusal(
     return null;
 }
 
-/**
- * The publication state/ownership sketch (one replace call):
- *
- *   acquire lock    exclusive create beside the physical target
- *   onStage locked
- *   verify          current bytes re-read under the lock (stale refusal)
- *   onStage verified
- *   create temp     exclusive create beside the target; owned fd retained
- *   write full      through the fd only; short writes loop or fail
- *   rename          atomic temp → target; the file published is ours
- *   onStage published
- *   release lock
- *   cleanup duties: on any ordinary failure, unlink ONLY the temp this
- *   operation created; the lock release in the outer finally; never a
- *   foreign temp, lock or document path.
- *
- * The guarantee covers cooperating plugin writers; a manual editor can still
- * race any filesystem operation, and a local attacker able to swap
- * directories between individual syscalls is outside this threat model
- * (documented, not fought with privileged machinery).
- * @param spec The lake spec.
- * @param target The absolute, guarded target path.
- * @param contents The serialised file contents.
- * @param options Publication options.
- * @param options.mode The mutation mode.
- * @param options.expectedRevision The replace's stale-write token.
- * @param options.label The qualified target label, for refusals.
- * @param options.seams The injectable publication primitives.
- * @returns The new revision, or the refusal reason.
- */
 /** The resources one guarded publication has claimed so far. */
 export interface PublicationLedger {
     /** The temp this operation exclusively created, while unpublished. */
@@ -1163,11 +1134,7 @@ export function createLakes(
 /** The lake classes the configuration accepts. */
 export const LAKE_CLASSES = ["repo", "machine", "global", "wiki"] as const;
 
-/**
- * The human-facing scope label per class, shown beside the config value in
- * help and candidate lists so agents can connect the two. Configuration
- * values never change: `repo`, `machine`, `global`, `wiki`.
- */
+/** The repo-local lake additions file, relative to the location. */
 export const REPO_LAKES_FILE = ".opencode/docs-lakes.json";
 
 /** The plugin's options, as the host delivers them. */
@@ -1463,15 +1430,6 @@ export function lakeSpecFrom(
     };
 }
 
-/**
- * Resolve the plugin's lakes: the base `lakesFile`, the repo-local additions,
- * inline `lakes`, then `root` sugar. One implicit repo lake at
- * `<location>/docs` is added when no repo lake is configured, so a repo needs
- * no lake file unless its docs live elsewhere.
- * @param options The plugin options.
- * @param location The directory the plugin loaded in.
- * @returns The configured lake specs.
- */
 /** Reject the ambiguous option combinations before reading any file. */
 export function assertLakesOptions(options: DocsPluginOptions): void {
     if (options.lakes !== undefined && !Array.isArray(options.lakes)) {
@@ -2468,33 +2426,18 @@ export function executeRequest(runtime: Runtime, input: DocsInput): Result {
 }
 
 /**
- * The environment variables enabling the opt-in operation journal: a path
- * and a per-run signing key. Both unset — the production default — the
- * plugin writes no journal at all. The key makes capture tamper-evident; a
- * trial tool can write a shaped line but cannot sign it.
+ * Resolve a lake root from its `root` option. Unset → the
+ * location's `docs/` directory — a blank string counts as unset, since it is
+ * almost always an empty environment variable or half-finished config rather
+ * than a deliberate path; `~` or `~/…` expands against the home
+ * directory; absolute paths pass through; anything else resolves against the
+ * plugin location. The resolved value is the knowledge tree itself — no
+ * segment is appended. A non-string value throws: a mistyped option
+ * must fail loudly, not silently fall back to the wrong tree.
+ * @param configured The raw option value as the host delivers it.
+ * @param locationDirectory The directory the plugin instance loaded in.
+ * @returns The lake root.
  */
-/**
- * Build the `docs` tool from its dependencies.
- *
- * By default the tool is registered with `codemode: false` so it stays on the
- * provider's native tool list. That option is exclusive: a tool defaults into
- * Code Mode (`codemode` defaults true) and is dropped from the native list;
- * only `codemode: false` keeps it natively callable — and `codemode: true`
- * with a `namespace` is how the host's own plugins expose tools to `execute`
- * (the catalog renders `tools.<namespace>.<name>(…)`). Pass a distinct
- * `name` and `codemode: true` to register a Code Mode twin of the same core;
- * the registry is name-keyed, so the twin cannot also be called `docs`.
- * @param deps Runtime seams used on each call.
- * @param options Registration shape.
- * @param options.name The tool name (default `"docs"`); a Code Mode twin
- * passes a distinct name — the registry is name-keyed, so two tools cannot
- * share one.
- * @param options.codemode True to register for the `execute` catalog under
- * the `docs` namespace (default `false` — the native tool list).
- * @returns The tool the host registers.
- */
-
-/** Handles export function resolveRoot. */
 export function resolveRoot(
     configured: unknown,
     locationDirectory: string,

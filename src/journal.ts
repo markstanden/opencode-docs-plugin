@@ -1,6 +1,12 @@
 import { createHmac } from "node:crypto";
 import { appendFileSync } from "node:fs";
 
+/**
+ * The environment variables enabling the opt-in operation journal: a path
+ * and a per-run signing key. Both unset — the production default — the
+ * plugin writes no journal at all. The key makes capture tamper-evident; a
+ * trial tool can write a shaped line but cannot sign it.
+ */
 export const OPERATION_JOURNAL_ENV = "DOCS_OPERATION_JOURNAL";
 export const OPERATION_JOURNAL_KEY_ENV = "DOCS_OPERATION_JOURNAL_KEY";
 

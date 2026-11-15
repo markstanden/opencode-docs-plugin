@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { Schema } from "effect";
 
+/** The doc classes the plugin serves. `instructions` is the implicit README source. */
 export type DocClass = "instructions" | "repo" | "machine" | "global" | "wiki";
 
 /** The shape of a content revision: SHA-256, hex-encoded. */
@@ -525,6 +526,11 @@ export function toEntry(
     };
 }
 
+/**
+ * The human-facing scope label per class, shown beside the config value in
+ * help and candidate lists so agents can connect the two. Configuration
+ * values never change: `repo`, `machine`, `global`, `wiki`.
+ */
 export const CLASS_LABELS: Readonly<Record<LakeClass, string>> = {
     repo: "Repository",
     machine: "Personal",
