@@ -30,6 +30,7 @@ npm ci
 | Final verdict                  | `defined comply` (owns typecheck, formatting, scoped coverage — `.defined.json`)                                               | none; may repair the tree                                                                    |
 | PR head verification           | clean checkout → `defined comply --full`; record `git rev-parse HEAD` and `git status --porcelain` at the same SHA (AGENTS.md) | none                                                                                         |
 | Placement sweep (unregistered) | placement-trials skill / `/placement`                                                                                          | real model calls — model selection and budgets come from the task prompt; ask before a sweep |
+| Product evaluation via OTC      | [evaluations/README.md](evaluations/README.md): `npm --prefix evaluations ci && npm --prefix evaluations run validate`        | none for validate; `run`/`freeze` may make paid calls and needs explicit authorisation        |
 | Registered prod014 campaign    | [campaign README](tests/fixtures/placement-harness/prod014/campaign/README.md) + read-only `status.mts`                        | paid dispatch only through run-card steps, under the campaign's frozen models and ceilings   |
 
 `npm test` and `npm run typecheck` are the fast inner loop; the gate re-runs
