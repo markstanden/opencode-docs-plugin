@@ -5,7 +5,7 @@
     "description": "Development-only evaluation tooling for the docs plugin; never shipped.",
     "type": "module",
     "devDependencies": {
-        "@markstanden/opencode-test-container": "file:./vendor/markstanden-opencode-test-container-0.1.0.tgz"
+        "@markstanden/opencode-test-container": "file:./vendor/markstanden-opencode-test-container-0.1.0-a3731bb5.tgz"
     },
     "scripts": {
         "validate": "otc validate --campaign docs-placement/campaign.json",

@@ -134,6 +134,49 @@ test("every OTC case declares its expected outcome", () => {
     assert.deepEqual(missing, []);
 });
 
+test("every OTC case declares hidden truth and an existing primary checker", () => {
+    // Arrange: truth is judge context and never mounted in a trial; the
+    // checker is product-owned and staged by OTC.
+    const cases = suite.cases as Array<{
+        caseId: string;
+        truth?: string;
+        primaryCheck?: { id: string; directory: string; script: string };
+    }>;
+
+    // Act
+    const observed = cases.map((item) => ({
+        caseId: item.caseId,
+        truth: item.truth,
+        checker: item.primaryCheck,
+        checkerExists:
+            item.primaryCheck !== undefined &&
+            existsSync(
+                join(
+                    EVALUATIONS,
+                    "docs-placement",
+                    item.primaryCheck.directory,
+                    item.primaryCheck.script,
+                ),
+            ),
+    }));
+
+    // Assert
+    assert.ok(observed.length >= 2);
+    const checkerIds = new Set<string>();
+    for (const item of observed) {
+        assert.equal(typeof item.truth, "string");
+        assert.ok((item.truth as string).length > 20);
+        assert.ok(item.checker, `${item.caseId} declares a checker`);
+        assert.ok(item.checkerExists, `${item.caseId} checker exists`);
+        assert.equal(
+            checkerIds.has(item.checker.id),
+            false,
+            `${item.checker.id} is unique`,
+        );
+        checkerIds.add(item.checker.id);
+    }
+});
+
 test("the campaign schedules every suite case in an explicit slot", () => {
     // Arrange
     const cases = new Set(
@@ -144,17 +187,19 @@ test("the campaign schedules every suite case in an explicit slot", () => {
         slots: Array<{ caseId: string; armId: string }>;
     };
 
-    // Act
-    const scheduled = new Set(schedule.slots.map((slot) => slot.caseId));
-    const unknown = [...scheduled].filter((caseId) => !cases.has(caseId));
-    const unscheduled = [...cases].filter((caseId) => !scheduled.has(caseId));
+    // Act: both directions of the case/slot relationship in one observation.
+    const coverage = {
+        unknown: [...new Set(schedule.slots.map((slot) => slot.caseId))].filter(
+            (caseId) => !cases.has(caseId),
+        ),
+        unscheduled: [...cases].filter(
+            (caseId) => !schedule.slots.some((slot) => slot.caseId === caseId),
+        ),
+    };
 
     // Assert
     assert.equal(schedule.kind, "explicit");
-    assert.deepEqual(
-        { unknown, unscheduled },
-        { unknown: [], unscheduled: [] },
-    );
+    assert.deepEqual(coverage, { unknown: [], unscheduled: [] });
 });
 
 test("the campaign stages the shipped product on its single plugin arm", () => {
