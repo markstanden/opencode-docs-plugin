@@ -248,3 +248,39 @@ test("the installed pinned otc validates the campaign from an unrelated director
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /^valid: docs-placement-recording-local/m);
 });
+
+test("the OTC pin is the exact published version, not a range or a file", () => {
+    // Arrange: a caret or a file path here would silently change the evaluator
+    // under the frozen campaign.
+    const pkg = readJson("evaluations/package.json") as {
+        devDependencies?: Record<string, string>;
+    };
+    const lock = readJson("evaluations/package-lock.json") as {
+        packages?: Record<
+            string,
+            { version?: string; resolved?: string; integrity?: string }
+        >;
+    };
+    const installed =
+        lock.packages?.["node_modules/@markstanden/opencode-test-container"];
+
+    // Act
+    const observed = {
+        spec: pkg.devDependencies?.["@markstanden/opencode-test-container"],
+        version: installed?.version,
+        resolved: installed?.resolved,
+        integrity: installed?.integrity,
+    };
+
+    // Assert
+    assert.equal(observed.spec, "0.1.0");
+    assert.equal(observed.version, "0.1.0");
+    assert.equal(
+        observed.resolved,
+        "https://registry.npmjs.org/@markstanden/opencode-test-container/-/opencode-test-container-0.1.0.tgz",
+    );
+    assert.equal(
+        observed.integrity,
+        "sha512-5dhOJwj4UgxLnOdLoW/gMeLnJ2lU0A8aDj2h5cIwo/iV5hULvrLogE6Ihjom07TzenE/ZOJZ6WPfzqx3iulXZg==",
+    );
+});

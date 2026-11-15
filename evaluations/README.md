@@ -23,34 +23,39 @@ checkers.
   [legacy-inventory.md](legacy-inventory.md). The engine tests live behind
   `npm run test:legacy`; `npm test` is product-only.
 
-## Pinned OTC tooling
+## Pinned OTC dependency
 
-OTC is development tooling, never a runtime or ordinary-test dependency.
+OTC is development tooling, never a runtime or ordinary-test dependency. The
+dependency is the exact published version — no range:
 
-| Fact               | Value                                                                                                     |
-| ------------------ | --------------------------------------------------------------------------------------------------------- |
-| Package            | `@markstanden/opencode-test-container` 0.1.0                                                              |
-| Source commit      | `287e30a236e34b0dda8a24d966d7c3d6140d0c1b` (branch `feat/otc-fresh-campaign-judging`; based on `5b0ee3d`) |
-| Tarball            | `vendor/markstanden-opencode-test-container-0.1.0-a3731bb5.tgz`                                           |
-| Tarball SHA-256    | `a3731bb52bc154173bb6103a2e175b5a9fc19b3b8ca9bf90e2e07fb12495015b`                                        |
-| Lockfile integrity | `sha512-5dhOJwj4UgxLnOdLoW/gMeLnJ2lU0A8aDj2h5cIwo/iV5hULvrLogE6Ihjom07TzenE/ZOJZ6WPfzqx3iulXZg==`         |
+| Fact                | Value                                                                                                 |
+| ------------------- | ----------------------------------------------------------------------------------------------------- |
+| Package / version   | `@markstanden/opencode-test-container` **0.1.0** (exact)                                              |
+| Registry tarball    | `https://registry.npmjs.org/@markstanden/opencode-test-container/-/opencode-test-container-0.1.0.tgz` |
+| Integrity           | `sha512-5dhOJwj4UgxLnOdLoW/gMeLnJ2lU0A8aDj2h5cIwo/iV5hULvrLogE6Ihjom07TzenE/ZOJZ6WPfzqx3iulXZg==`     |
+| SHA-1 shasum        | `c336020f78aa49953964692020a9be2497c19885`                                                            |
+| Registry SHA-256    | `a3731bb52bc154173bb6103a2e175b5a9fc19b3b8ca9bf90e2e07fb12495015b`                                    |
+| Published           | 2026-11-15T14:13:49.115Z                                                                              |
+| Publisher           | `markstanden` (npm), npm 12.2.2, Node 26.13.0                                                         |
+| Published `gitHead` | `f56092f514c2f3c5055042582adf336090630757` (squash merge of OTC PR #1)                                |
+| Reviewed source     | `287e30a236e34b0dda8a24d966d7c3d6140d0c1b` (tree `a759d269…`, identical to the published tree)        |
 
-Until the package is published, the file dependency is the immutable tarball;
-after publication it is replaced with the registry version and the tarball is
-deleted. The lockfile integrity is the pin. The filename carries the artifact
-hash because npm keeps a stale integrity for a replaced file dependency that
-keeps the same name — the suffix forces a fresh resolution and makes the pin
-unambiguous.
+Publication provenance, verified 2026-11-15:
 
-**Build provenance (verified 2026-11-15).** `git archive 287e30a` from a clean
-OTC checkout, packed with `npm pack` (whose `prepack` runs the package build),
-is byte-identical to the vendored tarball; two independent builds produced the
-same SHA-256. No dirty or moving checkout was repacked. The installed CLI
-reports `otc version` `0.1.0`.
+- `npm view` reports the integrity above, and `npm audit signatures` verifies
+  the registry signature (one package, verified).
+- The registry tarball is byte-identical (SHA-256 `a3731bb5…`) to the artifact
+  built from `git archive 287e30a` and reviewed by this repository.
+- The published `gitHead` is the squash merge `f56092f`; its tree equals the
+  reviewed branch head's tree, so no content changed between review and
+  publication.
 
-At this artifact OTC removed its migrated docs harness: no installed source
-reaches `tests/fixtures/placement-harness/harness.mts`, and a consumer test
-asserts the tarball carries no such reference. The old harness is now legacy
+The lockfile integrity is the pin. A bundle test asserts the exact spec, the
+registry URL and this integrity, so a caret, a file dependency or a different
+build cannot return unnoticed. At this version OTC removed its migrated docs
+harness: no installed source reaches
+`tests/fixtures/placement-harness/harness.mts`, and a consumer test asserts the
+published package carries no such reference. The old harness is now legacy
 machinery for the historical route only.
 
 ## Recipe (installed artifact, no model calls until `run`)
@@ -143,11 +148,12 @@ locally; the tag was removed after the check.
 | `tests/fixtures/placement-harness/prod014/`        | frozen historical campaign and measurement                  |
 | `legacy-inventory.md`                              | every retained legacy file and its class                    |
 
-## Outstanding dependency
+## Sequencing
 
-The vendored tarball is provisional until the OTC branch is merged and the
-package is published. The next external step is OTC merge → immutable registry
-publication; only then is this consumer repinned to the registry version and
-the tarball deleted. This repository's merge follows that registry pin and its
-final verification. Until then the draft stays on the tarball pin; no
-fresh-campaign integration is claimed.
+OTC PR #1 was squash-merged to `f56092f`, and `0.1.0` is published with the
+integrity above. This repository is now on the exact registry pin and the
+tarball is deleted. The remaining step in the agreed order is this PR's
+exact-head final verification and merge; no further OTC dependency is
+outstanding. A full dispatched docs campaign and live judging are still not
+claimed — the offline proof stops at `run --dry-run`, the primary-check plan,
+the product checkers and recorded replay.

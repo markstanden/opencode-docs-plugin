@@ -22,14 +22,16 @@
   declares a product-owned checker that OTC stages and executes in its own
   no-network container; this repo adds no scheduler, budget, judge, recovery
   or reporting layer.
-- Pins the dev-only OTC tooling to an immutable vendored tarball with recorded
-  provenance: `@markstanden/opencode-test-container` 0.1.0, source
-  `287e30a236e34b0dda8a24d966d7c3d6140d0c1b` (branch
-  `feat/otc-fresh-campaign-judging`, based on `5b0ee3d`), tarball SHA-256
-  `a3731bb52bc154173bb6103a2e175b5a9fc19b3b8ca9bf90e2e07fb12495015b`.
-  Two independent `git archive` + `npm pack` builds are byte-identical to the
-  vendored artifact. Ordinary tests and the published tarball do not include
-  `evaluations/`.
+- Pins the dev-only OTC tooling to the **exact published version** `0.1.0`
+  (no range) and records its provenance: registry integrity
+  `sha512-5dhOJwj4UgxLnOdLoW/gMeLnJ2lU0A8aDj2h5cIwo/iV5hULvrLogE6Ihjom07TzenE/ZOJZ6WPfzqx3iulXZg==`,
+  shasum `c336020f…`, published 2026-11-15T14:13:49.115Z by `markstanden`,
+  published `gitHead` `f56092f` (squash merge of OTC PR #1; tree identical to
+  the reviewed `287e30a`). The registry tarball is byte-identical
+  (SHA-256 `a3731bb5…`) to the reviewed artifact, and `npm audit signatures`
+  verifies the registry signature. The vendored tarball is deleted; the
+  lockfile integrity is the pin, and a test fails if a range or file
+  dependency returns.
 - Adds the cross-project journal contract through the **packed** plugin and
   the **installed pinned** OTC evaluator, covering the string-form `add` and
   the undeclared nested `add.lake`, including the refusal to credit a write
@@ -50,23 +52,24 @@
 - `npm ci`, `npm run typecheck`.
 - `npm test`: 527 pass.
 - `npm run test:legacy`: 827 pass.
-- `npm --prefix evaluations ci && npm --prefix evaluations test`: 21 pass,
+- `npm --prefix evaluations ci && npm --prefix evaluations test`: 22 pass,
   including the packed-plugin journal contract, the product checkers, the
-  primary-check plan, the bridge-removal check and the offline replay.
-- Installed pinned artifact from an unrelated cwd: `otc validate`, `prepare`,
-  `freeze`, `delivery-check`, `run --dry-run` and `status --json` all succeed;
-  freeze resolved the verified OpenCode 2.2.6 image ID and recorded the tool
-  identity. No provider call.
+  primary-check plan, the bridge-removal check, the exact-pin guard and the
+  offline replay. The install resolves from the public registry, and
+  `npm audit signatures` verifies the package signature.
+- Installed published artifact from an unrelated cwd: `otc validate`,
+  `prepare`, `freeze`, `delivery-check`, `run --dry-run` and `status --json`
+  all succeed; freeze resolved the verified OpenCode 2.2.6 image ID and
+  recorded the tool identity. No provider call.
 - `npm pack --dry-run`: includes the modules and `src/SKILL.md`; excludes
   `evaluations/` and `tests/`.
 - `defined comply --full` at the recorded head: see the PR checks.
 
-## Outstanding dependency
+## Sequencing
 
-The vendored tarball is a provisional review artifact until the OTC branch is
-merged and the package is published. The agreed order is: OTC merge →
-immutable registry publication → this repository's registry pin and final
-verification → this PR merge. Until the registry version exists, this draft
-stays on the tarball pin. A full dispatched docs campaign and live judging are
-not claimed; the offline proof stops at `run --dry-run`, the primary-check
-plan, the product checkers and recorded replay.
+OTC PR #1 is merged (`f56092f`) and `0.1.0` is published with the integrity
+above; this repository is on the exact registry pin and the vendored tarball is
+deleted. The remaining step is this PR's exact-head final verification and
+merge. A full dispatched docs campaign and live judging are not claimed; the
+offline proof stops at `run --dry-run`, the primary-check plan, the product
+checkers and recorded replay.
