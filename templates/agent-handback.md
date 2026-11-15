@@ -28,6 +28,9 @@ Add this instruction to the execution prompt:
   is not automatically accessible to the reviewer.
 - Use full commit SHAs in identity tables. Separate implementation, execution,
   measurement and findings revisions where relevant.
+- Name pinned external tooling by package, version, source revision and
+  tarball/lockfile integrity, and state the condition that removes a temporary
+  pin. Never present a moving checkout as the pinned dependency.
 - Distinguish checks run now, earlier checks reused and CI observed at a pinned
   SHA. Never claim an inspection, check or external action without evidence.
 - Preserve original results and label corrections or derived interpretations.
@@ -56,17 +59,18 @@ timestamps, counts, causes or accessibility.
 
 ## Identity and working state
 
-| Item                             | Actual value                                       |
-| -------------------------------- | -------------------------------------------------- |
-| Repository / checkout            | {{URL and actual local checkout}}                  |
-| Branch                           | {{branch}}                                         |
-| Starting HEAD                    | {{full SHA}}                                       |
-| Reviewed or executed revision(s) | {{full SHA, clearly labelled by role}}             |
-| Implementation commit(s)         | {{full SHA or not applicable}}                     |
-| Findings commit                  | {{full SHA or not applicable}}                     |
-| Current HEAD                     | {{full SHA}}                                       |
-| Working tree                     | {{clean, or list relevant dirty/untracked paths}}  |
-| Remote state                     | {{local only / pushed and verified ref / unknown}} |
+| Item                             | Actual value                                                  |
+| -------------------------------- | ------------------------------------------------------------- |
+| Repository / checkout            | {{URL and actual local checkout}}                             |
+| Branch                           | {{branch}}                                                    |
+| Starting HEAD                    | {{full SHA}}                                                  |
+| Reviewed or executed revision(s) | {{full SHA, clearly labelled by role}}                        |
+| Implementation commit(s)         | {{full SHA or not applicable}}                                |
+| Findings commit                  | {{full SHA or not applicable}}                                |
+| Current HEAD                     | {{full SHA}}                                                  |
+| Working tree                     | {{clean, or list relevant dirty/untracked paths}}             |
+| Remote state                     | {{local only / pushed and verified ref / unknown}}            |
+| Pinned tooling dependency        | {{package version, source SHA, integrity; or not applicable}} |
 
 Record implementation, execution and later findings revisions separately.
 A findings commit is not automatically the code executed in a campaign.

@@ -23,18 +23,29 @@ npm ci
 
 ## Task selector
 
-| Task                           | Command                                                                                                                        | Provider calls                                                                               |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
-| One behaviour, one file        | `node --test tests/<file>.test.ts`                                                                                             | none                                                                                         |
-| Inner loop                     | `npm test && npm run typecheck`                                                                                                | none                                                                                         |
-| Final verdict                  | `defined comply` (owns typecheck, formatting, scoped coverage — `.defined.json`)                                               | none; may repair the tree                                                                    |
-| PR head verification           | clean checkout → `defined comply --full`; record `git rev-parse HEAD` and `git status --porcelain` at the same SHA (AGENTS.md) | none                                                                                         |
-| Placement sweep (unregistered) | placement-trials skill / `/placement`                                                                                          | real model calls — model selection and budgets come from the task prompt; ask before a sweep |
-| Registered prod014 campaign    | [campaign README](tests/fixtures/placement-harness/prod014/campaign/README.md) + read-only `status.mts`                        | paid dispatch only through run-card steps, under the campaign's frozen models and ceilings   |
+| Task                         | Command                                                                                                                        | Provider calls                                                                             |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| One behaviour, one file      | `node --test tests/<file>.test.ts`                                                                                             | none                                                                                       |
+| Inner loop                   | `npm test && npm run typecheck`                                                                                                | none                                                                                       |
+| Frozen legacy engine         | `npm run test:legacy` (historical verification only; never the product verdict)                                                | none                                                                                       |
+| Final verdict                | `defined comply` (owns typecheck, formatting, scoped coverage — `.defined.json`)                                               | none; may repair the tree                                                                  |
+| PR head verification         | clean checkout → `defined comply --full`; record `git rev-parse HEAD` and `git status --porcelain` at the same SHA (AGENTS.md) | none                                                                                       |
+| Placement sweep (historical) | placement-trials skill / `/placement`                                                                                          | real model calls — the route is the frozen harness, not a fresh campaign                   |
+| Product evaluation via OTC   | [evaluations/README.md](evaluations/README.md): `npm --prefix evaluations ci && npm --prefix evaluations run validate`         | none for validate; `run`/`freeze` may make paid calls and needs explicit authorisation     |
+| Registered prod014 campaign  | [campaign README](tests/fixtures/placement-harness/prod014/campaign/README.md) + read-only `status.mts`                        | paid dispatch only through run-card steps, under the campaign's frozen models and ceilings |
 
 `npm test` and `npm run typecheck` are the fast inner loop; the gate re-runs
 typecheck, formatting and coverage itself — do not prescribe separate full
 runs of them before handing back.
+
+## Product and legacy test populations
+
+`npm test` runs the product contract tests only. The tests under
+`tests/legacy/` exercise the frozen prod014 engine and its analysis; they are
+historical verification, never the product verdict, and their files are
+excluded from product coverage. Run them with `npm run test:legacy` when the
+change touches the retained legacy route. A behaviour that belongs to the
+shipped plugin belongs in `tests/`, not `tests/legacy/`.
 
 ## Contract tests
 
@@ -48,9 +59,14 @@ runs of them before handing back.
 - Every bug fix ships a test that fails against the pre-fix code.
 - Hermeticity is mandatory (AGENTS.md "Test isolation").
 
-## Trial analysis framework
+## Legacy trial analysis (frozen route)
 
-`tests/fixtures/placement-harness/analysis/analyse.mts` — the supported
+Fresh recorded-evidence analysis uses `otc replay` (see
+[evaluations/README.md](evaluations/README.md)). The analyser below is the
+frozen legacy route and its tests run under `npm run test:legacy`, not
+`npm test`.
+
+`tests/fixtures/placement-harness/analysis/analyse.mts` — the historical
 offline analyser: manifest validation, explicit-state evidence loading,
 accounting, pairing, utility bounds, guardrails, the three-limb decision, the
 static screen, stable reporting. No model calls; no campaign-supplied code.
@@ -67,7 +83,13 @@ node tests/fixtures/placement-harness/analysis/analyse.mts \
 Verified replay anchors:
 [trial-analysis-framework 2026-11-11](docs/testing/trial-analysis-framework-2026-11-11.md).
 
-## Behavioural placement trials
+## Historical behavioural placement trials
+
+Fresh product evaluation goes through OTC
+([evaluations/README.md](evaluations/README.md)). The harness below is the
+**frozen historical route** for the E01–E18 and D/R/W families; invoke it
+deliberately, and prefer the pinned revision (`76ed331e`) over the working
+tree when reproducing a past result.
 
 `tests/fixtures/placement-harness/harness.mts` runs
 `tests/fixtures/placement-cases.json` (E01–E18) and

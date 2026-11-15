@@ -48,10 +48,23 @@ gates you; prefer it over reading the upstream repository. House standards:
 
 ## What this is
 
-An OpenCode V2 plugin package: `src/index.ts` is the plugin (the `docs` tool,
-the `/docs` command, and the `docs` skill), `tests/` is its Node test suite.
-Everything below the default export is pure or dependency-injected and directly
-testable.
+An OpenCode V2 plugin package: `src/index.ts` is the public entry point (the
+`docs` tool, the `/docs` command, the `docs` skill and host registration), with
+the internals split by responsibility:
+
+- `src/metadata.ts` — doc types, front matter, body scanning and entries.
+- `src/ranking.ts` — search terms, scoring, ranking, rendering and help.
+- `src/collection.ts` — git dates, doc/README collection and containment.
+- `src/convention.ts` — write preparation, validation, checks and links.
+- `src/lakes.ts` — lake configuration, publication/revisions/locking and the
+  runtime seams.
+- `src/journal.ts` — opt-in signed operation-journal instrumentation.
+
+`src/index.ts` re-exports the public names. Keep the public entry point, tool,
+command and skill descriptions and behaviour stable; moving code must not
+change prose, journal bytes, locking or package identity. `tests/` is the Node
+test suite. Everything below the default export is pure or dependency-injected
+and directly testable.
 
 ## Test conventions
 
@@ -83,20 +96,29 @@ user.name=t`), signing and ambient config walled off
 ## Routing
 
 - Routine test operation, task selector, troubleshooting: TESTING.md.
+- Product evaluation bundle and the pinned OTC development tooling:
+  evaluations/README.md. It is separate from ordinary tests and runtime
+  dependencies; never install it into the shipped product. Recorded-evidence
+  analysis and new campaigns use OTC. The retained legacy files, their
+  classifications and removal conditions: evaluations/legacy-inventory.md.
+- `npm test` is product-only; the frozen engine's tests are behind
+  `npm run test:legacy` and never contribute to the product verdict or
+  coverage.
 - Registered prod014 campaigns: the campaign README under
   tests/fixtures/placement-harness/prod014/campaign/ and its read-only
-  status.mts. `/placement` and the placement-trials skill are for
-  unregistered sweeps only and never override a registered campaign's frozen
-  models, ceilings or attempt selection.
+  status.mts. `/placement` and the placement-trials skill document the frozen
+  historical route and never override a registered campaign's frozen models,
+  ceilings or attempt selection. New campaigns use OTC, not a new prod014
+  root.
 - Handbacks and trial reports: templates/agent-handback.md and
   templates/trial-feedback-report.md — output contracts, not authority.
 
 ## Trial harness
 
 - Decision-bearing campaign code is strict TypeScript under
-  `tests/fixtures/placement-harness/analysis/`; `npm test` runs its contract
-  and materialised-CLI regressions on CPU with no provider calls. Keep
-  filesystem, process, clock and provider effects in thin adapters.
+  `tests/fixtures/placement-harness/analysis/`. It is the frozen legacy
+  engine: `npm run test:legacy` runs its contract and materialised-CLI
+  regressions on CPU with no provider calls, and `npm test` does not.
 - `tests/fixtures/placement-harness/prod014/campaign/scripts.json` is frozen
   historical data for replay. `materialise.mts` verifies it and also copies
   the pinned runner modules listed in `runner.json`; regenerate the snapshot
@@ -110,7 +132,8 @@ user.name=t`), signing and ambient config walled off
 ## Verifying
 
 ```bash
-npm test          # node --test
+npm test          # product tests (node --test)
+npm run test:legacy   # frozen legacy engine, only when it changed
 npm run typecheck
 defined comply    # the verdict — bootstrap, repair and verify
 ```

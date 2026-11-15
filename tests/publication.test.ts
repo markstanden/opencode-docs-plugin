@@ -30,6 +30,8 @@ import {
     type LakeSpec,
     type PublicationSeams,
 } from "../src/index.ts";
+// Internal publication seam, deliberately not part of the public surface.
+import { acquireTargetLock } from "../src/lakes.ts";
 
 /**
  * Publication safety: one physical target, one publication lock; exclusive
@@ -926,6 +928,18 @@ describe("exclusive temp publication", () => {
         );
         assert.equal(readFileSync(join(root, "aa/doc.md"), "utf8"), raw);
         assert.equal(existsSync(join(root, ".docs-lock")), false);
+    });
+
+    it("releases a lock that vanished first without failing (S04)", () => {
+        // Arrange – a competing cleanup removed the lock file before release.
+        const root = tempDir();
+        const target = join(root, "aa/doc.md");
+        const lock = acquireTargetLock(target);
+        assert.ok("release" in lock);
+        rmSync(targetLockPath(target), { force: true });
+
+        // Act / Assert
+        assert.doesNotThrow(() => lock.release());
     });
 
     it("declines a lock pathname held by a symlink, file or directory (S04)", async () => {

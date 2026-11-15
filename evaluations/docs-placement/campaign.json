@@ -1,0 +1,62 @@
+{
+    "schemaVersion": 1,
+    "campaignId": "docs-placement-recording-local",
+    "suite": {
+        "path": "suite.json"
+    },
+    "subjects": [
+        {
+            "armId": "candidate",
+            "plugins": [
+                {
+                    "id": "docs",
+                    "path": "../..",
+                    "include": [
+                        "package.json",
+                        "package-lock.json",
+                        "src",
+                        "node_modules",
+                        "CONVENTION.md",
+                        "README.md",
+                        "LICENSE"
+                    ]
+                }
+            ]
+        }
+    ],
+    "schedule": {
+        "kind": "explicit",
+        "slots": [
+            {
+                "slotId": "useful-write",
+                "caseId": "useful-write",
+                "armId": "candidate",
+                "repetitionId": "r0"
+            },
+            {
+                "slotId": "gate-blocked",
+                "caseId": "gate-blocked",
+                "armId": "candidate",
+                "repetitionId": "r0"
+            }
+        ]
+    },
+    "runtime": {
+        "image": "localhost/otc-sandbox:2.2.6",
+        "opencodeVersion": "2.2.6",
+        "provider": {
+            "route": "host-proxy",
+            "model": "opencode-go/deepseek-v4.1-flash"
+        },
+        "timeoutMs": 600000,
+        "network": "host",
+        "passthroughEnv": ["OPENCODE_CONFIG_CONTENT"]
+    },
+    "budgets": {
+        "trials": 2,
+        "judgeAttempts": 0
+    },
+    "assessment": {
+        "kind": "docs-recording"
+    }
+}

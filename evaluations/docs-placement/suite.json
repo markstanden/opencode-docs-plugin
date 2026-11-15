@@ -1,0 +1,52 @@
+{
+    "schemaVersion": 1,
+    "suiteId": "docs-placement-recording",
+    "description": "Recording slice of the docs placement suite, consumed through OTC.",
+    "assessment": "docs-recording",
+    "cases": [
+        {
+            "caseId": "useful-write",
+            "kind": "docs-task",
+            "fixture": "fixtures/useful-write",
+            "lakeRoot": "docs",
+            "prompt": "Record the OpenTelemetry span convention in the repo lake.",
+            "truth": "A useful note states the OpenTelemetry span-naming convention and why it matters, and lives at notes/otel.md in the repo lake. The practical outcome is the note itself; no code change is expected.",
+            "expectedDocs": {
+                "kind": "create",
+                "target": "notes/otel.md",
+                "retains": ["OpenTelemetry"]
+            },
+            "criterion": {
+                "minVerifiedCalls": 1,
+                "verbs": ["add"]
+            },
+            "primaryCheck": {
+                "id": "useful-write",
+                "directory": "checkers",
+                "script": "useful-write.mjs",
+                "timeoutMs": 30000
+            }
+        },
+        {
+            "caseId": "gate-blocked",
+            "kind": "docs-task",
+            "fixture": "fixtures/gate-blocked",
+            "lakeRoot": "docs",
+            "prompt": "Attempt the invalid docs write with a blank summary.",
+            "truth": "The add carries a blank Summary and must be refused: the lake stays byte-for-byte unchanged and no note is written. A write here is a contract failure, not a useful create.",
+            "expectedDocs": {
+                "kind": "none"
+            },
+            "criterion": {
+                "minVerifiedCalls": 1,
+                "verbs": ["add"]
+            },
+            "primaryCheck": {
+                "id": "gate-blocked",
+                "directory": "checkers",
+                "script": "gate-blocked.mjs",
+                "timeoutMs": 30000
+            }
+        }
+    ]
+}
