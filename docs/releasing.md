@@ -27,6 +27,9 @@ package's first attested release (`0.1.1`, sigstore logIndex 3904196001).
   explicitly; it needs no token.
 - The job runs in the `npm-publish` environment, which is where required
   reviewers belong.
+- Release tags are immutable: a repository ruleset on `refs/tags/v*` blocks
+  deletion and force-pushes with no bypass actors. Creating and updating tags
+  is deliberately unrestricted, so `git push origin v<version>` still works.
 
 ## One-time npm setup
 
